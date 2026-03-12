@@ -33,7 +33,7 @@ export default function TicketTable({ initialData, totalCount }: any) {
   }, [searchTerm, router, searchParams]);
 
   return (
-    <Paper sx={{ width: '100%', p: 2 }}>
+    <Paper sx={{ width: '100%', p: 2, backgroundColor: '#EDF7BD', borderRadius: 2 }}>
       <TextField 
         label="Search Tickets" 
         variant="outlined" 
@@ -45,7 +45,7 @@ export default function TicketTable({ initialData, totalCount }: any) {
       <TableContainer>
         <Table>
           <TableHead>
-            <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+            <TableRow sx={{ backgroundColor: 'inherit', border: '2px solid #ccc', borderRadius: 1 }}>
               <TableCell>ID</TableCell>
               <TableCell>Subject</TableCell>
               <TableCell>Status</TableCell>

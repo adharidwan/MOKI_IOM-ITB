@@ -29,19 +29,19 @@ export default function ReplyBox({ ticketId }: ReplyBoxProps) {
   };
 
   return (
-    <Box sx={{ mt: 4, p: 2, borderTop: "1px solid #eee" }}>
+    <Box sx={{ mt: 4, borderTop: "1px solid #eee" }}>
       <Stack spacing={2}>
         <TextField
           label="Write a reply..."
           multiline
           rows={4}
-          variant="outlined"
           fullWidth
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           disabled={loading}
+          sx = {{ backgroundColor: "#f9f9f9", mb: 2 }}
         />
-        <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <Box sx={{ display: "flex", justifyContent: "flex-end"}}>
           <Button
             variant="contained"
             endIcon={<SendIcon />}

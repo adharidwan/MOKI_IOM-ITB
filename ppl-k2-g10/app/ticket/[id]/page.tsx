@@ -25,7 +25,7 @@ export default async function TicketDetail({ params }: Props) {
   const ticket = await getTicketById(id);
 
   return (
-    <Stack spacing={3} sx={{ p: 4 }}>
+    <Stack spacing={3} sx={{ mt:5, p: 4, backgroundColor: "#EDF7BD", minHeight: "70vh", width: "80%", alignSelf: "center", borderRadius: 2, mx: "auto" }}>
       <Card elevation={3}>
         <CardContent>
           <Typography variant="h5">{ticket.subject}</Typography>
@@ -49,8 +49,21 @@ export default async function TicketDetail({ params }: Props) {
       ))}
 
       <ReplyBox ticketId={id} />
-      <Link href="/ticket" style={{ textDecoration: "none" }}>
-        <Button variant="outlined">Go Back</Button>
+      <Link href="/ticket" style={{ textDecoration: "none", width: "fit-content" }}>
+        <Button
+          variant="outlined"
+          sx={{
+            color: "black", // Text color
+            borderColor: "black", // Outline color
+            backgroundColor: "transparent", // Transparent inside
+            "&:hover": {
+              borderColor: "#e0e0e0", // Light grey on hover
+              backgroundColor: "rgba(255, 255, 255, 0.08)", // Faint white tint on hover
+            },
+          }}
+        >
+          Go Back
+        </Button>
       </Link>
     </Stack>
   );
