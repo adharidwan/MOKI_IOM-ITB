@@ -1,46 +1,117 @@
-// src/lib/api.ts
+import { supabase, Ticket, Reply, TicketWithReplies } from './supabase';
 
-// Mock data to simulate a database
-const mockTickets = [
-  { 
-    id: '1', 
-    subject: 'Login Issue', 
-    description: 'I cannot log into my account using the mobile app. It keeps saying invalid credentials.',
-    status: 'Open', 
-    userEmail: 'user@example.com',
-    createdAt: '2026-03-12',
-    replies: [
-      { id: 'r1', author: 'Support Bot', content: 'Please try resetting your password.' }
-    ]
-  },
-  { 
-    id: '2', 
-    subject: 'Payment Failed', 
-    description: 'My transaction was declined but the money was taken from my bank.',
-    status: 'Closed', 
-    userEmail: 'customer@test.com',
-    createdAt: '2026-03-11',
-    replies: []
-  },
-];
+interface GetTicketsParams {
+  page?: number;
+  search?: string;
+  sort?: string;
+  pageSize?: number;
+}
 
-export async function getTickets({ page = 1, search = '', sort = 'id' }) {
-  const filtered = mockTickets.filter(t => 
-    t.subject.toLowerCase().includes(search.toLowerCase())
-  );
+interface GetTicketsResponse {
+  tickets: TicketWithReplies[];
+  total: number;
+}
+
+export async function getTickets({ 
+  page = 1, 
+  search = '', 
+  sort = 'created_at',
+  pageSize = 10 
+}: GetTicketsParams): Promise<GetTicketsResponse> {
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let query = supabase
+    .from('tickets')
+    .select('*, replies(*)', { count: 'exact' })
+    .order(sort, { ascending: sort === 'created_at' ? false : true })
+    .range(from, to);
+
+  if (search) {
+    query = query.ilike('subject', `%${search}%`);
+  }
+
+  const { data, error, count } = await query;
+
+  if (error) {
+    throw new Error(`Failed to fetch tickets: ${error.message}`);
+  }
+
   return {
-    tickets: filtered,
-    total: filtered.length,
+    tickets: (data as TicketWithReplies[]) || [],
+    total: count || 0,
   };
 }
 
-// THE MISSING FUNCTION:
-export async function getTicketById(id: string) {
-  const ticket = mockTickets.find((t) => t.id === id);
-  
-  if (!ticket) {
-    throw new Error('Ticket not found');
+// Fetch a single ticket by ID with its replies
+export async function getTicketById(id: string): Promise<TicketWithReplies> {
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('*, replies(*)')
+    .eq('id', id)
+    .single();
+
+  if (error) {
+    throw new Error(`Ticket not found: ${error.message}`);
   }
-  
-  return ticket;
+
+  return data as TicketWithReplies;
+}
+
+// Create a new ticket
+export async function createTicket(ticket: Omit<Ticket, 'id' | 'created_at'>): Promise<Ticket> {
+  const { data, error } = await supabase
+    .from('tickets')
+    .insert(ticket)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to create ticket: ${error.message}`);
+  }
+
+  return data as Ticket;
+}
+
+// Update a ticket's status
+export async function updateTicketStatus(id: string, status: Ticket['status']): Promise<Ticket> {
+  const { data, error } = await supabase
+    .from('tickets')
+    .update({ status })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to update ticket: ${error.message}`);
+  }
+
+  return data as Ticket;
+}
+
+// Add a reply to a ticket
+export async function addReply(ticketId: string, author: string, content: string): Promise<Reply> {
+  const { data, error } = await supabase
+    .from('replies')
+    .insert({ ticket_id: ticketId, author, content })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to add reply: ${error.message}`);
+  }
+
+  return data as Reply;
+}
+
+// Delete a ticket
+export async function deleteTicket(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('tickets')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new Error(`Failed to delete ticket: ${error.message}`);
+  }
 }
