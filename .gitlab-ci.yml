@@ -10,11 +10,10 @@ deploy:
   tags:
     - proxmox
   script:
-    - cd /home/ppl/IF3250_K02_G10_IOM4
-    - git pull origin main
-    - docker compose down
-    - docker compose build
+    - cp /home/ppl/IF3250_K02_G10_IOM4/.env.local $CI_PROJECT_DIR/.env.local
+    - docker compose -f $CI_PROJECT_DIR/docker-compose.yml down
+    - docker compose -f $CI_PROJECT_DIR/docker-compose.yml build
         --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
         --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-    - docker compose up -d
+    - docker compose -f $CI_PROJECT_DIR/docker-compose.yml up -d
     - docker image prune -f
