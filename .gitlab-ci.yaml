@@ -3,8 +3,9 @@ stages:
   - deploy
 
 variables:
-  IMAGE_WEB: $CI_REGISTRY_IMAGE/web:latest
-  IMAGE_BOT: $CI_REGISTRY_IMAGE/bot:latest
+  IMAGE_WEB: gitlab-edu.itb.ac.id:5050/13523069/if3250_k02_g10_iom4/web:latest
+  IMAGE_BOT: gitlab-edu.itb.ac.id:5050/13523069/if3250_k02_g10_iom4/bot:latest
+  REGISTRY: gitlab-edu.itb.ac.id:5050
 
 workflow:
   rules:
@@ -18,7 +19,7 @@ build-web:
   tags:
     - proxmox
   before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
   script:
     - |
       docker build \
@@ -36,7 +37,7 @@ build-bot:
   tags:
     - proxmox
   before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
   script:
     - docker build -f Dockerfile.bot -t $IMAGE_BOT .
     - docker push $IMAGE_BOT
@@ -46,7 +47,7 @@ deploy:
   tags:
     - proxmox
   before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
   script:
     - cd /home/ppl/IF3250_K02_G10_IOM4
     - docker compose pull
