@@ -10,6 +10,7 @@ import {
 } from "@mui/material";
 import ReplyBox from "../../components/ReplyBox";
 import { getTicketById } from "../../lib/api";
+import { Reply } from "../../lib/supabase";
 
 // 1. Update the type: params is now a Promise
 type Props = {
@@ -30,14 +31,14 @@ export default async function TicketDetail({ params }: Props) {
         <CardContent>
           <Typography variant="h5">{ticket.subject}</Typography>
           <Typography variant="caption" color="text.secondary">
-            ID: {id} | From: {ticket.userEmail} | Status: {ticket.status}
+            ID: {id} | From: {ticket.user_email} | Status: {ticket.status}
           </Typography>
           <Divider sx={{ my: 2 }} />
           <Typography variant="body1">{ticket.description}</Typography>
         </CardContent>
       </Card>
 
-      {ticket.replies.map((reply: any) => (
+      {ticket.replies.map((reply: Reply) => (
         <Card key={reply.id} variant="outlined" sx={{ ml: 4 }}>
           <CardContent>
             <Typography variant="subtitle2" color="primary">

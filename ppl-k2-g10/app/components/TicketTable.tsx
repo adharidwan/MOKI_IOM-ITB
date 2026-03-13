@@ -5,19 +5,36 @@ import {
   Table, TableBody, TableCell, TableContainer, 
   TableHead, TableRow, Paper, TextField 
 } from '@mui/material';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { TicketWithReplies } from '../lib/supabase';
 
-export default function TicketTable({ initialData, totalCount }: any) {
+interface TicketTableProps {
+  initialData: TicketWithReplies[];
+  totalCount: number;
+}
+
+export default function TicketTable({ initialData }: TicketTableProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  const currentQuery = searchParams.toString();
+  const currentSearch = searchParams.get('search') || '';
   
   // 1. Local state for the input field (immediate UI update)
-  const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
+  const [searchTerm, setSearchTerm] = useState(currentSearch);
+
+  useEffect(() => {
+    setSearchTerm(currentSearch);
+  }, [currentSearch]);
 
   // Debounce logic
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
-      const params = new URLSearchParams(searchParams.toString());
+      if (searchTerm === currentSearch) {
+        return;
+      }
+
+      const params = new URLSearchParams(currentQuery);
       
       if (searchTerm) {
         params.set('search', searchTerm);
@@ -26,11 +43,14 @@ export default function TicketTable({ initialData, totalCount }: any) {
       }
       
       params.set('page', '1'); // Reset to page 1 on search
-      router.push(`?${params.toString()}`);
+      const nextQuery = params.toString();
+      const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : pathname;
+
+      router.replace(nextUrl);
     }, 500); // 500ms delay
 
     return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm, router, searchParams]);
+  }, [currentQuery, currentSearch, pathname, router, searchTerm]);
 
   return (
     <Paper sx={{ width: '100%', p: 2, backgroundColor: '#EDF7BD', borderRadius: 2 }}>
@@ -53,7 +73,7 @@ export default function TicketTable({ initialData, totalCount }: any) {
             </TableRow>
           </TableHead>
           <TableBody>
-            {initialData.map((row: any) => (
+            {initialData.map((row) => (
               <TableRow 
                 key={row.id} 
                 hover 
@@ -63,7 +83,7 @@ export default function TicketTable({ initialData, totalCount }: any) {
                 <TableCell>{row.id}</TableCell>
                 <TableCell>{row.subject}</TableCell>
                 <TableCell>{row.status}</TableCell>
-                <TableCell>{row.createdAt}</TableCell>
+                <TableCell>{row.created_at}</TableCell>
               </TableRow>
             ))}
           </TableBody>

@@ -12,6 +12,14 @@ interface GetTicketsResponse {
   total: number;
 }
 
+const SORT_COLUMN_MAP: Record<string, string> = {
+  createdAt: 'created_at',
+  created_at: 'created_at',
+  id: 'id',
+  status: 'status',
+  subject: 'subject',
+};
+
 export async function getTickets({ 
   page = 1, 
   search = '', 
@@ -20,11 +28,12 @@ export async function getTickets({
 }: GetTicketsParams): Promise<GetTicketsResponse> {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
+  const normalizedSort = SORT_COLUMN_MAP[sort] || 'created_at';
 
   let query = supabase
     .from('tickets')
     .select('*, replies(*)', { count: 'exact' })
-    .order(sort, { ascending: sort === 'created_at' ? false : true })
+    .order(normalizedSort, { ascending: normalizedSort === 'created_at' ? false : true })
     .range(from, to);
 
   if (search) {
