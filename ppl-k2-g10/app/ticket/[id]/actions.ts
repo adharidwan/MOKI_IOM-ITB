@@ -9,11 +9,6 @@ export interface ReplyActionState {
   success: boolean;
 }
 
-export const initialReplyActionState: ReplyActionState = {
-  error: null,
-  success: false,
-};
-
 export async function submitTicketReply(
   ticketId: string,
   _prevState: ReplyActionState,

@@ -38,6 +38,19 @@ function normalizePhone(chatId) {
   return String(chatId).split('@')[0].replace(/\D/g, '');
 }
 
+function getChatKind(chatId) {
+  const normalized = String(chatId || '');
+
+  if (normalized.endsWith('@g.us')) return 'group';
+  if (normalized === 'status@broadcast' || normalized.endsWith('@broadcast')) return 'broadcast';
+  if (normalized.endsWith('@c.us') || normalized.endsWith('@lid')) return 'direct';
+  return 'unknown';
+}
+
+function isSupportedDirectChat(chatId) {
+  return getChatKind(chatId) === 'direct';
+}
+
 function parseTicketCommand(messageBody) {
   const trimmed = String(messageBody || '').trim();
   const normalized = trimmed.toLowerCase();
@@ -106,12 +119,12 @@ async function handleInvalidMessage(client, supabase, msg) {
   const now = new Date().toISOString();
   const contact = await loadWhatsappContact(supabase, phoneNumber);
   const invalidCount = (contact?.invalid_message_count || 0) + 1;
-  const shouldSendHelp = invalidCount === 1 || invalidCount >= 3;
+  const shouldSendHelp = invalidCount === 1 || invalidCount % 5 === 0;
 
   await upsertWhatsappContact(supabase, {
     phone_number: phoneNumber,
     chat_id: msg.from,
-    invalid_message_count: shouldSendHelp ? 0 : invalidCount,
+    invalid_message_count: invalidCount,
     last_inbound_at: now,
     last_message_preview: String(msg.body || '').slice(0, 250),
     last_help_sent_at: shouldSendHelp ? now : contact?.last_help_sent_at || null,
@@ -223,7 +236,11 @@ async function processOutboundReplies(client, supabase) {
   const attemptNumber = (pendingReply.delivery_attempts || 0) + 1;
   const ticket = Array.isArray(pendingReply.tickets) ? pendingReply.tickets[0] : pendingReply.tickets;
 
-  if (!ticket?.whatsapp_chat_id || ticket.channel !== 'whatsapp') {
+  if (
+    !ticket?.whatsapp_chat_id ||
+    ticket.channel !== 'whatsapp' ||
+    !isSupportedDirectChat(ticket.whatsapp_chat_id)
+  ) {
     const { error: updateError } = await supabase
       .from('replies')
       .update({
@@ -280,6 +297,7 @@ async function main() {
   const chromiumPath = process.env.WHATSAPP_CHROMIUM_PATH || '/snap/bin/chromium';
   const supabase = getSupabaseClient();
   let outboundLoopBusy = false;
+  let selfChatId = null;
 
   const client = new Client({
     authStrategy: new LocalAuth({
@@ -298,6 +316,7 @@ async function main() {
 
   client.on('ready', () => {
     console.log('WhatsApp bot ready');
+    selfChatId = client.info?.wid?._serialized || null;
 
     setInterval(async () => {
       if (outboundLoopBusy) return;
@@ -314,7 +333,13 @@ async function main() {
   });
 
   client.on('message', async (msg) => {
-    if (msg.fromMe) return;
+    if (msg.fromMe || msg.id?.fromMe) return;
+    if (selfChatId && msg.from === selfChatId) return;
+    if (selfChatId && msg.to && msg.to !== selfChatId) return;
+    if (!isSupportedDirectChat(msg.from)) {
+      console.log(`Ignoring unsupported chat: ${msg.from}`);
+      return;
+    }
 
     try {
       const parsedCommand = parseTicketCommand(msg.body);
