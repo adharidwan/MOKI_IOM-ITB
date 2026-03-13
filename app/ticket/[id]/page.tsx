@@ -7,11 +7,13 @@ import {
   Divider,
   Stack,
   Button,
+  Alert,
 } from "@mui/material";
 import ReplyBox from "../../components/ReplyBox";
+import CloseTicketButton from "../../components/CloseTicketButton";
 import { getTicketById } from "../../lib/api";
 import { Reply } from "../../lib/types";
-import { submitTicketReply } from "./actions";
+import { closeTicket, submitTicketReply } from "./actions";
 
 // 1. Update the type: params is now a Promise
 type Props = {
@@ -25,7 +27,9 @@ export default async function TicketDetail({ params }: Props) {
 
   // 3. Now fetch the data
   const ticket = await getTicketById(id);
+  const isClosed = ticket.status === "Closed";
   const sendReplyAction = submitTicketReply.bind(null, id);
+  const closeTicketAction = closeTicket.bind(null, id);
 
   return (
     <Stack spacing={3} sx={{ mt:5, p: 4, backgroundColor: "#EDF7BD", minHeight: "70vh", width: "80%", alignSelf: "center", borderRadius: 2, mx: "auto" }}>
@@ -51,7 +55,14 @@ export default async function TicketDetail({ params }: Props) {
         </Card>
       ))}
 
-      <ReplyBox sendReplyAction={sendReplyAction} />
+      <CloseTicketButton closeTicketAction={closeTicketAction} isClosed={isClosed} />
+
+      {isClosed ? (
+        <Alert severity="info">Replies are disabled for closed tickets.</Alert>
+      ) : (
+        <ReplyBox sendReplyAction={sendReplyAction} />
+      )}
+
       <Link href="/ticket" style={{ textDecoration: "none", width: "fit-content" }}>
         <Button
           variant="outlined"
