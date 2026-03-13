@@ -1,54 +1,59 @@
 "use client";
 
-import React, { useState } from "react";
-import { Box, TextField, Button, Stack } from "@mui/material";
+import React, { useActionState } from "react";
+import { Alert, Box, TextField, Button, Stack } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 
-interface ReplyBoxProps {
-  ticketId: string;
+interface ReplyActionState {
+  error: string | null;
+  success: boolean;
 }
 
-export default function ReplyBox({ ticketId }: ReplyBoxProps) {
-  const [comment, setComment] = useState("");
-  const [loading, setLoading] = useState(false);
+const initialReplyActionState: ReplyActionState = {
+  error: null,
+  success: false,
+};
 
-  const handleSubmit = async () => {
-    if (!comment.trim()) return;
+interface ReplyBoxProps {
+  sendReplyAction: (
+    state: ReplyActionState,
+    formData: FormData,
+  ) => Promise<ReplyActionState>;
+}
 
-    setLoading(true);
-
-    // Logic for sending the reply to your API would go here
-    console.log(`Sending reply for ticket ${ticketId}:`, comment);
-
-    // Simulate a network delay
-    setTimeout(() => {
-      setComment("");
-      setLoading(false);
-      alert("Reply sent!");
-    }, 1000);
-  };
+export default function ReplyBox({ sendReplyAction }: ReplyBoxProps) {
+  const [state, formAction, isPending] = useActionState(
+    sendReplyAction,
+    initialReplyActionState,
+  );
 
   return (
     <Box sx={{ mt: 4, borderTop: "1px solid #eee" }}>
-      <Stack spacing={2}>
+      <Stack spacing={2} component="form" action={formAction}>
+        {state.error ? <Alert severity="error">{state.error}</Alert> : null}
+        {state.success ? (
+          <Alert severity="success">
+            Reply queued. The bot will send it to WhatsApp and retry if it fails.
+          </Alert>
+        ) : null}
         <TextField
           label="Write a reply..."
           multiline
           rows={4}
           fullWidth
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          disabled={loading}
+          required
+          name="content"
+          disabled={isPending}
           sx = {{ backgroundColor: "#f9f9f9", mb: 2 }}
         />
         <Box sx={{ display: "flex", justifyContent: "flex-end"}}>
           <Button
             variant="contained"
             endIcon={<SendIcon />}
-            onClick={handleSubmit}
-            disabled={loading || !comment.trim()}
+            type="submit"
+            disabled={isPending}
           >
-            {loading ? "Sending..." : "Send Reply"}
+            {isPending ? "Queueing..." : "Send Reply"}
           </Button>
         </Box>
       </Stack>
