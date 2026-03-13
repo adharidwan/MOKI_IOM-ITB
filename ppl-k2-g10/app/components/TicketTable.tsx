@@ -6,7 +6,7 @@ import {
   TableHead, TableRow, Paper, TextField 
 } from '@mui/material';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { TicketWithReplies } from '../lib/supabase';
+import { TicketWithReplies } from '../lib/types';
 
 interface TicketTableProps {
   initialData: TicketWithReplies[];

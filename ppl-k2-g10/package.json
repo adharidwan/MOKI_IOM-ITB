@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently -k -n web,bot -c blue,green \"next dev\" \"npm run bot\"",
+    "bot": "node --env-file=.env.local scripts/whatsapp-bot.js",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -14,9 +15,12 @@
     "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.9",
     "@supabase/supabase-js": "^2.99.1",
+    "concurrently": "^9.2.1",
     "next": "16.1.6",
+    "qrcode-terminal": "^0.12.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "whatsapp-web.js": "^1.34.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

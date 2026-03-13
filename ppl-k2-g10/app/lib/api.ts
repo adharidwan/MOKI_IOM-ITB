@@ -1,4 +1,7 @@
-import { supabase, Ticket, Reply, TicketWithReplies } from './supabase';
+import 'server-only';
+
+import { getSupabaseServerClient, getSupabaseAdminClient } from './supabase-server';
+import { Ticket, Reply, TicketWithReplies } from './types';
 
 interface GetTicketsParams {
   page?: number;
@@ -26,6 +29,7 @@ export async function getTickets({
   sort = 'created_at',
   pageSize = 10 
 }: GetTicketsParams): Promise<GetTicketsResponse> {
+  const supabase = getSupabaseServerClient();
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const normalizedSort = SORT_COLUMN_MAP[sort] || 'created_at';
@@ -54,6 +58,7 @@ export async function getTickets({
 
 // Fetch a single ticket by ID with its replies
 export async function getTicketById(id: string): Promise<TicketWithReplies> {
+  const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from('tickets')
     .select('*, replies(*)')
@@ -69,6 +74,7 @@ export async function getTicketById(id: string): Promise<TicketWithReplies> {
 
 // Create a new ticket
 export async function createTicket(ticket: Omit<Ticket, 'id' | 'created_at'>): Promise<Ticket> {
+  const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('tickets')
     .insert(ticket)
@@ -84,9 +90,10 @@ export async function createTicket(ticket: Omit<Ticket, 'id' | 'created_at'>): P
 
 // Update a ticket's status
 export async function updateTicketStatus(id: string, status: Ticket['status']): Promise<Ticket> {
+  const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('tickets')
-    .update({ status })
+    .update({ status, updated_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single();
@@ -100,9 +107,29 @@ export async function updateTicketStatus(id: string, status: Ticket['status']): 
 
 // Add a reply to a ticket
 export async function addReply(ticketId: string, author: string, content: string): Promise<Reply> {
+  const supabase = getSupabaseAdminClient();
+  const { data: ticket, error: ticketLookupError } = await supabase
+    .from('tickets')
+    .select('id, channel, whatsapp_chat_id')
+    .eq('id', ticketId)
+    .single();
+
+  if (ticketLookupError || !ticket) {
+    throw new Error(`Ticket not found for reply: ${ticketLookupError?.message || 'Unknown error'}`);
+  }
+
+  const shouldQueueWhatsapp =
+    ticket.channel === 'whatsapp' && Boolean(ticket.whatsapp_chat_id);
   const { data, error } = await supabase
     .from('replies')
-    .insert({ ticket_id: ticketId, author, content })
+    .insert({
+      ticket_id: ticketId,
+      author,
+      content,
+      sender_type: 'admin',
+      delivery_status: shouldQueueWhatsapp ? 'queued' : 'not_applicable',
+      delivery_attempts: 0,
+    })
     .select()
     .single();
 
@@ -110,11 +137,21 @@ export async function addReply(ticketId: string, author: string, content: string
     throw new Error(`Failed to add reply: ${error.message}`);
   }
 
+  const { error: ticketError } = await supabase
+    .from('tickets')
+    .update({ status: 'In Progress', updated_at: new Date().toISOString() })
+    .eq('id', ticketId);
+
+  if (ticketError) {
+    throw new Error(`Reply created but failed to update ticket: ${ticketError.message}`);
+  }
+
   return data as Reply;
 }
 
 // Delete a ticket
 export async function deleteTicket(id: string): Promise<void> {
+  const supabase = getSupabaseAdminClient();
   const { error } = await supabase
     .from('tickets')
     .delete()
