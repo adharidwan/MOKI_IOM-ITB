@@ -9,6 +9,8 @@ deploy:
   stage: deploy
   tags:
     - proxmox
+  variables:
+    DOCKER_BUILDKIT: "1"
   script:
     - cp /home/ppl/IF3250_K02_G10_IOM4/.env.local $CI_PROJECT_DIR/.env.local
     - docker compose -f $CI_PROJECT_DIR/docker-compose.yml down
@@ -17,3 +19,5 @@ deploy:
         --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
     - docker compose -f $CI_PROJECT_DIR/docker-compose.yml up -d
     - docker image prune -f
+  after_script:
+    - docker builder prune -f --filter "until=24h"
