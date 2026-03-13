@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# IF3250 K02 G10 - Ticketing App
 
-## Getting Started
+This repository contains:
 
-First, run the development server:
+- A Next.js web app.
+- A WhatsApp bot worker (`scripts/whatsapp-bot.js`) that creates/updates tickets through Supabase.
+
+## Local Development
+
+1. Copy `.env.example` to `.env.local` and fill in all values.
+2. Install dependencies:
+
+```bash
+npm ci
+```
+
+3. Run web + bot together:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The web app runs on `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Docker
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The project includes:
 
-## Learn More
+- `Dockerfile` for the Next.js web app.
+- `Dockerfile.bot` for the WhatsApp bot worker (with Chromium installed).
+- `docker-compose.yml` to run both services.
 
-To learn more about Next.js, take a look at the following resources:
+### Prerequisites
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Docker Engine (or Docker Desktop) with Compose support.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Run with Docker Compose
 
-## Deploy on Vercel
+1. Ensure `.env.local` exists in the repository root.
+2. Build and start all services:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+docker compose up --build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+3. Open the web app at `http://localhost:3000`.
+4. For WhatsApp QR login, view bot logs:
+
+```bash
+docker compose logs -f bot
+```
+
+### Useful Commands
+
+Start only web app:
+
+```bash
+docker compose up --build web
+```
+
+Stop and remove containers:
+
+```bash
+docker compose down
+```
+
+Also remove the persisted WhatsApp auth volume:
+
+```bash
+docker compose down -v
+```

@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.gitignore
+npm-debug.log*
+.env*
+!.env.example
+.wwebjs_auth
+coverage
+.vscode
+.DS_Store
