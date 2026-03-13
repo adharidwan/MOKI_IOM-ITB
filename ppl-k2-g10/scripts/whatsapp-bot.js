@@ -12,6 +12,7 @@ const HELP_MESSAGE = [
   'Description: <your message>',
 ].join('\n');
 
+const ACTIVE_TICKET_STATUSES = ['Open', 'In Progress'];
 const RETRY_DELAYS_MS = [10000, 30000, 60000, 300000, 900000];
 const BOT_POLL_INTERVAL_MS = 5000;
 
@@ -49,6 +50,16 @@ function getChatKind(chatId) {
 
 function isSupportedDirectChat(chatId) {
   return getChatKind(chatId) === 'direct';
+}
+
+function getMessageTimestampMs(msg) {
+  const rawTimestamp = msg?.timestamp;
+  if (!rawTimestamp) return null;
+
+  const numericTimestamp = Number(rawTimestamp);
+  if (!Number.isFinite(numericTimestamp)) return null;
+  if (numericTimestamp > 1e12) return numericTimestamp;
+  return numericTimestamp * 1000;
 }
 
 function parseTicketCommand(messageBody) {
@@ -112,6 +123,68 @@ async function loadWhatsappContact(supabase, phoneNumber) {
   }
 
   return data;
+}
+
+async function loadLatestActiveTicket(supabase, phoneNumber) {
+  const { data, error } = await supabase
+    .from('tickets')
+    .select('id, status, whatsapp_chat_id, phone_number')
+    .eq('channel', 'whatsapp')
+    .eq('phone_number', phoneNumber)
+    .in('status', ACTIVE_TICKET_STATUSES)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load active ticket: ${error.message}`);
+  }
+
+  return data;
+}
+
+async function appendCustomerReply(supabase, ticketId, phoneNumber, chatId, content) {
+  const now = new Date().toISOString();
+
+  const { error: replyError } = await supabase
+    .from('replies')
+    .insert({
+      ticket_id: ticketId,
+      author: phoneNumber,
+      content,
+      sender_type: 'customer',
+      delivery_status: 'not_applicable',
+      delivery_attempts: 0,
+      created_at: now,
+    });
+
+  if (replyError) {
+    throw new Error(`Failed to save customer reply: ${replyError.message}`);
+  }
+
+  const { error: ticketError } = await supabase
+    .from('tickets')
+    .update({
+      status: 'Open',
+      updated_at: now,
+      whatsapp_chat_id: chatId,
+      phone_number: phoneNumber,
+    })
+    .eq('id', ticketId);
+
+  if (ticketError) {
+    throw new Error(`Reply saved but failed to update ticket: ${ticketError.message}`);
+  }
+
+  await upsertWhatsappContact(supabase, {
+    phone_number: phoneNumber,
+    chat_id: chatId,
+    invalid_message_count: 0,
+    last_inbound_at: now,
+    last_message_preview: String(content || '').slice(0, 250),
+    last_ticket_id: ticketId,
+    updated_at: now,
+  });
 }
 
 async function handleInvalidMessage(client, supabase, msg) {
@@ -298,6 +371,7 @@ async function main() {
   const supabase = getSupabaseClient();
   let outboundLoopBusy = false;
   let selfChatId = null;
+  let readyAtMs = null;
 
   const client = new Client({
     authStrategy: new LocalAuth({
@@ -317,6 +391,7 @@ async function main() {
   client.on('ready', () => {
     console.log('WhatsApp bot ready');
     selfChatId = client.info?.wid?._serialized || null;
+    readyAtMs = Date.now();
 
     setInterval(async () => {
       if (outboundLoopBusy) return;
@@ -341,7 +416,21 @@ async function main() {
       return;
     }
 
+    const messageTimestampMs = getMessageTimestampMs(msg);
+    if (readyAtMs && messageTimestampMs && messageTimestampMs < readyAtMs) {
+      console.log(`Ignoring old message from ${msg.from}`);
+      return;
+    }
+
     try {
+      const phoneNumber = normalizePhone(msg.from);
+      const activeTicket = await loadLatestActiveTicket(supabase, phoneNumber);
+
+      if (activeTicket) {
+        await appendCustomerReply(supabase, activeTicket.id, phoneNumber, msg.from, String(msg.body || ''));
+        return;
+      }
+
       const parsedCommand = parseTicketCommand(msg.body);
 
       if (!parsedCommand.isTicketCommand || !parsedCommand.isValid) {
