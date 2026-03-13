@@ -1,56 +1,20 @@
 stages:
-  - build
   - deploy
-
-variables:
-  IMAGE_WEB: gitlab-edu.itb.ac.id:5050/13523069/if3250_k02_g10_iom4/web:latest
-  IMAGE_BOT: gitlab-edu.itb.ac.id:5050/13523069/if3250_k02_g10_iom4/bot:latest
-  REGISTRY: gitlab-edu.itb.ac.id:5050
 
 workflow:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
 
-build-web:
-  stage: build
-  image: docker:24
-  services:
-    - docker:24-dind
-  tags:
-    - proxmox
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
-  script:
-    - |
-      docker build \
-        -f Dockerfile \
-        --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
-        --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
-        -t $IMAGE_WEB .
-    - docker push $IMAGE_WEB
-
-build-bot:
-  stage: build
-  image: docker:24
-  services:
-    - docker:24-dind
-  tags:
-    - proxmox
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
-  script:
-    - docker build -f Dockerfile.bot -t $IMAGE_BOT .
-    - docker push $IMAGE_BOT
-
 deploy:
   stage: deploy
   tags:
     - proxmox
-  before_script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $REGISTRY
   script:
     - cd /home/ppl/IF3250_K02_G10_IOM4
-    - docker compose pull
-    - docker compose up -d --remove-orphans
+    - git pull origin main
+    - docker compose down
+    - docker compose build
+        --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+        --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
+    - docker compose up -d
     - docker image prune -f
-  needs: [build-web, build-bot]
