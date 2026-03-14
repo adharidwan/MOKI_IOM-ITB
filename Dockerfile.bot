@@ -15,4 +15,4 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY scripts ./scripts
 
 VOLUME ["/app/.wwebjs_auth"]
-CMD ["dumb-init", "node", "scripts/whatsapp-bot.js"]
+CMD ["dumb-init", "/app/scripts/docker-start-bot.sh"]
