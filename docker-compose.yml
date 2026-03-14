@@ -6,15 +6,18 @@ services:
       args:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    image: iom4-web:latest
     ports:
       - "3000:3000"
     env_file:
       - .env.local
     restart: unless-stopped
+
   bot:
     build:
       context: .
       dockerfile: Dockerfile.bot
+    image: iom4-bot:latest
     env_file:
       - .env.local
     environment:
@@ -22,5 +25,6 @@ services:
     volumes:
       - bot_auth:/app/.wwebjs_auth
     restart: unless-stopped
+
 volumes:
   bot_auth:
