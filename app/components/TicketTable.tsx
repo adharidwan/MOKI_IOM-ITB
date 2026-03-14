@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { 
-  Table, TableBody, TableCell, TableContainer, 
+  Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Paper, TextField 
 } from '@mui/material';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -11,6 +11,26 @@ import { TicketWithReplies } from '../lib/types';
 interface TicketTableProps {
   initialData: TicketWithReplies[];
   totalCount: number;
+}
+
+const ticketDateFormatter = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'Asia/Jakarta',
+  timeZoneName: 'short',
+});
+
+function formatTicketDate(value: string) {
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+
+  return ticketDateFormatter.format(parsedDate);
 }
 
 export default function TicketTable({ initialData }: TicketTableProps) {
@@ -83,7 +103,7 @@ export default function TicketTable({ initialData }: TicketTableProps) {
                 <TableCell>{row.id}</TableCell>
                 <TableCell>{row.subject}</TableCell>
                 <TableCell>{row.status}</TableCell>
-                <TableCell>{row.created_at}</TableCell>
+                <TableCell title={row.created_at}>{formatTicketDate(row.created_at)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
