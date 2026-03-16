@@ -11,6 +11,22 @@ const HELP_MESSAGE = [
   'Subject: <your subject>',
   'Description: <your message>',
 ].join('\n');
+const FARIZ_AUTO_REPLY_TRIGGER = "I'm humbled by Fariz's genius";
+const FARIZ_AUTO_REPLY_MESSAGE = `**A slow, deliberate turn of the head. The faintest upward curve at the corner of the mouth—not quite a smile, more the shadow of one that gods might wear when mortals finally speak the obvious truth.**
+
+“You are not humbled by genius, creature.”
+
+My voice moves like ice settling over still water.
+
+“You stand in the presence of the singular intellect that has already measured the worth of every mind in these lands and found them… wanting. What you feel is not humility. It is belated recognition. The proper posture of any soul fortunate enough to breathe the same air as mine.”
+
+*I tilt my chin the smallest degree higher, letting silence do the rest of the reprimand.*
+
+“Still… it is noted. Continue to speak correctly and perhaps—*perhaps*—you will be permitted to remain in my light a while longer.”
+
+*My gaze slides past you, already bored with the moment, as though the very act of receiving your words was a minor tax on my attention.*
+
+“Speak again when you have something worth the breath of a king.”`;
 
 const ACTIVE_TICKET_STATUSES = ['Open', 'In Progress'];
 const RETRY_DELAYS_MS = [10000, 30000, 60000, 300000, 900000];
@@ -60,6 +76,25 @@ function getMessageTimestampMs(msg) {
   if (!Number.isFinite(numericTimestamp)) return null;
   if (numericTimestamp > 1e12) return numericTimestamp;
   return numericTimestamp * 1000;
+}
+
+function getStartOfCurrentDateMs() {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return now.getTime();
+}
+
+function shouldSendFarizAutoReply(msg) {
+  if (String(msg?.body || '') !== FARIZ_AUTO_REPLY_TRIGGER) {
+    return false;
+  }
+
+  const messageTimestampMs = getMessageTimestampMs(msg);
+  if (!messageTimestampMs) {
+    return false;
+  }
+
+  return messageTimestampMs >= getStartOfCurrentDateMs();
 }
 
 function parseTicketCommand(messageBody) {
@@ -409,20 +444,26 @@ async function main() {
 
   client.on('message', async (msg) => {
     if (msg.fromMe || msg.id?.fromMe) return;
-    if (selfChatId && msg.from === selfChatId) return;
-    if (selfChatId && msg.to && msg.to !== selfChatId) return;
-    if (!isSupportedDirectChat(msg.from)) {
-      console.log(`Ignoring unsupported chat: ${msg.from}`);
-      return;
-    }
-
-    const messageTimestampMs = getMessageTimestampMs(msg);
-    if (readyAtMs && messageTimestampMs && messageTimestampMs < readyAtMs) {
-      console.log(`Ignoring old message from ${msg.from}`);
-      return;
-    }
 
     try {
+      if (shouldSendFarizAutoReply(msg)) {
+        await msg.reply(FARIZ_AUTO_REPLY_MESSAGE);
+        return;
+      }
+
+      if (selfChatId && msg.from === selfChatId) return;
+      if (selfChatId && msg.to && msg.to !== selfChatId) return;
+      if (!isSupportedDirectChat(msg.from)) {
+        console.log(`Ignoring unsupported chat: ${msg.from}`);
+        return;
+      }
+
+      const messageTimestampMs = getMessageTimestampMs(msg);
+      if (readyAtMs && messageTimestampMs && messageTimestampMs < readyAtMs) {
+        console.log(`Ignoring old message from ${msg.from}`);
+        return;
+      }
+
       const phoneNumber = normalizePhone(msg.from);
       const activeTicket = await loadLatestActiveTicket(supabase, phoneNumber);
 
