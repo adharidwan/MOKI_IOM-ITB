@@ -14,6 +14,7 @@ import {
 import { YouTube, Instagram, X } from "@mui/icons-material";
 import YouTubeScraper from "../components/ScrapeYoutube";
 import XScraper from "../components/ScrapeX";
+import InstagramScraper from "../components/ScrapeIG";
 
 type Platform = "youtube" | "instagram" | "twitter";
 
@@ -94,14 +95,7 @@ export default function ContentManagement() {
         <Box sx={{ mt: 2 }}>
           {activePlatform === "youtube" && <YouTubeScraper />}
 
-          {activePlatform === "instagram" && (
-            <Box sx={{ textAlign: "center", py: 10 }}>
-              <Instagram sx={{ fontSize: 60, color: "#e0e0e0", mb: 2 }} />
-              <Typography color="text.secondary">
-                Modul Instagram masih dalam pengembangan.
-              </Typography>
-            </Box>
-          )}
+          {activePlatform === "instagram" && <InstagramScraper />}
 
           {activePlatform === "twitter" && <XScraper />}
         </Box>

@@ -12,30 +12,40 @@ import {
   ListItem,
   ListItemButton,
   ListItemIcon,
-  ListItemText,
   Checkbox,
   Stack,
-  Tooltip,
   IconButton,
+  Tooltip,
 } from "@mui/material";
-import { Refresh, VideoLibrary, Checklist, LinkOff } from "@mui/icons-material";
-import { scrape_youtube, ScrapeResult } from "@/app/lib/scrape-youtube";
+import { Refresh, Checklist, LinkOff } from "@mui/icons-material";
+import { scrape_ig } from "@/app/lib/scrape-ig";
 
-export default function YouTubeScraper() {
-  const [data, setData] = useState<ScrapeResult | null>(null);
+interface InstagramPost {
+  id: string;
+  title: string;
+  link: string;
+  thumbnail: string;
+}
+
+interface InstagramScrapeResult {
+  channel?: string;
+  videos?: InstagramPost[];
+  error?: string;
+}
+
+export default function InstagramScraper() {
+  const [data, setData] = useState<InstagramScrapeResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const handleScrape = async () => {
     setLoading(true);
     try {
-      const result = await scrape_youtube(
-        "https://www.youtube.com/@IOM-ITB/videos",
-      );
+      const result = await scrape_ig("iom_itb.official"); // Ganti sesuai username IOM ITB
       setData(result);
-      setSelectedIds([]); // Reset seleksi saat refresh
-    } catch (error) {
-      setData({ error: "Gagal mengambil data IOM ITB." });
+      setSelectedIds([]);
+    } catch {
+      setData({ error: "Gagal menarik data Instagram." });
     } finally {
       setLoading(false);
     }
@@ -54,41 +64,35 @@ export default function YouTubeScraper() {
   const handleSelectAll = () => {
     if (data?.videos) {
       if (selectedIds.length === data.videos.length) {
-        setSelectedIds([]); // Jika semua sudah terpilih, maka unselect all
+        setSelectedIds([]);
       } else {
-        setSelectedIds(data.videos.map((v) => v.id)); // Pilih semua ID
+        setSelectedIds(data.videos.map((v) => v.id));
       }
     }
   };
 
   const handleExport = () => {
-    const selectedData = data?.videos?.filter((v) =>
-      selectedIds.includes(v.id),
+    const selectedData = data?.videos?.filter((post) =>
+      selectedIds.includes(post.id),
     );
-    console.log("=== EKSPOR DATA JSON (PoC) ===");
+    console.log("=== EKSPOR DATA INSTAGRAM (PoC) ===");
     console.log(JSON.stringify(selectedData, null, 2));
-    alert(`${selectedIds.length} video di-log ke Console.`);
+    alert(`${selectedIds.length} post Instagram di-log ke Console.`);
   };
 
-  if (loading && !data) {
+  if (loading && !data)
     return (
       <Box sx={{ textAlign: "center", py: 10 }}>
-        <CircularProgress color="error" />
+        <CircularProgress sx={{ color: "#E1306C" }} />
         <Typography sx={{ mt: 2 }} color="text.secondary">
-          Menarik data YouTube...
+          Menghubungi Instagram...
         </Typography>
       </Box>
     );
-  }
 
   return (
     <Box>
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{ mb: 2 }}
-      >
+      <Stack direction="row" justifyContent="space-between" sx={{ mb: 2 }}>
         <Stack direction="row" spacing={1} alignItems="center">
           <Button
             variant="outlined"
@@ -102,7 +106,6 @@ export default function YouTubeScraper() {
               ? "Unselect All"
               : "Select All"}
           </Button>
-
           <Tooltip title="Refresh Data">
             <IconButton
               onClick={handleScrape}
@@ -113,10 +116,9 @@ export default function YouTubeScraper() {
             </IconButton>
           </Tooltip>
         </Stack>
-
         <Button
           variant="contained"
-          color="success"
+          sx={{ bgcolor: "#E1306C" }}
           disabled={selectedIds.length === 0}
           onClick={handleExport}
         >
@@ -126,33 +128,22 @@ export default function YouTubeScraper() {
 
       {data && !data.error && (
         <Card variant="outlined" sx={{ borderRadius: 3, overflow: "hidden" }}>
-          <Box sx={{ p: 2, bgcolor: "#f1f5f9" }}>
-            <Typography
-              variant="caption"
-              fontWeight="bold"
-              color="text.secondary"
-            >
-              CHANNEL: {data.channel?.toUpperCase()}
-            </Typography>
-          </Box>
-          <Divider />
           <List sx={{ p: 0, maxHeight: "500px", overflow: "auto" }}>
-            {data.videos?.map((video, index) => (
-              <Box key={`${video.id}-${index}`}>
+            {data.videos?.map((post, index) => (
+              <Box key={post.id}>
                 <ListItem disablePadding>
                   <ListItemButton
-                    onClick={() => handleToggle(video.id)}
+                    onClick={() => handleToggle(post.id)}
                     sx={{ py: 2, alignItems: "center" }}
                   >
                     <ListItemIcon sx={{ minWidth: 48 }}>
                       <Checkbox
-                        checked={selectedIds.includes(video.id)}
+                        checked={selectedIds.includes(post.id)}
                         disableRipple
                         edge="start"
                       />
                     </ListItemIcon>
 
-                    {/* Layout Grid Internal: Thumbnail di Kiri, Teks di Kanan */}
                     <Box
                       sx={{
                         display: "flex",
@@ -161,51 +152,48 @@ export default function YouTubeScraper() {
                         alignItems: "center",
                       }}
                     >
-                      {/* Box untuk Thumbnail dengan ukuran fix */}
                       <Box
                         component="img"
+                        // Gunakan Image Proxy weserv.nl
                         src={
-                          video.thumbnail ||
-                          "https://via.placeholder.com/160x90?text=No+Thumbnail"
+                          post.thumbnail
+                            ? `https://images.weserv.nl/?url=${encodeURIComponent(post.thumbnail)}`
+                            : "https://via.placeholder.com/100?text=No+Image"
                         }
-                        alt={video.title}
+                        alt={post.title || "Instagram Post"}
+                        referrerPolicy="no-referrer" // Tetap biarkan ini untuk keamanan tambahan
                         sx={{
-                          width: 160,
-                          height: 90,
+                          width: 100,
+                          height: 100,
                           borderRadius: 1,
                           objectFit: "cover",
-                          bgcolor: "#e2e8f0",
-                          flexShrink: 0, // Agar thumbnail tidak mengecil jika teks kepanjangan
+                          bgcolor: "#e2e8f0", // Beri warna latar belakang saat loading
                         }}
                       />
-
-                      {/* Box untuk Teks */}
                       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
                         <Typography
-                          variant="body1"
+                          variant="body2"
                           sx={{
                             fontWeight: 600,
-                            fontSize: "0.95rem",
+                            lineHeight: 1.3,
+                            mb: 0.5,
                             display: "-webkit-box",
                             WebkitLineClamp: 2,
                             WebkitBoxOrient: "vertical",
                             overflow: "hidden",
-                            lineHeight: 1.2,
-                            mb: 0.5,
                           }}
                         >
-                          {video.title}
+                          {post.title || "Instagram Post"}
                         </Typography>
-
                         <Typography
                           component="a"
-                          href={video.link}
+                          href={post.link}
                           target="_blank"
                           rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()} // Supaya klik link tidak trigger checkbox
+                          onClick={(e) => e.stopPropagation()}
                           sx={{
-                            fontSize: "0.75rem",
-                            color: "#2563eb", // Link biru
+                            fontSize: "0.7rem",
+                            color: "#2563eb",
                             textDecoration: "none",
                             "&:hover": { textDecoration: "underline" },
                             display: "inline-block",
@@ -215,7 +203,7 @@ export default function YouTubeScraper() {
                             textOverflow: "ellipsis",
                           }}
                         >
-                          {video.link}
+                          {post.link}
                         </Typography>
                       </Box>
                     </Box>
@@ -229,7 +217,7 @@ export default function YouTubeScraper() {
               <Box sx={{ p: 4, textAlign: "center" }}>
                 <LinkOff sx={{ fontSize: 40, color: "#cbd5e1", mb: 1 }} />
                 <Typography color="text.secondary">
-                  Tidak ada video ditemukan.
+                  Tidak ada post Instagram ditemukan.
                 </Typography>
               </Box>
             )}
