@@ -19,13 +19,20 @@ import {
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import { importCsvContactsAction } from '../csv/actions';
 
 interface CSVRow {
-  subject: string;
-  description: string;
-  user_email: string;
-  phone_number?: string;
-  channel?: string;
+  no_telp: string;
+  nama: string;
+  jenis_kelamin: string;
+  jabatan?: string;
+}
+
+interface RawCSVRow {
+  'no telp'?: string;
+  nama?: string;
+  'jenis kelamin'?: string;
+  jabatan?: string;
 }
 
 interface ParsedData {
@@ -61,7 +68,7 @@ export default function CSVDropZone() {
     setStatus({ type: 'info', message: 'Processing file...' });
     setParsedData(null);
 
-    Papa.parse<CSVRow>(file, {
+    Papa.parse<RawCSVRow>(file, {
       header: true,
       skipEmptyLines: true,
       transformHeader: (header) => header.trim().toLowerCase(),
@@ -71,38 +78,45 @@ export default function CSVDropZone() {
 
         if (results.errors.length > 0) {
           results.errors.forEach((err) => {
-            const rowNum = err.row ? err.row + 1 : '?';
+            const rowNum = err.row !== undefined ? err.row + 1 : '?';
             errors.push(`Row ${rowNum}: ${err.message}`);
           });
         }
+
+        const headers = (results.meta.fields || []).map((field) => field.trim().toLowerCase());
+        const requiredHeaders = ['no telp', 'nama', 'jenis kelamin'];
+
+        requiredHeaders.forEach((requiredHeader) => {
+          if (!headers.includes(requiredHeader)) {
+            errors.push(`Missing required column: ${requiredHeader}`);
+          }
+        });
         
         results.data.forEach((row, index) => {
           const rowNum = index + 2;
-          const subject = row.subject?.trim();
-          const description = row.description?.trim();
-          const userEmail = row.user_email?.trim();
-          const phoneNumber = row.phone_number?.trim();
-          const channel = row.channel?.trim() || 'csv_import';
+          const noTelp = row['no telp']?.trim();
+          const nama = row.nama?.trim();
+          const jenisKelamin = row['jenis kelamin']?.trim();
+          const jabatan = row.jabatan?.trim();
           
-          if (!subject) {
-            errors.push(`Row ${rowNum}: Subject is required`);
+          if (!noTelp) {
+            errors.push(`Row ${rowNum}: No Telp is required`);
             return;
           }
-          if (!description) {
-            errors.push(`Row ${rowNum}: Description is required`);
+          if (!nama) {
+            errors.push(`Row ${rowNum}: Nama is required`);
             return;
           }
-          if (!userEmail || !userEmail.includes('@')) {
-            errors.push(`Row ${rowNum}: Valid email is required`);
+          if (!jenisKelamin) {
+            errors.push(`Row ${rowNum}: Jenis kelamin is required`);
             return;
           }
           
           validData.push({
-            subject,
-            description,
-            user_email: userEmail,
-            phone_number: phoneNumber,
-            channel,
+            no_telp: noTelp,
+            nama,
+            jenis_kelamin: jenisKelamin,
+            jabatan,
           });
         });
 
@@ -168,7 +182,7 @@ export default function CSVDropZone() {
       </Typography>
       
       <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
-        Drag and drop a CSV file or click to select. Required columns: subject, description, user_email
+        Drag and drop a CSV file or click to select. Required columns: No Telp, Nama, Jenis kelamin. Optional: Jabatan
       </Typography>
 
       {/* Drop Zone */}
@@ -267,7 +281,7 @@ export default function CSVDropZone() {
           {parsedData.data.length > 0 && (
             <>
               <Typography variant="h6" sx={{ mb: 1, color: '#4e8d9c' }}>
-                Preview (showing {Math.min(parsedData.data.length, 10)} of {parsedData.data.length} rows)
+                Preview (showing {Math.min(parsedData.data.length, 5)} of {parsedData.data.length} rows)
               </Typography>
               
               <TableContainer sx={{ maxHeight: 400, border: '1px solid #ccc', borderRadius: 1 }}>
@@ -275,22 +289,20 @@ export default function CSVDropZone() {
                   <TableHead>
                     <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
                       <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Subject</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Description</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Email</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Phone</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Channel</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold' }}>No Telp</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold' }}>Nama</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold' }}>Jenis kelamin</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold' }}>Jabatan</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {parsedData.data.slice(0, 10).map((row, idx) => (
+                    {parsedData.data.slice(0, 5).map((row, idx) => (
                       <TableRow key={idx} hover>
                         <TableCell>{idx + 1}</TableCell>
-                        <TableCell>{row.subject}</TableCell>
-                        <TableCell>{row.description?.substring(0, 40)}{row.description && row.description.length > 40 ? '...' : ''}</TableCell>
-                        <TableCell>{row.user_email}</TableCell>
-                        <TableCell>{row.phone_number || '-'}</TableCell>
-                        <TableCell>{row.channel || 'csv_import'}</TableCell>
+                        <TableCell>{row.no_telp}</TableCell>
+                        <TableCell>{row.nama}</TableCell>
+                        <TableCell>{row.jenis_kelamin}</TableCell>
+                        <TableCell>{row.jabatan || '-'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -302,9 +314,25 @@ export default function CSVDropZone() {
                 <Button 
                   variant="contained" 
                   sx={{ backgroundColor: '#4e8d9c' }}
-                  onClick={() => {
-                    console.log('Importing:', parsedData.data);
-                    setStatus({ type: 'success', message: `Ready to import ${parsedData.data.length} tickets!` });
+                  disabled={isProcessing || parsedData.data.length === 0}
+                  onClick={async () => {
+                    if (!parsedData?.data?.length) {
+                      return;
+                    }
+
+                    setIsProcessing(true);
+                    setStatus({ type: 'info', message: 'Menyimpan data ke database...' });
+
+                    const result = await importCsvContactsAction(parsedData.data, parsedData.fileName);
+
+                    if (!result.success) {
+                      setStatus({ type: 'error', message: result.error || 'Import gagal' });
+                      setIsProcessing(false);
+                      return;
+                    }
+
+                    setStatus({ type: 'success', message: `Berhasil menyimpan ${result.inserted} data ke database` });
+                    setIsProcessing(false);
                   }}
                 >
                   Import {parsedData.data.length} Tickets

@@ -31,3 +31,14 @@ export interface Reply {
 export interface TicketWithReplies extends Ticket {
   replies: Reply[];
 }
+
+export interface CsvContact {
+  id: string;
+  no_telp: string;
+  nama: string;
+  jenis_kelamin: string;
+  jabatan: string | null;
+  source_file: string | null;
+  imported_at: string;
+  created_at: string;
+}
