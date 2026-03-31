@@ -30,7 +30,13 @@ My voice moves like ice settling over still water.
 
 const ACTIVE_TICKET_STATUSES = ['Open', 'In Progress'];
 const RETRY_DELAYS_MS = [10000, 30000, 60000, 300000, 900000];
-const BOT_POLL_INTERVAL_MS = 5000;
+const BOT_HEARTBEAT_INTERVAL_MS = 1000;
+const NON_RETRYABLE_DELIVERY_ERROR = 'Recipient is not a registered WhatsApp user.';
+const DEFAULT_DISPATCH_SETTINGS = {
+  id: 'default',
+  global_messages_per_minute: 24,
+  api_notifications_paused: false,
+};
 
 function getRequiredEnv(name) {
   const value = process.env[name];
@@ -318,72 +324,181 @@ function getNextRetryState(currentAttempts, errorMessage) {
   };
 }
 
-async function processOutboundReplies(client, supabase) {
-  const { data: replies, error } = await supabase
-    .from('replies')
-    .select('id, ticket_id, content, delivery_status, delivery_attempts, next_retry_at, tickets!inner(id, channel, whatsapp_chat_id)')
-    .eq('sender_type', 'admin')
+function getNextDueRecord(records) {
+  const now = Date.now();
+
+  return (records || []).find((record) => {
+    const retryAt = record.next_retry_at ? Date.parse(record.next_retry_at) : null;
+    return !retryAt || retryAt <= now;
+  });
+}
+
+async function resolveWhatsappRecipientChatId(client, phoneNumber) {
+  const numberId = await client.getNumberId(phoneNumber);
+  const chatId = numberId?._serialized || null;
+
+  if (!chatId || !isSupportedDirectChat(chatId)) {
+    return null;
+  }
+
+  return chatId;
+}
+
+function getDispatchMinGapMs(globalMessagesPerMinute) {
+  return Math.ceil(60000 / Math.max(1, Number(globalMessagesPerMinute) || 1));
+}
+
+async function loadDispatchSettings(supabase) {
+  const { data, error } = await supabase
+    .from('bot_dispatch_settings')
+    .select('*')
+    .eq('id', DEFAULT_DISPATCH_SETTINGS.id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load dispatch settings: ${error.message}`);
+  }
+
+  return data || DEFAULT_DISPATCH_SETTINGS;
+}
+
+async function loadNextOutboundMessage(supabase, settings) {
+  let query = supabase
+    .from('outbound_messages')
+    .select('id, source_type, source_id, ticket_id, recipient_phone_number, recipient_chat_id, content, delivery_status, delivery_attempts, next_retry_at, priority, created_at')
     .in('delivery_status', ['queued', 'retrying'])
+    .order('priority', { ascending: true })
     .order('created_at', { ascending: true })
     .limit(20);
 
+  if (settings.api_notifications_paused) {
+    query = query.eq('source_type', 'ticket_reply');
+  }
+
+  const { data: messages, error } = await query;
+
   if (error) {
-    throw new Error(`Failed to fetch outbound replies: ${error.message}`);
+    throw new Error(`Failed to fetch outbound messages: ${error.message}`);
   }
 
-  const now = Date.now();
-  const pendingReply = (replies || []).find((reply) => {
-    const retryAt = reply.next_retry_at ? Date.parse(reply.next_retry_at) : null;
-    return !retryAt || retryAt <= now;
-  });
+  return getNextDueRecord(messages);
+}
 
-  if (!pendingReply) {
+async function updateLinkedReplyDeliveryStatus(supabase, outboundMessage, payload) {
+  if (outboundMessage.source_type !== 'ticket_reply') {
     return;
   }
 
-  const attemptNumber = (pendingReply.delivery_attempts || 0) + 1;
-  const ticket = Array.isArray(pendingReply.tickets) ? pendingReply.tickets[0] : pendingReply.tickets;
+  const { error } = await supabase
+    .from('replies')
+    .update(payload)
+    .eq('id', outboundMessage.source_id);
 
-  if (
-    !ticket?.whatsapp_chat_id ||
-    ticket.channel !== 'whatsapp' ||
-    !isSupportedDirectChat(ticket.whatsapp_chat_id)
-  ) {
-    const { error: updateError } = await supabase
-      .from('replies')
-      .update({
-        delivery_status: 'not_applicable',
+  if (error) {
+    throw new Error(`Failed to update linked ticket reply delivery status: ${error.message}`);
+  }
+}
+
+async function processOutboundDispatchTick(client, supabase, dispatchState, nowMs = Date.now()) {
+  const settings = await loadDispatchSettings(supabase);
+  const minGapMs = getDispatchMinGapMs(settings.global_messages_per_minute);
+
+  if (dispatchState.nextDispatchAtMs > nowMs) {
+    return { processed: false, settings };
+  }
+
+  const pendingMessage = await loadNextOutboundMessage(supabase, settings);
+
+  if (!pendingMessage) {
+    return { processed: false, settings };
+  }
+
+  const attemptNumber = (pendingMessage.delivery_attempts || 0) + 1;
+  let recipientChatId = pendingMessage.recipient_chat_id || null;
+
+  if (!recipientChatId) {
+    recipientChatId = await resolveWhatsappRecipientChatId(
+      client,
+      pendingMessage.recipient_phone_number,
+    );
+
+    if (!recipientChatId) {
+      const { error: updateError } = await supabase
+        .from('outbound_messages')
+        .update({
+          delivery_status: 'failed',
+          delivery_attempts: attemptNumber,
+          next_retry_at: null,
+          last_delivery_error: NON_RETRYABLE_DELIVERY_ERROR,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', pendingMessage.id);
+
+      if (updateError) {
+        throw new Error(`Failed to mark non-deliverable outbound message: ${updateError.message}`);
+      }
+
+      await updateLinkedReplyDeliveryStatus(supabase, pendingMessage, {
+        delivery_status: 'failed',
         delivery_attempts: attemptNumber,
-        last_delivery_error: null,
         next_retry_at: null,
-      })
-      .eq('id', pendingReply.id);
+        last_delivery_error: NON_RETRYABLE_DELIVERY_ERROR,
+      });
 
-    if (updateError) {
-      throw new Error(`Failed to mark non-WhatsApp reply: ${updateError.message}`);
+      console.log(
+        JSON.stringify({
+          event: 'outbound_message_failed',
+          outbound_message_id: pendingMessage.id,
+          source_type: pendingMessage.source_type,
+          source_id: pendingMessage.source_id,
+          reason: NON_RETRYABLE_DELIVERY_ERROR,
+        }),
+      );
+
+      dispatchState.nextDispatchAtMs = Date.now() + minGapMs;
+      return { processed: true, settings };
     }
-
-    return;
   }
 
   try {
-    const result = await client.sendMessage(ticket.whatsapp_chat_id, pendingReply.content);
+    const result = await client.sendMessage(recipientChatId, pendingMessage.content);
+    const deliveredAt = new Date().toISOString();
 
     const { error: updateError } = await supabase
-      .from('replies')
+      .from('outbound_messages')
       .update({
+        recipient_chat_id: recipientChatId,
         delivery_status: 'sent',
         delivery_attempts: attemptNumber,
-        delivered_at: new Date().toISOString(),
+        delivered_at: deliveredAt,
         last_delivery_error: null,
         next_retry_at: null,
         whatsapp_message_id: result?.id?._serialized || null,
+        updated_at: deliveredAt,
       })
-      .eq('id', pendingReply.id);
+      .eq('id', pendingMessage.id);
 
     if (updateError) {
-      throw new Error(`Message sent but reply status update failed: ${updateError.message}`);
+      throw new Error(`Message sent but outbound status update failed: ${updateError.message}`);
     }
+
+    await updateLinkedReplyDeliveryStatus(supabase, pendingMessage, {
+      delivery_status: 'sent',
+      delivery_attempts: attemptNumber,
+      delivered_at: deliveredAt,
+      last_delivery_error: null,
+      next_retry_at: null,
+      whatsapp_message_id: result?.id?._serialized || null,
+    });
+
+    console.log(
+      JSON.stringify({
+        event: 'outbound_message_sent',
+        outbound_message_id: pendingMessage.id,
+        source_type: pendingMessage.source_type,
+        source_id: pendingMessage.source_id,
+      }),
+    );
   } catch (error) {
     const retryState = getNextRetryState(
       attemptNumber,
@@ -391,20 +506,45 @@ async function processOutboundReplies(client, supabase) {
     );
 
     const { error: updateError } = await supabase
-      .from('replies')
-      .update(retryState)
-      .eq('id', pendingReply.id);
+      .from('outbound_messages')
+      .update({
+        recipient_chat_id: recipientChatId,
+        updated_at: new Date().toISOString(),
+        ...retryState,
+      })
+      .eq('id', pendingMessage.id);
 
     if (updateError) {
-      throw new Error(`Failed to update retry state: ${updateError.message}`);
+      throw new Error(`Failed to update outbound message retry state: ${updateError.message}`);
     }
+
+    await updateLinkedReplyDeliveryStatus(supabase, pendingMessage, retryState);
+
+    console.log(
+      JSON.stringify({
+        event:
+          retryState.delivery_status === 'failed'
+            ? 'outbound_message_failed'
+            : 'outbound_message_retrying',
+        outbound_message_id: pendingMessage.id,
+        source_type: pendingMessage.source_type,
+        source_id: pendingMessage.source_id,
+        reason: retryState.last_delivery_error,
+      }),
+    );
   }
+
+  dispatchState.nextDispatchAtMs = Date.now() + minGapMs;
+  return { processed: true, settings };
 }
 
 async function main() {
   const chromiumPath = process.env.WHATSAPP_CHROMIUM_PATH || '/snap/bin/chromium';
   const supabase = getSupabaseClient();
   let outboundLoopBusy = false;
+  const dispatchState = {
+    nextDispatchAtMs: 0,
+  };
   let selfChatId = null;
   let readyAtMs = null;
 
@@ -433,13 +573,13 @@ async function main() {
       outboundLoopBusy = true;
 
       try {
-        await processOutboundReplies(client, supabase);
+        await processOutboundDispatchTick(client, supabase, dispatchState);
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
       } finally {
         outboundLoopBusy = false;
       }
-    }, BOT_POLL_INTERVAL_MS);
+    }, BOT_HEARTBEAT_INTERVAL_MS);
   });
 
   client.on('message', async (msg) => {
@@ -493,7 +633,18 @@ async function main() {
   await client.initialize();
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  getDispatchMinGapMs,
+  getNextRetryState,
+  loadDispatchSettings,
+  loadNextOutboundMessage,
+  processOutboundDispatchTick,
+  resolveWhatsappRecipientChatId,
+};
