@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
   getDispatchMinGapMs,
+  loadDispatchSettingsWithFallback,
   processOutboundDispatchTick,
+  summarizeDispatchSettingsLoadError,
 } = require('../scripts/whatsapp-bot.js');
 
 interface FakeOutboundMessageRecord {
@@ -44,9 +46,17 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
     global_messages_per_minute: 24,
     api_notifications_paused: false,
   };
+  let dispatchSettingsError: { message: string } | null = null;
+  let dispatchSettingsReadCount = 0;
 
   return {
     dispatchSettings,
+    setDispatchSettingsError(error: { message: string } | null) {
+      dispatchSettingsError = error;
+    },
+    getDispatchSettingsReadCount() {
+      return dispatchSettingsReadCount;
+    },
     replies,
     from(tableName: string) {
       if (tableName === 'bot_dispatch_settings') {
@@ -55,7 +65,10 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
             return {
               eq() {
                 return {
-                  maybeSingle: async () => ({ data: dispatchSettings, error: null }),
+                  maybeSingle: async () => {
+                    dispatchSettingsReadCount += 1;
+                    return { data: dispatchSettingsError ? null : dispatchSettings, error: dispatchSettingsError };
+                  },
                 };
               },
             };
@@ -311,5 +324,74 @@ describe('processOutboundDispatchTick', () => {
     expect(client.sendMessage).toHaveBeenCalledTimes(2);
     expect(records[0].delivery_status).toBe('sent');
     expect(records[1].delivery_status).toBe('sent');
+  });
+
+  it('falls back to cached dispatch settings when the settings query fails', async () => {
+    const records: FakeOutboundMessageRecord[] = [
+      {
+        id: 'outbound-1',
+        source_type: 'api_notification',
+        source_id: 'api:client-1:idem-1',
+        ticket_id: null,
+        priority: 100,
+        recipient_phone_number: '6281111111111',
+        recipient_chat_id: '6281111111111@c.us',
+        content: 'First notification',
+        delivery_status: 'queued',
+        delivery_attempts: 0,
+        next_retry_at: null,
+        created_at: '2026-03-31T05:30:00.000Z',
+      },
+    ];
+    const supabase = createFakeSupabase(records);
+    const dispatchState = {
+      nextDispatchAtMs: 0,
+      cachedDispatchSettings: {
+        id: 'default',
+        global_messages_per_minute: 30,
+        api_notifications_paused: false,
+      },
+      cachedDispatchSettingsFreshUntilMs: 0,
+    };
+    const client = {
+      getNumberId: vi.fn(),
+      sendMessage: vi.fn().mockResolvedValue({ id: { _serialized: 'wa-msg-1' } }),
+    };
+
+    supabase.setDispatchSettingsError({ message: '<!DOCTYPE html><title>502: Bad gateway</title>' });
+
+    vi.spyOn(Date, 'now').mockReturnValue(4_000_000);
+    await processOutboundDispatchTick(client, supabase, dispatchState, 4_000_000);
+    vi.restoreAllMocks();
+
+    expect(client.sendMessage).toHaveBeenCalledWith('6281111111111@c.us', 'First notification');
+    expect(dispatchState.nextDispatchAtMs).toBe(4_002_000);
+    expect(records[0].delivery_status).toBe('sent');
+  });
+});
+
+describe('dispatch settings caching helpers', () => {
+  it('reuses cached settings within the ttl window', async () => {
+    const supabase = createFakeSupabase([]);
+    const dispatchState = {
+      nextDispatchAtMs: 0,
+      cachedDispatchSettings: null,
+      cachedDispatchSettingsFreshUntilMs: 0,
+    };
+
+    const first = await loadDispatchSettingsWithFallback(supabase, dispatchState, 5_000_000);
+    const second = await loadDispatchSettingsWithFallback(supabase, dispatchState, 5_002_000);
+
+    expect(first.global_messages_per_minute).toBe(24);
+    expect(second.global_messages_per_minute).toBe(24);
+    expect(supabase.getDispatchSettingsReadCount()).toBe(1);
+  });
+
+  it('summarizes html upstream failures without dumping the full page', () => {
+    expect(
+      summarizeDispatchSettingsLoadError(
+        new Error('<!DOCTYPE html><html><body><span>Error code 502</span></body></html>'),
+      ),
+    ).toContain('HTML error page (502)');
   });
 });

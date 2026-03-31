@@ -31,6 +31,7 @@ My voice moves like ice settling over still water.
 const ACTIVE_TICKET_STATUSES = ['Open', 'In Progress'];
 const RETRY_DELAYS_MS = [10000, 30000, 60000, 300000, 900000];
 const BOT_HEARTBEAT_INTERVAL_MS = 1000;
+const DISPATCH_SETTINGS_CACHE_TTL_MS = 5000;
 const NON_RETRYABLE_DELIVERY_ERROR = 'Recipient is not a registered WhatsApp user.';
 const DEFAULT_DISPATCH_SETTINGS = {
   id: 'default',
@@ -348,6 +349,22 @@ function getDispatchMinGapMs(globalMessagesPerMinute) {
   return Math.ceil(60000 / Math.max(1, Number(globalMessagesPerMinute) || 1));
 }
 
+function summarizeDispatchSettingsLoadError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  const compactMessage = message.replace(/\s+/g, ' ').trim();
+
+  if (/<!DOCTYPE html>/i.test(compactMessage)) {
+    const errorCodeMatch = compactMessage.match(/Error code (\d+)/i);
+    const errorCode = errorCodeMatch?.[1];
+
+    return errorCode
+      ? `Dispatch settings fetch returned an upstream HTML error page (${errorCode}).`
+      : 'Dispatch settings fetch returned an upstream HTML error page.';
+  }
+
+  return compactMessage.slice(0, 240);
+}
+
 async function loadDispatchSettings(supabase) {
   const { data, error } = await supabase
     .from('bot_dispatch_settings')
@@ -360,6 +377,39 @@ async function loadDispatchSettings(supabase) {
   }
 
   return data || DEFAULT_DISPATCH_SETTINGS;
+}
+
+async function loadDispatchSettingsWithFallback(supabase, dispatchState, nowMs = Date.now()) {
+  if (
+    dispatchState.cachedDispatchSettings &&
+    dispatchState.cachedDispatchSettingsFreshUntilMs > nowMs
+  ) {
+    return dispatchState.cachedDispatchSettings;
+  }
+
+  try {
+    const settings = await loadDispatchSettings(supabase);
+    dispatchState.cachedDispatchSettings = settings;
+    dispatchState.cachedDispatchSettingsFreshUntilMs = nowMs + DISPATCH_SETTINGS_CACHE_TTL_MS;
+    return settings;
+  } catch (error) {
+    const hadCachedSettings = Boolean(dispatchState.cachedDispatchSettings);
+    const fallbackSettings = dispatchState.cachedDispatchSettings || DEFAULT_DISPATCH_SETTINGS;
+
+    dispatchState.cachedDispatchSettings = fallbackSettings;
+    dispatchState.cachedDispatchSettingsFreshUntilMs = nowMs + DISPATCH_SETTINGS_CACHE_TTL_MS;
+
+    console.error(
+      JSON.stringify({
+        event: 'dispatch_settings_fallback',
+        reason: summarizeDispatchSettingsLoadError(error),
+        using_cached_settings: hadCachedSettings,
+        using_default_settings: fallbackSettings === DEFAULT_DISPATCH_SETTINGS,
+      }),
+    );
+
+    return fallbackSettings;
+  }
 }
 
 async function loadNextOutboundMessage(supabase, settings) {
@@ -400,7 +450,7 @@ async function updateLinkedReplyDeliveryStatus(supabase, outboundMessage, payloa
 }
 
 async function processOutboundDispatchTick(client, supabase, dispatchState, nowMs = Date.now()) {
-  const settings = await loadDispatchSettings(supabase);
+  const settings = await loadDispatchSettingsWithFallback(supabase, dispatchState, nowMs);
   const minGapMs = getDispatchMinGapMs(settings.global_messages_per_minute);
 
   if (dispatchState.nextDispatchAtMs > nowMs) {
@@ -544,6 +594,8 @@ async function main() {
   let outboundLoopBusy = false;
   const dispatchState = {
     nextDispatchAtMs: 0,
+    cachedDispatchSettings: null,
+    cachedDispatchSettingsFreshUntilMs: 0,
   };
   let selfChatId = null;
   let readyAtMs = null;
@@ -644,7 +696,9 @@ module.exports = {
   getDispatchMinGapMs,
   getNextRetryState,
   loadDispatchSettings,
+  loadDispatchSettingsWithFallback,
   loadNextOutboundMessage,
   processOutboundDispatchTick,
   resolveWhatsappRecipientChatId,
+  summarizeDispatchSettingsLoadError,
 };
