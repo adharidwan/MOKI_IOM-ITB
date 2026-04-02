@@ -91,35 +91,23 @@ export async function authenticateApiClient(
   repository: NotificationRepository,
   now = new Date(),
 ): Promise<ApiClientRecord> {
-  const apiKey = extractBearerToken(authorizationHeader);
-
-  if (!apiKey) {
-    throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
-  }
-
-  const keyPrefix = extractApiKeyPrefix(apiKey);
-
-  if (!keyPrefix) {
-    throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
-  }
-
+  const { apiKey, keyPrefix } = extractApiKeyAndPrefix(authorizationHeader);
   const client = await repository.findApiClientByKeyPrefix(keyPrefix);
 
   if (!client) {
     throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
   }
 
-  const hashedApiKey = hashApiKey(apiKey);
-
-  if (!safeEqual(hashedApiKey, client.key_hash)) {
-    throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
-  }
-
-  if (client.status !== 'active') {
-    throw new PublicApiError(403, 'api_client_disabled', 'API client is disabled.');
-  }
-
-  await repository.touchApiClientLastUsedAt(client.id, now.toISOString());
+  validateApiClient(apiKey, client);
+  void repository.touchApiClientLastUsedAt(client.id, now.toISOString()).catch((error) => {
+    console.error(
+      JSON.stringify({
+        event: 'api_client_usage_metadata_update_failed',
+        client_id: client.id,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  });
 
   return client;
 }
@@ -141,27 +129,17 @@ export async function queueWhatsappMessage(
     );
   }
 
-  const parsedBody = parseQueueWhatsappMessagePayload(body);
+  const parsedBody = parseAndFingerprintPayload(body);
 
-  if (!parsedBody.success) {
-    throw new PublicApiError(
-      422,
-      'invalid_request_body',
-      'Request body validation failed.',
-      formatZodIssues(parsedBody.error),
-    );
-  }
-
-  const requestFingerprint = createRequestFingerprint(parsedBody.data);
   const idempotencyReservation = await repository.reserveApiNotificationIdempotency(
     client.id,
     idempotencyKey,
-    requestFingerprint,
+    parsedBody.requestFingerprint,
     API_IDEMPOTENCY_TTL_SECONDS,
   );
 
   if (idempotencyReservation.status === 'replay') {
-    return buildStoredIdempotentResponse(idempotencyReservation.record, requestFingerprint);
+    return buildStoredIdempotentResponse(idempotencyReservation.record, parsedBody.requestFingerprint);
   }
 
   if (idempotencyReservation.status === 'conflict') {
@@ -215,10 +193,10 @@ export async function queueWhatsappMessage(
     const queuedMessage = await repository.createOutboundMessage({
       clientId: client.id,
       idempotencyKey,
-      requestFingerprint,
-      recipientPhoneNumber: parsedBody.data.recipientPhoneNumber,
-      content: parsedBody.data.message,
-      clientReference: parsedBody.data.clientReference,
+      requestFingerprint: parsedBody.requestFingerprint,
+      recipientPhoneNumber: parsedBody.recipientPhoneNumber,
+      content: parsedBody.message,
+      clientReference: parsedBody.clientReference,
       acceptedAt: now.toISOString(),
     });
 
@@ -227,7 +205,7 @@ export async function queueWhatsappMessage(
     await repository.completeApiNotificationIdempotency(
       client.id,
       idempotencyKey,
-      requestFingerprint,
+      parsedBody.requestFingerprint,
       responseBody,
       API_IDEMPOTENCY_TTL_SECONDS,
     );
@@ -245,7 +223,11 @@ export async function queueWhatsappMessage(
 
     return responseBody;
   } catch (error) {
-    await repository.clearApiNotificationIdempotency(client.id, idempotencyKey, requestFingerprint);
+    await repository.clearApiNotificationIdempotency(
+      client.id,
+      idempotencyKey,
+      parsedBody.requestFingerprint,
+    );
     throw error;
   }
 }
@@ -266,11 +248,7 @@ export async function handleWhatsappNotificationRequest(
       );
     }
 
-    const client = await authenticateApiClient(
-      request.headers.get('authorization'),
-      repository,
-      now,
-    );
+    const client = await authenticateApiClient(request.headers.get('authorization'), repository, now);
 
     let body: unknown;
 
@@ -287,7 +265,6 @@ export async function handleWhatsappNotificationRequest(
       repository,
       now,
     );
-
     return Response.json(responseBody, { status: 202 });
   } catch (error) {
     if (error instanceof PublicApiError) {
@@ -305,6 +282,61 @@ export async function handleWhatsappNotificationRequest(
 
     throw error;
   }
+}
+
+function extractApiKeyAndPrefix(
+  authorizationHeader: string | null,
+): { apiKey: string; keyPrefix: string } {
+  const apiKey = extractBearerToken(authorizationHeader);
+
+  if (!apiKey) {
+    throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
+  }
+
+  const keyPrefix = extractApiKeyPrefix(apiKey);
+
+  if (!keyPrefix) {
+    throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
+  }
+
+  return { apiKey, keyPrefix };
+}
+
+function validateApiClient(apiKey: string, client: ApiClientRecord): void {
+  const hashedApiKey = hashApiKey(apiKey);
+
+  if (!safeEqual(hashedApiKey, client.key_hash)) {
+    throw new PublicApiError(401, 'invalid_api_key', 'Missing or invalid API key.');
+  }
+
+  if (client.status !== 'active') {
+    throw new PublicApiError(403, 'api_client_disabled', 'API client is disabled.');
+  }
+}
+
+function parseAndFingerprintPayload(body: unknown): {
+  recipientPhoneNumber: string;
+  message: string;
+  clientReference: string | null;
+  requestFingerprint: string;
+} {
+  const parsedBody = parseQueueWhatsappMessagePayload(body);
+
+  if (!parsedBody.success) {
+    throw new PublicApiError(
+      422,
+      'invalid_request_body',
+      'Request body validation failed.',
+      formatZodIssues(parsedBody.error),
+    );
+  }
+
+  return {
+    recipientPhoneNumber: parsedBody.data.recipientPhoneNumber,
+    message: parsedBody.data.message,
+    clientReference: parsedBody.data.clientReference,
+    requestFingerprint: createRequestFingerprint(parsedBody.data),
+  };
 }
 
 function buildStoredIdempotentResponse(
