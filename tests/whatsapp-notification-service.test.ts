@@ -3,12 +3,16 @@ import { describe, expect, it } from 'vitest';
 import {
   handleWhatsappNotificationRequest,
   NotificationRepository,
-  NotificationRepositoryError,
 } from '../app/lib/whatsapp-notification-service';
 import type {
   ApiClientRecord,
   OutboundMessageRecord,
 } from '../app/lib/whatsapp-notification-utils';
+import {
+  API_IDEMPOTENCY_TTL_SECONDS,
+  type QueueWhatsappMessageResponse,
+  type StoredApiIdempotencyRecord,
+} from '../app/lib/outbound-dispatch-job';
 import {
   API_NOTIFICATION_PRIORITY,
   DEFAULT_MAX_PENDING_MESSAGES,
@@ -23,6 +27,16 @@ const FIXED_NOW = new Date('2026-03-31T05:30:00.000Z');
 class InMemoryNotificationRepository implements NotificationRepository {
   clients: ApiClientRecord[];
   outboundMessages: OutboundMessageRecord[];
+  idempotencyRecords = new Map<
+    string,
+    {
+      record: StoredApiIdempotencyRecord;
+      expiresAtMs: number;
+    }
+  >();
+  acceptedByClient = new Map<string, number[]>();
+  pendingByClient = new Map<string, number>();
+  nowMs = FIXED_NOW.getTime();
 
   constructor(clients: ApiClientRecord[]) {
     this.clients = clients;
@@ -44,39 +58,95 @@ class InMemoryNotificationRepository implements NotificationRepository {
     client.updated_at = isoTimestamp;
   }
 
-  async findOutboundMessageByIdempotency(
+  async reserveApiNotificationIdempotency(
     clientId: string,
     idempotencyKey: string,
-  ): Promise<OutboundMessageRecord | null> {
-    return (
-      this.outboundMessages.find(
-        (message) =>
-          message.client_id === clientId &&
-          message.source_type === 'api_notification' &&
-          message.idempotency_key === idempotencyKey,
-      ) ?? null
-    );
+    requestFingerprint: string,
+    ttlSeconds: number,
+  ): Promise<
+    | {
+        status: 'acquired';
+      }
+    | {
+        status: 'replay';
+        record: StoredApiIdempotencyRecord;
+      }
+    | {
+        status: 'conflict';
+      }
+  > {
+    const mapKey = `${clientId}:${idempotencyKey}`;
+    const existing = this.idempotencyRecords.get(mapKey);
+    const nowMs = this.nowMs;
+
+    if (existing && existing.expiresAtMs > nowMs) {
+      if (existing.record.request_fingerprint !== requestFingerprint) {
+        return { status: 'conflict' };
+      }
+
+      if (existing.record.state === 'completed') {
+        return { status: 'replay', record: existing.record };
+      }
+    }
+
+    this.idempotencyRecords.set(mapKey, {
+      record: {
+        state: 'inflight',
+        request_fingerprint: requestFingerprint,
+        response: null,
+        updated_at: FIXED_NOW.toISOString(),
+      },
+      expiresAtMs: nowMs + ttlSeconds * 1000,
+    });
+
+    return { status: 'acquired' };
   }
 
-  async countRecentAcceptedApiNotifications(
+  async completeApiNotificationIdempotency(
     clientId: string,
-    sinceIsoTimestamp: string,
-  ): Promise<number> {
-    return this.outboundMessages.filter(
-      (message) =>
-        message.client_id === clientId &&
-        message.source_type === 'api_notification' &&
-        message.created_at >= sinceIsoTimestamp,
-    ).length;
+    idempotencyKey: string,
+    requestFingerprint: string,
+    response: QueueWhatsappMessageResponse,
+    ttlSeconds: number,
+  ): Promise<void> {
+    this.idempotencyRecords.set(`${clientId}:${idempotencyKey}`, {
+      record: {
+        state: 'completed',
+        request_fingerprint: requestFingerprint,
+        response: {
+          ...response,
+          idempotent_replay: false,
+        },
+        updated_at: FIXED_NOW.toISOString(),
+      },
+      expiresAtMs: this.nowMs + ttlSeconds * 1000,
+    });
+  }
+
+  async clearApiNotificationIdempotency(
+    clientId: string,
+    idempotencyKey: string,
+    requestFingerprint: string,
+  ): Promise<void> {
+    const mapKey = `${clientId}:${idempotencyKey}`;
+    const existing = this.idempotencyRecords.get(mapKey);
+
+    if (
+      existing &&
+      existing.record.state === 'inflight' &&
+      existing.record.request_fingerprint === requestFingerprint
+    ) {
+      this.idempotencyRecords.delete(mapKey);
+    }
+  }
+
+  async countRecentAcceptedApiNotifications(clientId: string, nowMs: number): Promise<number> {
+    return (this.acceptedByClient.get(clientId) || []).filter((value) => value > nowMs - 60_000)
+      .length;
   }
 
   async countPendingApiNotifications(clientId: string): Promise<number> {
-    return this.outboundMessages.filter(
-      (message) =>
-        message.client_id === clientId &&
-        message.source_type === 'api_notification' &&
-        ['queued', 'retrying'].includes(message.delivery_status),
-    ).length;
+    return this.pendingByClient.get(clientId) || 0;
   }
 
   async createOutboundMessage(input: {
@@ -86,17 +156,8 @@ class InMemoryNotificationRepository implements NotificationRepository {
     recipientPhoneNumber: string;
     content: string;
     clientReference: string | null;
+    acceptedAt: string;
   }): Promise<OutboundMessageRecord> {
-    const duplicate = this.outboundMessages.find(
-      (message) =>
-        message.client_id === input.clientId &&
-        message.idempotency_key === input.idempotencyKey,
-    );
-
-    if (duplicate) {
-      throw new NotificationRepositoryError('Duplicate idempotency key.', '23505');
-    }
-
     const outboundMessage: OutboundMessageRecord = {
       id: `outbound-${this.outboundMessages.length + 1}`,
       client_id: input.clientId,
@@ -116,11 +177,17 @@ class InMemoryNotificationRepository implements NotificationRepository {
       last_delivery_error: null,
       whatsapp_message_id: null,
       delivered_at: null,
-      created_at: FIXED_NOW.toISOString(),
-      updated_at: FIXED_NOW.toISOString(),
+      created_at: input.acceptedAt,
+      updated_at: input.acceptedAt,
     };
 
     this.outboundMessages.push(outboundMessage);
+    this.acceptedByClient.set(input.clientId, [
+      ...(this.acceptedByClient.get(input.clientId) || []),
+      Date.parse(input.acceptedAt),
+    ]);
+    this.pendingByClient.set(input.clientId, (this.pendingByClient.get(input.clientId) || 0) + 1);
+
     return outboundMessage;
   }
 }
@@ -157,9 +224,15 @@ async function sendRequest(
     authorizationHeader?: string;
     contentType?: string;
     idempotencyKey?: string;
+    now?: Date;
   } = {},
 ): Promise<Response> {
   const headers = new Headers();
+  const requestNow = options.now ?? FIXED_NOW;
+
+  if (repository instanceof InMemoryNotificationRepository) {
+    repository.nowMs = requestNow.getTime();
+  }
 
   headers.set('content-type', options.contentType ?? 'application/json');
 
@@ -188,7 +261,7 @@ async function sendRequest(
       ),
     }),
     repository,
-    FIXED_NOW,
+    requestNow,
   );
 }
 
@@ -280,7 +353,7 @@ describe('handleWhatsappNotificationRequest', () => {
     expect(body.error.details).toContain('message: Field `message` is required.');
   });
 
-  it('deduplicates exact idempotent replays', async () => {
+  it('deduplicates exact idempotent replays within the redis ttl window', async () => {
     const { apiKey, record } = createApiClient();
     const repository = new InMemoryNotificationRepository([record]);
 
@@ -317,28 +390,7 @@ describe('handleWhatsappNotificationRequest', () => {
     record.max_requests_per_minute = 1;
     const repository = new InMemoryNotificationRepository([record]);
 
-    repository.outboundMessages.push({
-      id: 'outbound-existing',
-      client_id: record.id,
-      idempotency_key: 'existing-idem',
-      request_fingerprint: 'existing-fingerprint',
-      source_type: 'api_notification',
-      source_id: buildApiNotificationSourceId(record.id, 'existing-idem'),
-      ticket_id: null,
-      priority: API_NOTIFICATION_PRIORITY,
-      recipient_phone_number: '6281234567890',
-      recipient_chat_id: null,
-      content: 'Previous request',
-      client_reference: null,
-      delivery_status: 'queued',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: null,
-      whatsapp_message_id: null,
-      delivered_at: null,
-      created_at: FIXED_NOW.toISOString(),
-      updated_at: FIXED_NOW.toISOString(),
-    });
+    repository.acceptedByClient.set(record.id, [FIXED_NOW.getTime()]);
 
     const response = await sendRequest(repository, {
       apiKey,
@@ -354,28 +406,7 @@ describe('handleWhatsappNotificationRequest', () => {
     record.max_pending_messages = 1;
     const repository = new InMemoryNotificationRepository([record]);
 
-    repository.outboundMessages.push({
-      id: 'outbound-pending',
-      client_id: record.id,
-      idempotency_key: 'existing-idem',
-      request_fingerprint: 'existing-fingerprint',
-      source_type: 'api_notification',
-      source_id: buildApiNotificationSourceId(record.id, 'existing-idem'),
-      ticket_id: null,
-      priority: API_NOTIFICATION_PRIORITY,
-      recipient_phone_number: '6281234567890',
-      recipient_chat_id: null,
-      content: 'Pending request',
-      client_reference: null,
-      delivery_status: 'queued',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: null,
-      whatsapp_message_id: null,
-      delivered_at: null,
-      created_at: FIXED_NOW.toISOString(),
-      updated_at: FIXED_NOW.toISOString(),
-    });
+    repository.pendingByClient.set(record.id, 1);
 
     const response = await sendRequest(repository, {
       apiKey,
@@ -392,32 +423,27 @@ describe('handleWhatsappNotificationRequest', () => {
     record.max_pending_messages = 1;
     const repository = new InMemoryNotificationRepository([record]);
 
-    repository.outboundMessages.push({
-      id: 'outbound-replay',
-      client_id: record.id,
-      idempotency_key: 'idem-existing',
-      request_fingerprint: createRequestFingerprint({
+    await repository.completeApiNotificationIdempotency(
+      record.id,
+      'idem-existing',
+      'fp-1',
+      {
+        message_id: 'outbound-1',
+        status: 'queued',
+        accepted_at: FIXED_NOW.toISOString(),
+        client_reference: 'trx-123',
+        idempotent_replay: false,
+      },
+      API_IDEMPOTENCY_TTL_SECONDS,
+    );
+    repository.idempotencyRecords.get(`${record.id}:idem-existing`)!.record.request_fingerprint =
+      createRequestFingerprint({
         recipientPhoneNumber: '6281234567890',
         message: 'Transfer successful.',
         clientReference: 'trx-123',
-      }),
-      source_type: 'api_notification',
-      source_id: buildApiNotificationSourceId(record.id, 'idem-existing'),
-      ticket_id: null,
-      priority: API_NOTIFICATION_PRIORITY,
-      recipient_phone_number: '6281234567890',
-      recipient_chat_id: null,
-      content: 'Transfer successful.',
-      client_reference: 'trx-123',
-      delivery_status: 'queued',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: null,
-      whatsapp_message_id: null,
-      delivered_at: null,
-      created_at: FIXED_NOW.toISOString(),
-      updated_at: FIXED_NOW.toISOString(),
-    });
+      });
+    repository.acceptedByClient.set(record.id, [FIXED_NOW.getTime()]);
+    repository.pendingByClient.set(record.id, 1);
 
     const response = await sendRequest(repository, {
       apiKey,
@@ -426,5 +452,25 @@ describe('handleWhatsappNotificationRequest', () => {
 
     expect(response.status).toBe(202);
     expect((await response.json()).idempotent_replay).toBe(true);
+  });
+
+  it('treats an expired redis idempotency key as a new request', async () => {
+    const { apiKey, record } = createApiClient();
+    const repository = new InMemoryNotificationRepository([record]);
+
+    await sendRequest(repository, { apiKey, idempotencyKey: 'idem-expired' });
+    repository.idempotencyRecords.get(`${record.id}:idem-expired`)!.expiresAtMs =
+      FIXED_NOW.getTime() - 1;
+
+    const later = new Date(FIXED_NOW.getTime() + API_IDEMPOTENCY_TTL_SECONDS * 1000 + 1000);
+    const response = await sendRequest(repository, {
+      apiKey,
+      idempotencyKey: 'idem-expired',
+      now: later,
+    });
+
+    expect(response.status).toBe(202);
+    expect(repository.outboundMessages).toHaveLength(2);
+    expect((await response.json()).message_id).toBe('outbound-2');
   });
 });

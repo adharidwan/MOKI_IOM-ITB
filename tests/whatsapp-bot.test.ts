@@ -4,25 +4,21 @@ import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+  DelayedError,
+} = require('bullmq');
+const {
   getDispatchMinGapMs,
   loadDispatchSettingsWithFallback,
-  processOutboundDispatchTick,
+  processOutboundDispatchJob,
   summarizeDispatchSettingsLoadError,
 } = require('../scripts/whatsapp-bot.js');
 
 interface FakeOutboundMessageRecord {
   id: string;
-  source_type: 'api_notification' | 'ticket_reply';
-  source_id: string;
-  ticket_id: string | null;
-  priority: number;
-  recipient_phone_number: string;
   recipient_chat_id: string | null;
-  content: string;
   delivery_status: string;
   delivery_attempts: number;
   next_retry_at: string | null;
-  created_at: string;
   updated_at?: string | null;
   last_delivery_error?: string | null;
   whatsapp_message_id?: string | null;
@@ -51,13 +47,13 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
 
   return {
     dispatchSettings,
+    replies,
     setDispatchSettingsError(error: { message: string } | null) {
       dispatchSettingsError = error;
     },
     getDispatchSettingsReadCount() {
       return dispatchSettingsReadCount;
     },
-    replies,
     from(tableName: string) {
       if (tableName === 'bot_dispatch_settings') {
         return {
@@ -78,74 +74,6 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
 
       if (tableName === 'outbound_messages') {
         return {
-          select() {
-            const state = {
-              eqFilters: [] as Array<{ column: string; value: string }>,
-              inFilters: [] as Array<{ column: string; values: string[] }>,
-              orderings: [] as Array<{ column: string; ascending: boolean }>,
-              limitCount: 20,
-            };
-
-            const builder = {
-              eq(column: string, value: string) {
-                state.eqFilters.push({ column, value });
-                return builder;
-              },
-              in(column: string, values: string[]) {
-                state.inFilters.push({ column, values });
-                return builder;
-              },
-              order(column: string, options: { ascending: boolean }) {
-                state.orderings.push({ column, ascending: options.ascending });
-                return builder;
-              },
-              limit(count: number) {
-                state.limitCount = count;
-                return builder;
-              },
-              then(resolve: (value: { data: FakeOutboundMessageRecord[]; error: null }) => void) {
-                let result = [...records];
-
-                for (const filter of state.eqFilters) {
-                  result = result.filter(
-                    (record) =>
-                      String(record[filter.column as keyof FakeOutboundMessageRecord]) ===
-                      filter.value,
-                  );
-                }
-
-                for (const filter of state.inFilters) {
-                  result = result.filter((record) =>
-                    filter.values.includes(
-                      String(record[filter.column as keyof FakeOutboundMessageRecord]),
-                    ),
-                  );
-                }
-
-                for (const ordering of state.orderings.slice().reverse()) {
-                  result.sort((left, right) => {
-                    const leftValue = left[ordering.column as keyof FakeOutboundMessageRecord];
-                    const rightValue = right[ordering.column as keyof FakeOutboundMessageRecord];
-
-                    if (leftValue === rightValue) {
-                      return 0;
-                    }
-
-                    const comparison = leftValue < rightValue ? -1 : 1;
-                    return ordering.ascending ? comparison : -comparison;
-                  });
-                }
-
-                resolve({
-                  data: result.slice(0, state.limitCount),
-                  error: null,
-                });
-                return builder;
-              },
-            };
-
-            return builder;
-          },
           update(payload: Partial<FakeOutboundMessageRecord>) {
             return {
               eq: async (_column: string, id: string) => {
@@ -187,32 +115,59 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
   };
 }
 
-describe('processOutboundDispatchTick', () => {
-  it('marks unresolved recipients as terminal failures', async () => {
+function createFakeJob(data: Record<string, unknown>) {
+  return {
+    data,
+    token: 'job-token',
+    moveToDelayed: vi.fn().mockResolvedValue(undefined),
+    updateData: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function createFakeRedis() {
+  return {
+    eval: vi.fn().mockResolvedValue(0),
+  };
+}
+
+describe('processOutboundDispatchJob', () => {
+  it('marks unresolved recipients as terminal failures and releases pending counts', async () => {
     const records: FakeOutboundMessageRecord[] = [
       {
         id: 'outbound-1',
-        source_type: 'api_notification',
-        source_id: 'api:client-1:idem-1',
-        ticket_id: null,
-        priority: 100,
-        recipient_phone_number: '6281234567890',
         recipient_chat_id: null,
-        content: 'Transfer successful.',
         delivery_status: 'queued',
         delivery_attempts: 0,
         next_retry_at: null,
-        created_at: '2026-03-31T05:30:00.000Z',
       },
     ];
     const supabase = createFakeSupabase(records);
+    const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn().mockResolvedValue(null),
       sendMessage: vi.fn(),
     };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-1',
+      source_type: 'api_notification',
+      source_id: 'api:client-1:idem-1',
+      recipient_phone_number: '6281234567890',
+      recipient_chat_id: null,
+      content: 'Transfer successful.',
+      attempt_number: 0,
+      client_id: 'client-1',
+    });
 
     vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
-    await processOutboundDispatchTick(client, supabase, { nextDispatchAtMs: 0 }, 1_000_000);
+    await processOutboundDispatchJob(
+      job,
+      'job-token',
+      client,
+      supabase,
+      redis,
+      { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
+      1_000_000,
+    );
     vi.restoreAllMocks();
 
     expect(client.sendMessage).not.toHaveBeenCalled();
@@ -220,153 +175,188 @@ describe('processOutboundDispatchTick', () => {
     expect(records[0].delivery_attempts).toBe(1);
     expect(records[0].next_retry_at).toBeNull();
     expect(records[0].last_delivery_error).toContain('not a registered WhatsApp user');
+    expect(redis.eval).toHaveBeenCalledTimes(2);
   });
 
-  it('prioritizes ticket replies and skips paused api notifications', async () => {
-    const records: FakeOutboundMessageRecord[] = [
-      {
-        id: 'outbound-api',
-        source_type: 'api_notification',
-        source_id: 'api:client-1:idem-1',
-        ticket_id: null,
-        priority: 100,
-        recipient_phone_number: '6281234567890',
-        recipient_chat_id: null,
-        content: 'Transfer successful.',
-        delivery_status: 'queued',
-        delivery_attempts: 0,
-        next_retry_at: null,
-        created_at: '2026-03-31T05:30:00.000Z',
-      },
-      {
-        id: 'outbound-ticket',
-        source_type: 'ticket_reply',
-        source_id: 'reply-1',
-        ticket_id: 'ticket-1',
-        priority: 10,
-        recipient_phone_number: '6289999999999',
-        recipient_chat_id: '6289999999999@c.us',
-        content: 'Support reply',
-        delivery_status: 'queued',
-        delivery_attempts: 0,
-        next_retry_at: null,
-        created_at: '2026-03-31T05:31:00.000Z',
-      },
-    ];
-    const supabase = createFakeSupabase(records);
+  it('delays paused api notifications without sending them', async () => {
+    const supabase = createFakeSupabase([]);
     supabase.dispatchSettings.api_notifications_paused = true;
+    const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
-      sendMessage: vi.fn().mockResolvedValue({ id: { _serialized: 'wa-msg-1' } }),
+      sendMessage: vi.fn(),
     };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-api',
+      source_type: 'api_notification',
+      source_id: 'api:client-1:idem-1',
+      recipient_phone_number: '6281234567890',
+      recipient_chat_id: null,
+      content: 'Transfer successful.',
+      attempt_number: 0,
+      client_id: 'client-1',
+    });
 
-    vi.spyOn(Date, 'now').mockReturnValue(2_000_000);
-    await processOutboundDispatchTick(client, supabase, { nextDispatchAtMs: 0 }, 2_000_000);
-    vi.restoreAllMocks();
+    await expect(
+      processOutboundDispatchJob(
+        job,
+        'job-token',
+        client,
+        supabase,
+        redis,
+        { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
+        2_000_000,
+      ),
+    ).rejects.toBeInstanceOf(DelayedError);
 
-    expect(client.sendMessage).toHaveBeenCalledWith('6289999999999@c.us', 'Support reply');
-    expect(records[0].delivery_status).toBe('queued');
-    expect(records[1].delivery_status).toBe('sent');
-    expect(supabase.replies[0].delivery_status).toBe('sent');
+    expect(job.moveToDelayed).toHaveBeenCalledWith(2_001_000, 'job-token');
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(redis.eval).not.toHaveBeenCalled();
   });
 
-  it('enforces the configured global dispatch spacing', async () => {
-    const records: FakeOutboundMessageRecord[] = [
-      {
-        id: 'outbound-1',
-        source_type: 'api_notification',
-        source_id: 'api:client-1:idem-1',
-        ticket_id: null,
-        priority: 100,
-        recipient_phone_number: '6281111111111',
-        recipient_chat_id: '6281111111111@c.us',
-        content: 'First notification',
-        delivery_status: 'queued',
-        delivery_attempts: 0,
-        next_retry_at: null,
-        created_at: '2026-03-31T05:30:00.000Z',
-      },
-      {
-        id: 'outbound-2',
-        source_type: 'api_notification',
-        source_id: 'api:client-1:idem-2',
-        ticket_id: null,
-        priority: 100,
-        recipient_phone_number: '6282222222222',
-        recipient_chat_id: '6282222222222@c.us',
-        content: 'Second notification',
-        delivery_status: 'queued',
-        delivery_attempts: 0,
-        next_retry_at: null,
-        created_at: '2026-03-31T05:31:00.000Z',
-      },
-    ];
-    const supabase = createFakeSupabase(records);
-    supabase.dispatchSettings.global_messages_per_minute = 30;
-    const dispatchState = { nextDispatchAtMs: 0 };
+  it('delays work until the configured global dispatch gap has elapsed', async () => {
+    const supabase = createFakeSupabase([]);
+    const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
-      sendMessage: vi.fn().mockResolvedValue({ id: { _serialized: 'wa-msg' } }),
+      sendMessage: vi.fn(),
     };
-
-    vi.spyOn(Date, 'now').mockReturnValue(3_000_000);
-    await processOutboundDispatchTick(client, supabase, dispatchState, 3_000_000);
-    expect(dispatchState.nextDispatchAtMs).toBe(3_002_000);
-
-    vi.spyOn(Date, 'now').mockReturnValue(3_001_000);
-    await processOutboundDispatchTick(client, supabase, dispatchState, 3_001_000);
-
-    vi.spyOn(Date, 'now').mockReturnValue(3_002_000);
-    await processOutboundDispatchTick(client, supabase, dispatchState, 3_002_000);
-    vi.restoreAllMocks();
-
-    expect(getDispatchMinGapMs(30)).toBe(2000);
-    expect(client.sendMessage).toHaveBeenCalledTimes(2);
-    expect(records[0].delivery_status).toBe('sent');
-    expect(records[1].delivery_status).toBe('sent');
-  });
-
-  it('falls back to cached dispatch settings when the settings query fails', async () => {
-    const records: FakeOutboundMessageRecord[] = [
-      {
-        id: 'outbound-1',
-        source_type: 'api_notification',
-        source_id: 'api:client-1:idem-1',
-        ticket_id: null,
-        priority: 100,
-        recipient_phone_number: '6281111111111',
-        recipient_chat_id: '6281111111111@c.us',
-        content: 'First notification',
-        delivery_status: 'queued',
-        delivery_attempts: 0,
-        next_retry_at: null,
-        created_at: '2026-03-31T05:30:00.000Z',
-      },
-    ];
-    const supabase = createFakeSupabase(records);
     const dispatchState = {
-      nextDispatchAtMs: 0,
+      nextDispatchAtMs: 3_002_000,
       cachedDispatchSettings: {
         id: 'default',
         global_messages_per_minute: 30,
         api_notifications_paused: false,
       },
-      cachedDispatchSettingsFreshUntilMs: 0,
+      cachedDispatchSettingsFreshUntilMs: 3_010_000,
     };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-1',
+      source_type: 'api_notification',
+      source_id: 'api:client-1:idem-1',
+      recipient_phone_number: '6281111111111',
+      recipient_chat_id: '6281111111111@c.us',
+      content: 'First notification',
+      attempt_number: 0,
+      client_id: 'client-1',
+    });
+
+    await expect(
+      processOutboundDispatchJob(
+        job,
+        'job-token',
+        client,
+        supabase,
+        redis,
+        dispatchState,
+        3_001_000,
+      ),
+    ).rejects.toBeInstanceOf(DelayedError);
+
+    expect(job.moveToDelayed).toHaveBeenCalledWith(3_002_000, 'job-token');
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('sends a ticket reply and mirrors delivery state back to the reply row', async () => {
+    const records: FakeOutboundMessageRecord[] = [
+      {
+        id: 'outbound-ticket',
+        recipient_chat_id: '6289999999999@c.us',
+        delivery_status: 'queued',
+        delivery_attempts: 0,
+        next_retry_at: null,
+      },
+    ];
+    const supabase = createFakeSupabase(records);
+    const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
       sendMessage: vi.fn().mockResolvedValue({ id: { _serialized: 'wa-msg-1' } }),
     };
+    const dispatchState = {
+      nextDispatchAtMs: 0,
+      cachedDispatchSettings: null,
+      cachedDispatchSettingsFreshUntilMs: 0,
+    };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-ticket',
+      source_type: 'ticket_reply',
+      source_id: 'reply-1',
+      recipient_phone_number: '6289999999999',
+      recipient_chat_id: '6289999999999@c.us',
+      content: 'Support reply',
+      attempt_number: 0,
+      client_id: null,
+    });
 
-    supabase.setDispatchSettingsError({ message: '<!DOCTYPE html><title>502: Bad gateway</title>' });
-
-    vi.spyOn(Date, 'now').mockReturnValue(4_000_000);
-    await processOutboundDispatchTick(client, supabase, dispatchState, 4_000_000);
+    vi.spyOn(Date, 'now').mockReturnValue(2_000_000);
+    await processOutboundDispatchJob(
+      job,
+      'job-token',
+      client,
+      supabase,
+      redis,
+      dispatchState,
+      2_000_000,
+    );
     vi.restoreAllMocks();
 
-    expect(client.sendMessage).toHaveBeenCalledWith('6281111111111@c.us', 'First notification');
-    expect(dispatchState.nextDispatchAtMs).toBe(4_002_000);
+    expect(client.sendMessage).toHaveBeenCalledWith('6289999999999@c.us', 'Support reply');
     expect(records[0].delivery_status).toBe('sent');
+    expect(supabase.replies[0].delivery_status).toBe('sent');
+    expect(dispatchState.nextDispatchAtMs).toBe(2_002_500);
+  });
+
+  it('retries transient send failures by delaying the same job with updated attempt data', async () => {
+    const records: FakeOutboundMessageRecord[] = [
+      {
+        id: 'outbound-1',
+        recipient_chat_id: null,
+        delivery_status: 'queued',
+        delivery_attempts: 0,
+        next_retry_at: null,
+      },
+    ];
+    const supabase = createFakeSupabase(records);
+    const redis = createFakeRedis();
+    const client = {
+      getNumberId: vi.fn().mockResolvedValue({ _serialized: '6281111111111@c.us' }),
+      sendMessage: vi.fn().mockRejectedValue(new Error('Temporary outage')),
+    };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-1',
+      source_type: 'api_notification',
+      source_id: 'api:client-1:idem-1',
+      recipient_phone_number: '6281111111111',
+      recipient_chat_id: null,
+      content: 'First notification',
+      attempt_number: 0,
+      client_id: 'client-1',
+    });
+
+    vi.spyOn(Date, 'now').mockReturnValue(3_000_000);
+    await expect(
+      processOutboundDispatchJob(
+        job,
+        'job-token',
+        client,
+        supabase,
+        redis,
+        { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
+        3_000_000,
+      ),
+    ).rejects.toBeInstanceOf(DelayedError);
+    vi.restoreAllMocks();
+
+    expect(records[0].delivery_status).toBe('retrying');
+    expect(records[0].delivery_attempts).toBe(1);
+    expect(job.updateData).toHaveBeenCalledWith({
+      ...job.data,
+      recipient_chat_id: '6281111111111@c.us',
+      attempt_number: 1,
+    });
+    expect(job.moveToDelayed).toHaveBeenCalled();
+    expect(redis.eval).not.toHaveBeenCalled();
   });
 });
 
@@ -393,5 +383,9 @@ describe('dispatch settings caching helpers', () => {
         new Error('<!DOCTYPE html><html><body><span>Error code 502</span></body></html>'),
       ),
     ).toContain('HTML error page (502)');
+  });
+
+  it('computes the current min gap from the runtime dispatch setting', () => {
+    expect(getDispatchMinGapMs(30)).toBe(2000);
   });
 });
