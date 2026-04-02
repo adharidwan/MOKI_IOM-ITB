@@ -22,6 +22,11 @@ npm run dev
 
 The web app runs on `http://localhost:3000`.
 
+Important:
+- local outbound dispatch now requires Redis
+- `REDIS_URL` defaults to `redis://redis:6379` in Docker Compose
+- for non-Docker local runs, point `REDIS_URL` at a reachable Redis instance
+
 Run the automated checks:
 
 ```bash
@@ -58,7 +63,7 @@ Current behavior:
 
 - controls the global outbound messages-per-minute pacing
 - can pause `api_notification` sends without pausing ticket replies
-- returns live queue counts for ticket replies and API notifications
+- returns live Redis-backed pending counts for ticket replies and API notifications
 
 Warning:
 
@@ -69,6 +74,7 @@ Warning:
 
 The project includes:
 
+- Redis for outbound dispatch and API idempotency state
 - `Dockerfile` for the Next.js web app.
 - `Dockerfile.bot` for the WhatsApp bot worker (with Chromium installed).
 - `docker-compose.yml` to run both services.

@@ -1,9 +1,10 @@
 # Database Schema
 
-This document describes the intended `public` schema for the project after applying the two repo migrations added in this session:
+This document describes the intended `public` schema for the project after applying the repo migrations currently in source control:
 
 - `supabase/migrations/20260331120000_public_whatsapp_notification_api.sql`
 - `supabase/migrations/20260331130000_unified_outbound_queue_and_dispatch_controls.sql`
+- `supabase/migrations/20260402100000_redis_outbound_dispatch.sql`
 
 The pre-existing baseline was taken from:
 
@@ -12,7 +13,7 @@ The pre-existing baseline was taken from:
 Important:
 - The dump file above is the authoritative source for the older tables that existed before this session.
 - The current repo schema is therefore: pre-migration dump + the two migrations above.
-- This document focuses on table structure, relationships, constraints, and queue semantics. It is not a full replacement for raw SQL.
+- This document focuses on table structure, relationships, constraints, and delivery-ledger semantics. It is not a full replacement for raw SQL.
 
 ## Overview
 
@@ -117,7 +118,7 @@ Indexes:
 Notes:
 
 - `replies` remains the UI/history record.
-- For outbound ticket replies, delivery is now performed from `outbound_messages` and then mirrored back into these columns.
+- For outbound ticket replies, delivery state is mirrored from the BullMQ worker back into these columns.
 
 ### `whatsapp_contacts`
 
@@ -204,7 +205,7 @@ Notes:
 ### `outbound_messages`
 
 Purpose:
-- single outbound delivery queue for all WhatsApp sends
+- lightweight outbound delivery ledger for all WhatsApp sends
 - used by both public API notifications and ticket replies
 
 Columns:
@@ -235,7 +236,6 @@ Columns:
 Constraints:
 
 - primary key on `id`
-- original unique constraint: `outbound_messages_client_idempotency_unique(client_id, idempotency_key)`
 - unique index: `outbound_messages_source_type_source_id_unique_idx(source_type, source_id)`
 - check constraint: `source_type in ('api_notification', 'ticket_reply')`
 - check constraint:
@@ -252,15 +252,16 @@ Indexes:
 - `outbound_messages_delivery_status_idx(delivery_status)`
 - `outbound_messages_next_retry_at_idx(next_retry_at)`
 - `outbound_messages_created_at_idx(created_at)`
-- `outbound_messages_due_work_idx(delivery_status, next_retry_at, priority, created_at)`
 - `outbound_messages_client_source_created_at_idx(client_id, source_type, created_at)`
 - `outbound_messages_client_source_delivery_status_idx(client_id, source_type, delivery_status)`
+- `outbound_messages_client_idempotency_created_at_idx(client_id, idempotency_key, created_at desc)`
 
 Operational notes:
 
-- `ticket_reply` rows are queued with higher priority than `api_notification` rows.
-- The bot reads from this table only.
-- The app uses this table as the single outbound queue, but ticket UI still reads mirrored delivery state from `replies`.
+- `ticket_reply` rows still carry higher priority than `api_notification` rows, but the operational priority queue now lives in Redis/BullMQ.
+- The bot does not poll this table for due work anymore.
+- Redis stores public API idempotency state for 24 hours, accepted-request timestamps for rate limiting, and pending counters by client/source.
+- Ticket UI still reads mirrored delivery state from `replies`.
 
 ### `bot_dispatch_settings`
 

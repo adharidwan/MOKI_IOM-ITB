@@ -2,14 +2,27 @@ import 'server-only';
 
 import { PostgrestError } from '@supabase/supabase-js';
 
+import { enqueueOutboundDispatchJob, getOutboundDispatchQueue } from './outbound-dispatch-queue';
+import {
+  clearApiNotificationIdempotency,
+  completeApiNotificationIdempotency,
+  countRecentAcceptedApiNotifications as countRecentAcceptedApiNotificationsInRedis,
+  decrementPendingOutboundCounts,
+  getPendingApiNotificationCount,
+  getPendingOutboundMessageCountBySource,
+  incrementPendingOutboundCounts,
+  recordAcceptedApiNotification,
+  reserveApiNotificationIdempotency,
+} from './outbound-dispatch-redis';
+import { buildOutboundDispatchJobData } from './outbound-dispatch-job';
 import { getSupabaseAdminClient } from './supabase-server';
 import {
   API_NOTIFICATION_PRIORITY,
   ApiClientRecord,
   DEFAULT_DISPATCH_SETTINGS_ID,
   DEFAULT_GLOBAL_MESSAGES_PER_MINUTE,
-  OutboundMessageRecord,
   DispatchSettingsRecord,
+  OutboundMessageRecord,
   OutboundMessageSourceType,
   TICKET_REPLY_PRIORITY,
   buildApiNotificationSourceId,
@@ -65,62 +78,21 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
       }
     },
 
-    async findOutboundMessageByIdempotency(
-      clientId: string,
-      idempotencyKey: string,
-    ): Promise<OutboundMessageRecord | null> {
-      const { data, error } = await supabase
-        .from('outbound_messages')
-        .select('*')
-        .eq('client_id', clientId)
-        .eq('source_type', 'api_notification')
-        .eq('idempotency_key', idempotencyKey)
-        .maybeSingle();
+    reserveApiNotificationIdempotency,
+    completeApiNotificationIdempotency,
+    clearApiNotificationIdempotency,
 
-      if (error) {
-        throw toRepositoryError('Failed to load outbound message.', error);
-      }
-
-      return (data as OutboundMessageRecord | null) ?? null;
-    },
-
-    async countRecentAcceptedApiNotifications(
-      clientId: string,
-      sinceIsoTimestamp: string,
-    ): Promise<number> {
-      const { count, error } = await supabase
-        .from('outbound_messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', clientId)
-        .eq('source_type', 'api_notification')
-        .gte('created_at', sinceIsoTimestamp);
-
-      if (error) {
-        throw toRepositoryError('Failed to count recent outbound messages.', error);
-      }
-
-      return count ?? 0;
+    async countRecentAcceptedApiNotifications(clientId: string, nowMs: number): Promise<number> {
+      return countRecentAcceptedApiNotificationsInRedis(clientId, nowMs);
     },
 
     async countPendingApiNotifications(clientId: string): Promise<number> {
-      const { count, error } = await supabase
-        .from('outbound_messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', clientId)
-        .eq('source_type', 'api_notification')
-        .in('delivery_status', ['queued', 'retrying']);
-
-      if (error) {
-        throw toRepositoryError('Failed to count pending outbound messages.', error);
-      }
-
-      return count ?? 0;
+      return getPendingApiNotificationCount(clientId);
     },
 
     async createOutboundMessage(
       input: CreateOutboundMessageInput,
     ): Promise<OutboundMessageRecord> {
-      const now = new Date().toISOString();
       const { data, error } = await supabase
         .from('outbound_messages')
         .insert({
@@ -141,28 +113,35 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
           last_delivery_error: null,
           whatsapp_message_id: null,
           delivered_at: null,
-          created_at: now,
-          updated_at: now,
+          created_at: input.acceptedAt,
+          updated_at: input.acceptedAt,
         })
         .select('*')
         .single();
 
       if (error) {
-        throw toRepositoryError('Failed to queue outbound message.', error);
+        throw toRepositoryError('Failed to write outbound delivery ledger entry.', error);
       }
 
-      return data as OutboundMessageRecord;
+      const outboundMessage = data as OutboundMessageRecord;
+
+      try {
+        await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
+        await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
+        await recordAcceptedApiNotification(outboundMessage.client_id!, input.acceptedAt);
+      } catch (queueError) {
+        await markOutboundMessageAsFailed(
+          supabase,
+          outboundMessage.id,
+          summarizeOperationalQueueError(queueError),
+        );
+
+        throw toOperationalRepositoryError('Failed to queue outbound message.', queueError);
+      }
+
+      return outboundMessage;
     },
   };
-}
-
-function toRepositoryError(message: string, error: PostgrestError): NotificationRepositoryError {
-  const repositoryError = new NotificationRepositoryError(
-    `${message} ${error.message}`,
-    error.code,
-  );
-
-  return repositoryError;
 }
 
 export async function createTicketReplyOutboundMessage(
@@ -197,10 +176,28 @@ export async function createTicketReplyOutboundMessage(
     .single();
 
   if (error) {
-    throw toRepositoryError('Failed to queue ticket reply outbound message.', error);
+    throw toRepositoryError('Failed to write ticket reply delivery ledger entry.', error);
   }
 
-  return data as OutboundMessageRecord;
+  const outboundMessage = data as OutboundMessageRecord;
+
+  try {
+    await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
+    await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
+  } catch (queueError) {
+    await markOutboundMessageAsFailed(
+      supabase,
+      outboundMessage.id,
+      summarizeOperationalQueueError(queueError),
+    );
+
+    throw toOperationalRepositoryError(
+      'Failed to queue ticket reply outbound message.',
+      queueError,
+    );
+  }
+
+  return outboundMessage;
 }
 
 export async function getDispatchSettings(): Promise<DispatchSettingsRecord> {
@@ -251,18 +248,48 @@ export async function updateDispatchSettings(
 export async function countQueuedOutboundMessagesBySource(
   sourceType: OutboundMessageSourceType,
 ): Promise<number> {
-  const supabase = getSupabaseAdminClient();
-  const { count, error } = await supabase
+  return getPendingOutboundMessageCountBySource(sourceType);
+}
+
+export async function releasePendingOutboundMessageCounts(
+  sourceType: OutboundMessageSourceType,
+  clientId: string | null,
+): Promise<void> {
+  await decrementPendingOutboundCounts(sourceType, clientId);
+}
+
+async function markOutboundMessageAsFailed(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  outboundMessageId: string,
+  errorMessage: string,
+): Promise<void> {
+  await supabase
     .from('outbound_messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('source_type', sourceType)
-    .in('delivery_status', ['queued', 'retrying']);
+    .update({
+      delivery_status: 'failed',
+      delivery_attempts: 0,
+      next_retry_at: null,
+      last_delivery_error: errorMessage,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', outboundMessageId);
+}
 
-  if (error) {
-    throw toRepositoryError('Failed to count queued outbound messages.', error);
-  }
+function summarizeOperationalQueueError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
 
-  return count ?? 0;
+function toRepositoryError(message: string, error: PostgrestError): NotificationRepositoryError {
+  return new NotificationRepositoryError(`${message} ${error.message}`, error.code);
+}
+
+function toOperationalRepositoryError(
+  message: string,
+  error: unknown,
+): NotificationRepositoryError {
+  const suffix = error instanceof Error ? error.message : String(error);
+  return new NotificationRepositoryError(`${message} ${suffix}`);
 }
 
 async function upsertDefaultDispatchSettings(): Promise<DispatchSettingsRecord> {
@@ -284,4 +311,8 @@ async function upsertDefaultDispatchSettings(): Promise<DispatchSettingsRecord> 
   }
 
   return data as DispatchSettingsRecord;
+}
+
+export async function closeOutboundDispatchQueue(): Promise<void> {
+  await getOutboundDispatchQueue().close();
 }

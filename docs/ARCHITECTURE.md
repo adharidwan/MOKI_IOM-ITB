@@ -9,7 +9,8 @@ This document captures the important architecture decisions and the current oper
   - server-side ticket actions
   - public notification API at `POST /api/v1/messages/whatsapp`
 - `scripts/whatsapp-bot.js` is the only component that talks directly to WhatsApp Web.
-- Supabase is the source of truth for business data and also the current queue backend.
+- Supabase remains the source of truth for business data and the outbound delivery ledger.
+- Redis + BullMQ is the operational outbound queue and idempotency/quota state backend.
 
 ## Current Message Flows
 
@@ -30,11 +31,12 @@ Important:
 
 1. An admin replies from the ticket dashboard.
 2. The app inserts a row into `replies` for ticket history.
-3. The app also inserts a row into `outbound_messages` with:
+3. The app inserts a row into `outbound_messages` as a delivery ledger entry with:
    - `source_type = 'ticket_reply'`
    - `source_id = <reply id>`
    - higher priority than notification traffic
-4. The bot polls `outbound_messages`, sends the WhatsApp message, then mirrors delivery state back onto the linked `replies` row.
+4. The app enqueues a BullMQ job with the same source metadata.
+5. The bot worker consumes the BullMQ job, sends the WhatsApp message, then mirrors delivery state back onto the linked `replies` row.
 
 Important:
 - `replies` is still the ticket conversation record.
@@ -47,11 +49,12 @@ Important:
 3. The app enforces per-client application quotas:
    - requests per minute
    - pending queued notifications
-4. The app inserts a row into `outbound_messages` with:
+4. The app inserts a row into `outbound_messages` as a lightweight ledger entry with:
    - `source_type = 'api_notification'`
    - `delivery_status = 'queued'`
    - lower priority than ticket replies
-4. The bot polls `outbound_messages`, resolves the WhatsApp recipient chat ID, sends the message, then updates delivery status.
+5. The app reserves the caller's idempotency key in Redis for 24 hours and enqueues a BullMQ job.
+6. The bot worker resolves the WhatsApp recipient chat ID, sends the message, then updates delivery status in the ledger row.
 
 Important:
 - Public API sends are asynchronous.
@@ -60,18 +63,27 @@ Important:
 
 ## Queue Model Today
 
-The system now has one outbound database-backed queue:
+The system now has one outbound Redis-backed queue:
 
-1. `outbound_messages`
+1. BullMQ queue `outbound-dispatch`
    - used for ticket replies and public API notifications
-   - stores queue metadata, retry state, priority, and delivery results
+   - stores operational due-work, delayed retries, and priority ordering
+
+2. `outbound_messages`
+   - no longer polled by the bot
+   - stores lightweight accepted/sent/failed ledger data and delivery metadata
 
 Related tables:
 - `replies` remains ticket history and UI-facing reply state
 - `bot_dispatch_settings` stores runtime dispatch controls
-- `api_clients` stores API credentials and per-client quotas
+- `api_clients` stores API credentials and per-client quota configuration
 
-The bot runs a 1-second heartbeat and uses `bot_dispatch_settings` to decide whether it is allowed to pop the next message from `outbound_messages`.
+Redis also stores:
+- 24-hour idempotency reservations for public API requests
+- per-client accepted-request timestamps for the 60-second rate limit
+- pending outbound counters by client and source type
+
+The bot runs a BullMQ worker with concurrency `1` and uses `bot_dispatch_settings` to decide whether a job can send now or should be delayed in-place.
 
 ## Current Constraints And Gaps
 
@@ -106,16 +118,16 @@ The repo does not currently expose:
 Result:
 - real production volume is unknown from the application itself
 
-### 4. Single Polling Worker Model
+### 4. Single Worker WhatsApp Session
 
-- One bot loop runs every 1 second.
-- Each pass handles at most one due row from `outbound_messages`.
+- One BullMQ worker processes outbound jobs with concurrency `1`.
 - Ticket replies are prioritized over API notifications.
 - API notifications can be globally paused without pausing ticket replies.
+- Global pacing still applies through `bot_dispatch_settings`.
 
 Result:
-- the current implementation is fine for low volume
-- scaling behavior is limited and not designed for multiple workers yet
+- delivery latency is much lower than the old polling model
+- scaling behavior is still intentionally limited to one WhatsApp session for now
 
 ## Agreed Direction
 
@@ -124,7 +136,7 @@ These are the intended architectural directions based on the project discussion:
 1. Keep outbound WhatsApp delivery asynchronous.
 2. Keep application-level public API quotas in place.
 3. Keep edge or gateway rate limiting as an optional outer layer, not the only protection.
-4. Keep one unified outbound delivery queue.
+4. Keep one unified outbound delivery queue in Redis/BullMQ.
 5. Keep ticket conversation history separate from the delivery queue.
 6. Preserve current inbound support behavior unless product requirements change.
 7. Replace the temporary open control API with real admin auth before wider exposure.
@@ -161,10 +173,10 @@ Recommended implementation direction:
 Only do this after the queue is unified and basic metrics exist.
 
 Recommended hardening:
-- query only due rows directly in SQL instead of filtering in Node
-- add stronger queue indexes for due-work lookup
-- add safe row-claiming semantics if more than one bot worker will run
-- define retry and dead-letter policy explicitly
+- add explicit queue metrics from Redis/BullMQ
+- define safe multi-worker ownership before increasing concurrency
+- define dead-letter and operator recovery policy explicitly
+- add resilient Redis deployment/monitoring for production
 
 ## Recommended Order Of Work
 
@@ -179,7 +191,6 @@ If the team wants the safest next sequence:
 
 These are not the recommended immediate next steps:
 
-- replacing the database-backed queue with RabbitMQ, Kafka, SQS, or Redis
 - changing inbound support-message behavior
 - adding delivery webhooks immediately
 - building a public delivery-status endpoint before stronger observability exists
@@ -191,7 +202,8 @@ When continuing work in this area, preserve these assumptions unless product req
 - The public API is a notification API, not a public ticket-management API.
 - Outbound messages must remain asynchronous.
 - The bot worker is the only WhatsApp-sending component.
-- `outbound_messages` is the single outbound queue.
+- BullMQ is the single outbound operational queue.
+- `outbound_messages` is a delivery ledger, not the due-work queue.
 - Ticket replies have higher dispatch priority than API notifications.
 - Application-level public API quotas exist.
 - The dispatch-control API currently has no real auth and should be treated as temporary.

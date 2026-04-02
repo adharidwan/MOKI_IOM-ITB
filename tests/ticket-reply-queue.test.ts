@@ -23,7 +23,7 @@ vi.mock('../app/lib/whatsapp-notification-repository', () => ({
   createTicketReplyOutboundMessage,
 }));
 
-vi.mock('server-only', () => ({}), { virtual: true });
+vi.mock('server-only', () => ({}));
 
 vi.mock('../app/lib/supabase-server', () => ({
   getSupabaseServerClient: vi.fn(),
