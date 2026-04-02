@@ -6,6 +6,7 @@ import type IORedis from 'ioredis';
 
 import {
   API_IDEMPOTENCY_TTL_SECONDS,
+  type ApiClientRecord,
   buildClientAcceptedSetKey,
   buildClientPendingCountKey,
   buildIdempotencyKey,
@@ -18,6 +19,7 @@ import type { OutboundMessageSourceType } from './whatsapp-notification-utils';
 
 const ACCEPTED_RATE_WINDOW_MS = 60_000;
 const ACCEPTED_RATE_WINDOW_SECONDS = 60;
+const API_CLIENT_CACHE_TTL_SECONDS = 60;
 const IDEMPOTENCY_POLL_INTERVAL_MS = 50;
 const IDEMPOTENCY_POLL_ATTEMPTS = 20;
 const DECREMENT_COUNTER_LUA = `
@@ -54,6 +56,10 @@ function sleep(ms: number): Promise<void> {
 
 function getClient(redis?: IORedis): IORedis {
   return redis || getRedisClient();
+}
+
+function buildApiClientCacheKey(keyPrefix: string): string {
+  return `outbound_dispatch:api_client:${keyPrefix}`;
 }
 
 function parseIdempotencyRecord(rawValue: string | null): StoredApiIdempotencyRecord | null {
@@ -260,5 +266,37 @@ export async function decrementPendingOutboundCounts(
 
   await Promise.all(
     keys.map((key) => client.eval(DECREMENT_COUNTER_LUA, 1, key, API_IDEMPOTENCY_TTL_SECONDS)),
+  );
+}
+
+export async function getCachedApiClientByKeyPrefix(
+  keyPrefix: string,
+  redis?: IORedis,
+): Promise<ApiClientRecord | null> {
+  const client = getClient(redis);
+  const rawValue = await client.get(buildApiClientCacheKey(keyPrefix));
+
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawValue) as ApiClientRecord;
+  } catch {
+    await client.del(buildApiClientCacheKey(keyPrefix));
+    return null;
+  }
+}
+
+export async function cacheApiClientByKeyPrefix(
+  apiClient: ApiClientRecord,
+  redis?: IORedis,
+): Promise<void> {
+  const client = getClient(redis);
+  await client.set(
+    buildApiClientCacheKey(apiClient.key_prefix),
+    JSON.stringify(apiClient),
+    'EX',
+    API_CLIENT_CACHE_TTL_SECONDS,
   );
 }

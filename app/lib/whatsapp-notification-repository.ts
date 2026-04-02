@@ -1,13 +1,17 @@
 import 'server-only';
 
+import crypto from 'node:crypto';
+
 import { PostgrestError } from '@supabase/supabase-js';
 
 import { enqueueOutboundDispatchJob, getOutboundDispatchQueue } from './outbound-dispatch-queue';
 import {
+  cacheApiClientByKeyPrefix,
   clearApiNotificationIdempotency,
   completeApiNotificationIdempotency,
   countRecentAcceptedApiNotifications as countRecentAcceptedApiNotificationsInRedis,
   decrementPendingOutboundCounts,
+  getCachedApiClientByKeyPrefix,
   getPendingApiNotificationCount,
   getPendingOutboundMessageCountBySource,
   incrementPendingOutboundCounts,
@@ -51,6 +55,12 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
 
   return {
     async findApiClientByKeyPrefix(keyPrefix: string): Promise<ApiClientRecord | null> {
+      const cachedClient = await getCachedApiClientByKeyPrefix(keyPrefix);
+
+      if (cachedClient) {
+        return cachedClient;
+      }
+
       const { data, error } = await supabase
         .from('api_clients')
         .select('*')
@@ -61,7 +71,13 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         throw toRepositoryError('Failed to load API client.', error);
       }
 
-      return (data as ApiClientRecord | null) ?? null;
+      const apiClient = (data as ApiClientRecord | null) ?? null;
+
+      if (apiClient) {
+        void cacheApiClientByKeyPrefix(apiClient);
+      }
+
+      return apiClient;
     },
 
     async touchApiClientLastUsedAt(clientId: string, isoTimestamp: string): Promise<void> {
@@ -93,37 +109,36 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
     async createOutboundMessage(
       input: CreateOutboundMessageInput,
     ): Promise<OutboundMessageRecord> {
-      const { data, error } = await supabase
+      const outboundMessage: OutboundMessageRecord = {
+        id: crypto.randomUUID(),
+        client_id: input.clientId,
+        idempotency_key: input.idempotencyKey,
+        request_fingerprint: input.requestFingerprint,
+        source_type: 'api_notification',
+        source_id: buildApiNotificationSourceId(input.clientId, input.idempotencyKey),
+        ticket_id: null,
+        priority: API_NOTIFICATION_PRIORITY,
+        recipient_phone_number: input.recipientPhoneNumber,
+        recipient_chat_id: null,
+        content: input.content,
+        client_reference: input.clientReference,
+        delivery_status: 'queued',
+        delivery_attempts: 0,
+        next_retry_at: null,
+        last_delivery_error: null,
+        whatsapp_message_id: null,
+        delivered_at: null,
+        created_at: input.acceptedAt,
+        updated_at: input.acceptedAt,
+      };
+
+      const { error } = await supabase
         .from('outbound_messages')
-        .insert({
-          client_id: input.clientId,
-          idempotency_key: input.idempotencyKey,
-          request_fingerprint: input.requestFingerprint,
-          source_type: 'api_notification',
-          source_id: buildApiNotificationSourceId(input.clientId, input.idempotencyKey),
-          ticket_id: null,
-          priority: API_NOTIFICATION_PRIORITY,
-          recipient_phone_number: input.recipientPhoneNumber,
-          recipient_chat_id: null,
-          content: input.content,
-          client_reference: input.clientReference,
-          delivery_status: 'queued',
-          delivery_attempts: 0,
-          next_retry_at: null,
-          last_delivery_error: null,
-          whatsapp_message_id: null,
-          delivered_at: null,
-          created_at: input.acceptedAt,
-          updated_at: input.acceptedAt,
-        })
-        .select('*')
-        .single();
+        .insert(outboundMessage);
 
       if (error) {
         throw toRepositoryError('Failed to write outbound delivery ledger entry.', error);
       }
-
-      const outboundMessage = data as OutboundMessageRecord;
 
       try {
         await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
