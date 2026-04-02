@@ -13,6 +13,7 @@ Important:
 - `202 Accepted` means the message was queued, not delivered.
 - This API does not create tickets or replies.
 - There is no public delivery-status endpoint in v1.
+- Idempotency replay is retained in Redis for 24 hours.
 
 ## Provision An API Client
 
@@ -112,7 +113,7 @@ curl -X POST http://localhost:3000/api/v1/messages/whatsapp \
 
 ## How To Use `Idempotency-Key`
 
-`Idempotency-Key` exists so the caller can safely retry the same request without creating duplicate outbound messages.
+`Idempotency-Key` exists so the caller can safely retry the same request without creating duplicate outbound messages during the 24-hour Redis retention window.
 
 ### What Problem It Solves
 
@@ -128,6 +129,7 @@ If the retry uses the same `Idempotency-Key`, the API treats it as the same logi
 Result:
 - same payload + same `Idempotency-Key` => replay the original queued result
 - different payload + same `Idempotency-Key` => reject with `409`
+- same payload after the 24-hour retention expires => treated as a new request
 
 ### Recommended Usage
 
@@ -135,6 +137,7 @@ Result:
 - Reuse that same key only when retrying the exact same request.
 - Do not generate a new key for transport-level retries.
 - Do generate a new key for a new message, even if it is for the same user or the same business entity.
+- Do not expect the platform to remember that key forever; the replay window is 24 hours.
 
 ### Good Examples
 
@@ -213,6 +216,6 @@ Important:
 ## Delivery Semantics
 
 - The API is asynchronous.
-- The bot worker sends queued rows from `outbound_messages`.
+- The app writes a delivery ledger row to `outbound_messages` and enqueues a BullMQ job in Redis.
 - Ticket dashboard replies share the same outbound queue, but they have higher dispatch priority than API notifications.
 - The bot reuses the existing retry schedule for transient send failures.
