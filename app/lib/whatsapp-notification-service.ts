@@ -11,6 +11,11 @@ import {
   parseQueueWhatsappMessagePayload,
   safeEqual,
 } from './whatsapp-notification-utils';
+import {
+  API_IDEMPOTENCY_TTL_SECONDS,
+  QueueWhatsappMessageResponse,
+  StoredApiIdempotencyRecord,
+} from './outbound-dispatch-job';
 
 export interface CreateOutboundMessageInput {
   clientId: string;
@@ -19,16 +24,42 @@ export interface CreateOutboundMessageInput {
   recipientPhoneNumber: string;
   content: string;
   clientReference: string | null;
+  acceptedAt: string;
 }
 
 export interface NotificationRepository {
   findApiClientByKeyPrefix(keyPrefix: string): Promise<ApiClientRecord | null>;
   touchApiClientLastUsedAt(clientId: string, isoTimestamp: string): Promise<void>;
-  findOutboundMessageByIdempotency(
+  reserveApiNotificationIdempotency(
     clientId: string,
     idempotencyKey: string,
-  ): Promise<OutboundMessageRecord | null>;
-  countRecentAcceptedApiNotifications(clientId: string, sinceIsoTimestamp: string): Promise<number>;
+    requestFingerprint: string,
+    ttlSeconds: number,
+  ): Promise<
+    | {
+        status: 'acquired';
+      }
+    | {
+        status: 'replay';
+        record: StoredApiIdempotencyRecord;
+      }
+    | {
+        status: 'conflict';
+      }
+  >;
+  completeApiNotificationIdempotency(
+    clientId: string,
+    idempotencyKey: string,
+    requestFingerprint: string,
+    response: QueueWhatsappMessageResponse,
+    ttlSeconds: number,
+  ): Promise<void>;
+  clearApiNotificationIdempotency(
+    clientId: string,
+    idempotencyKey: string,
+    requestFingerprint: string,
+  ): Promise<void>;
+  countRecentAcceptedApiNotifications(clientId: string, nowMs: number): Promise<number>;
   countPendingApiNotifications(clientId: string): Promise<number>;
   createOutboundMessage(input: CreateOutboundMessageInput): Promise<OutboundMessageRecord>;
 }
@@ -53,14 +84,6 @@ export class NotificationRepositoryError extends Error {
     super(message);
     this.code = code;
   }
-}
-
-interface QueueWhatsappMessageResponse {
-  message_id: string;
-  status: 'queued';
-  accepted_at: string;
-  client_reference: string | null;
-  idempotent_replay: boolean;
 }
 
 export async function authenticateApiClient(
@@ -130,53 +153,65 @@ export async function queueWhatsappMessage(
   }
 
   const requestFingerprint = createRequestFingerprint(parsedBody.data);
-  const existingMessage = await repository.findOutboundMessageByIdempotency(client.id, idempotencyKey);
-
-  if (existingMessage) {
-    return buildIdempotentResponse(existingMessage, requestFingerprint);
-  }
-
-  const quotaWindowStartIso = new Date(now.getTime() - 60_000).toISOString();
-  const acceptedInLastMinute = await repository.countRecentAcceptedApiNotifications(
+  const idempotencyReservation = await repository.reserveApiNotificationIdempotency(
     client.id,
-    quotaWindowStartIso,
+    idempotencyKey,
+    requestFingerprint,
+    API_IDEMPOTENCY_TTL_SECONDS,
   );
 
-  if (acceptedInLastMinute >= client.max_requests_per_minute) {
-    console.log(
-      JSON.stringify({
-        event: 'api_notification_throttled',
-        reason: 'request_rate_limit_exceeded',
-        client_id: client.id,
-        max_requests_per_minute: client.max_requests_per_minute,
-      }),
-    );
-    throw new PublicApiError(
-      429,
-      'request_rate_limit_exceeded',
-      'API client exceeded the per-minute request limit.',
-    );
+  if (idempotencyReservation.status === 'replay') {
+    return buildStoredIdempotentResponse(idempotencyReservation.record, requestFingerprint);
   }
 
-  const pendingMessages = await repository.countPendingApiNotifications(client.id);
-
-  if (pendingMessages >= client.max_pending_messages) {
-    console.log(
-      JSON.stringify({
-        event: 'api_notification_throttled',
-        reason: 'pending_queue_limit_exceeded',
-        client_id: client.id,
-        max_pending_messages: client.max_pending_messages,
-      }),
-    );
+  if (idempotencyReservation.status === 'conflict') {
     throw new PublicApiError(
-      429,
-      'pending_queue_limit_exceeded',
-      'API client exceeded the pending outbound message limit.',
+      409,
+      'idempotency_conflict',
+      'This Idempotency-Key has already been used for a different request payload.',
     );
   }
 
   try {
+    const acceptedInLastMinute = await repository.countRecentAcceptedApiNotifications(
+      client.id,
+      now.getTime(),
+    );
+
+    if (acceptedInLastMinute >= client.max_requests_per_minute) {
+      console.log(
+        JSON.stringify({
+          event: 'api_notification_throttled',
+          reason: 'request_rate_limit_exceeded',
+          client_id: client.id,
+          max_requests_per_minute: client.max_requests_per_minute,
+        }),
+      );
+      throw new PublicApiError(
+        429,
+        'request_rate_limit_exceeded',
+        'API client exceeded the per-minute request limit.',
+      );
+    }
+
+    const pendingMessages = await repository.countPendingApiNotifications(client.id);
+
+    if (pendingMessages >= client.max_pending_messages) {
+      console.log(
+        JSON.stringify({
+          event: 'api_notification_throttled',
+          reason: 'pending_queue_limit_exceeded',
+          client_id: client.id,
+          max_pending_messages: client.max_pending_messages,
+        }),
+      );
+      throw new PublicApiError(
+        429,
+        'pending_queue_limit_exceeded',
+        'API client exceeded the pending outbound message limit.',
+      );
+    }
+
     const queuedMessage = await repository.createOutboundMessage({
       clientId: client.id,
       idempotencyKey,
@@ -184,7 +219,18 @@ export async function queueWhatsappMessage(
       recipientPhoneNumber: parsedBody.data.recipientPhoneNumber,
       content: parsedBody.data.message,
       clientReference: parsedBody.data.clientReference,
+      acceptedAt: now.toISOString(),
     });
+
+    const responseBody = buildQueueResponse(queuedMessage, false);
+
+    await repository.completeApiNotificationIdempotency(
+      client.id,
+      idempotencyKey,
+      requestFingerprint,
+      responseBody,
+      API_IDEMPOTENCY_TTL_SECONDS,
+    );
 
     console.log(
       JSON.stringify({
@@ -197,22 +243,9 @@ export async function queueWhatsappMessage(
       }),
     );
 
-    return buildQueueResponse(queuedMessage, false);
+    return responseBody;
   } catch (error) {
-    if (
-      error instanceof NotificationRepositoryError &&
-      error.code === '23505'
-    ) {
-      const duplicateMessage = await repository.findOutboundMessageByIdempotency(
-        client.id,
-        idempotencyKey,
-      );
-
-      if (duplicateMessage) {
-        return buildIdempotentResponse(duplicateMessage, requestFingerprint);
-      }
-    }
-
+    await repository.clearApiNotificationIdempotency(client.id, idempotencyKey, requestFingerprint);
     throw error;
   }
 }
@@ -274,11 +307,11 @@ export async function handleWhatsappNotificationRequest(
   }
 }
 
-function buildIdempotentResponse(
-  existingMessage: OutboundMessageRecord,
+function buildStoredIdempotentResponse(
+  record: StoredApiIdempotencyRecord,
   requestFingerprint: string,
 ): QueueWhatsappMessageResponse {
-  if (existingMessage.request_fingerprint !== requestFingerprint) {
+  if (record.request_fingerprint !== requestFingerprint || !record.response) {
     throw new PublicApiError(
       409,
       'idempotency_conflict',
@@ -286,7 +319,10 @@ function buildIdempotentResponse(
     );
   }
 
-  return buildQueueResponse(existingMessage, true);
+  return {
+    ...record.response,
+    idempotent_replay: true,
+  };
 }
 
 function buildQueueResponse(
