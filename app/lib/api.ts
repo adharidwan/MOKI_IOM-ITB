@@ -2,6 +2,7 @@ import 'server-only';
 
 import { getSupabaseServerClient, getSupabaseAdminClient } from './supabase-server';
 import { Ticket, Reply, TicketWithReplies, CsvContact } from './types';
+import { createTicketReplyOutboundMessage } from './whatsapp-notification-repository';
 
 interface GetTicketsParams {
   page?: number;
@@ -117,7 +118,7 @@ export async function addReply(ticketId: string, author: string, content: string
   const supabase = getSupabaseAdminClient();
   const { data: ticket, error: ticketLookupError } = await supabase
     .from('tickets')
-    .select('id, channel, whatsapp_chat_id')
+    .select('id, channel, whatsapp_chat_id, phone_number')
     .eq('id', ticketId)
     .single();
 
@@ -151,6 +152,32 @@ export async function addReply(ticketId: string, author: string, content: string
 
   if (ticketError) {
     throw new Error(`Reply created but failed to update ticket: ${ticketError.message}`);
+  }
+
+  if (shouldQueueWhatsapp && ticket.whatsapp_chat_id) {
+    try {
+      await createTicketReplyOutboundMessage({
+        replyId: data.id,
+        ticketId,
+        recipientPhoneNumber: ticket.phone_number,
+        recipientChatId: ticket.whatsapp_chat_id,
+        content,
+      });
+    } catch (queueError) {
+      const queueErrorMessage =
+        queueError instanceof Error ? queueError.message : 'Unknown outbound queue error';
+
+      await supabase
+        .from('replies')
+        .update({
+          delivery_status: 'failed',
+          last_delivery_error: queueErrorMessage,
+          next_retry_at: null,
+        })
+        .eq('id', data.id);
+
+      throw new Error(`Reply created but failed to queue outbound message: ${queueErrorMessage}`);
+    }
   }
 
   return data as Reply;
@@ -289,4 +316,3 @@ export async function deleteCsvContact(id: string): Promise<void> {
     throw new Error(`Failed to delete phone list row: ${error.message}`);
   }
 }
-

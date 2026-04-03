@@ -7,7 +7,10 @@
     "bot": "node --env-file=.env.local scripts/whatsapp-bot.js",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "provision:api-client": "node scripts/provision-api-client.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -15,14 +18,17 @@
     "@mui/icons-material": "^7.3.9",
     "@mui/material": "^7.3.9",
     "@supabase/supabase-js": "^2.99.1",
+    "bullmq": "^5.72.1",
     "concurrently": "^9.2.1",
+    "ioredis": "^5.10.1",
     "next": "16.1.6",
     "papaparse": "^5.5.2",
     "qrcode-terminal": "^0.12.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-dropzone": "^14.3.5",
-    "whatsapp-web.js": "^1.34.6"
+    "whatsapp-web.js": "^1.34.6",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -33,6 +39,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.2",
+    "yaml": "^2.8.3"
   }
 }
