@@ -7,8 +7,17 @@ import {
   createCsvContact,
   deleteCsvContact,
   updateCsvContact,
+  addCsvContactsGroups,
   type CsvContactInput,
 } from '../lib/api';
+import { createGroupBlastOutboundMessages } from '../lib/whatsapp-notification-repository';
+
+function parseGroupNames(rawValue: string): string[] {
+  return rawValue
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
 
 function normalizeContactInput(formData: FormData): CsvContactInput {
   return {
@@ -16,6 +25,7 @@ function normalizeContactInput(formData: FormData): CsvContactInput {
     nama: String(formData.get('nama') || '').trim(),
     jenis_kelamin: String(formData.get('jenis_kelamin') || '').trim(),
     jabatan: String(formData.get('jabatan') || '').trim() || undefined,
+    group_names: parseGroupNames(String(formData.get('group_names') || '')),
   };
 }
 
@@ -102,4 +112,59 @@ export async function deletePhoneListContactsBulkAction(formData: FormData): Pro
   }
 
   redirect('/phonelist?toast=deleted_bulk');
+}
+
+export async function assignPhoneListGroupAction(formData: FormData): Promise<void> {
+  const idsRaw = String(formData.get('ids') || '[]');
+  const groupNames = parseGroupNames(String(formData.get('group_names') || ''));
+
+  if (groupNames.length === 0) {
+    redirect('/phonelist?toast=error');
+  }
+
+  let ids: string[] = [];
+  try {
+    const parsed = JSON.parse(idsRaw);
+    if (Array.isArray(parsed)) {
+      ids = parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+    }
+  } catch {
+    redirect('/phonelist?toast=error');
+  }
+
+  if (ids.length === 0) {
+    redirect('/phonelist?toast=error');
+  }
+
+  try {
+    await addCsvContactsGroups(ids, groupNames);
+    revalidatePath('/phonelist');
+  } catch {
+    redirect('/phonelist?toast=error');
+  }
+
+  redirect('/phonelist?toast=grouped');
+}
+
+export async function sendGroupBlastAction(formData: FormData): Promise<void> {
+  const groupNames = parseGroupNames(String(formData.get('group_names') || ''));
+  const message = String(formData.get('message') || '').trim();
+
+  if (!groupNames.length || !message) {
+    redirect('/phonelist?toast=error');
+  }
+
+  try {
+    const insertedCount = await createGroupBlastOutboundMessages({ groupNames, content: message });
+
+    if (insertedCount === 0) {
+      redirect('/phonelist?toast=blast_empty');
+    }
+
+    revalidatePath('/phonelist');
+  } catch {
+    redirect('/phonelist?toast=error');
+  }
+
+  redirect('/phonelist?toast=blast_sent');
 }

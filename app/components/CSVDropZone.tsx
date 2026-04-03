@@ -26,6 +26,7 @@ interface CSVRow {
   nama: string;
   jenis_kelamin: string;
   jabatan?: string;
+  group_names?: string[];
 }
 
 interface RawCSVRow {
@@ -33,8 +34,16 @@ interface RawCSVRow {
   nama?: string;
   'jenis kelamin'?: string;
   jabatan?: string;
+  'group name'?: string;
+  group_name?: string;
 }
 
+function parseGroupNames(rawValue?: string): string[] {
+  return (rawValue || '')
+    .split(/[;,\n]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
 interface ParsedData {
   data: CSVRow[];
   errors: string[];
@@ -98,6 +107,7 @@ export default function CSVDropZone() {
           const nama = row.nama?.trim();
           const jenisKelamin = row['jenis kelamin']?.trim();
           const jabatan = row.jabatan?.trim();
+          const groupNames = parseGroupNames(row['group name'] || row.group_name);
           
           if (!noTelp) {
             errors.push(`Row ${rowNum}: No Telp is required`);
@@ -117,6 +127,7 @@ export default function CSVDropZone() {
             nama,
             jenis_kelamin: jenisKelamin,
             jabatan,
+            group_names: groupNames,
           });
         });
 
@@ -182,7 +193,7 @@ export default function CSVDropZone() {
       </Typography>
       
       <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
-        Drag and drop a CSV file or click to select. Required columns: No Telp, Nama, Jenis kelamin. Optional: Jabatan
+        Drag and drop a CSV file or click to select. Required columns: No Telp, Nama, Jenis kelamin. Optional: Jabatan, Group Name
       </Typography>
 
       {/* Drop Zone */}
@@ -293,6 +304,7 @@ export default function CSVDropZone() {
                       <TableCell sx={{ fontWeight: 'bold' }}>Nama</TableCell>
                       <TableCell sx={{ fontWeight: 'bold' }}>Jenis kelamin</TableCell>
                       <TableCell sx={{ fontWeight: 'bold' }}>Jabatan</TableCell>
+                      <TableCell sx={{ fontWeight: 'bold' }}>Group</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -303,6 +315,7 @@ export default function CSVDropZone() {
                         <TableCell>{row.nama}</TableCell>
                         <TableCell>{row.jenis_kelamin}</TableCell>
                         <TableCell>{row.jabatan || '-'}</TableCell>
+                        <TableCell>{row.group_names?.join(', ') || '-'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

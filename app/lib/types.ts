@@ -38,6 +38,7 @@ export interface CsvContact {
   nama: string;
   jenis_kelamin: string;
   jabatan: string | null;
+  group_names: string[];
   source_file: string | null;
   imported_at: string;
   created_at: string;
