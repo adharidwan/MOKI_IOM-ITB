@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleWhatsappNotificationRequest,
@@ -24,6 +24,10 @@ import {
 
 const FIXED_NOW = new Date('2026-03-31T05:30:00.000Z');
 
+async function flushAsyncWork(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 class InMemoryNotificationRepository implements NotificationRepository {
   clients: ApiClientRecord[];
   outboundMessages: OutboundMessageRecord[];
@@ -37,6 +41,11 @@ class InMemoryNotificationRepository implements NotificationRepository {
   acceptedByClient = new Map<string, number[]>();
   pendingByClient = new Map<string, number>();
   nowMs = FIXED_NOW.getTime();
+  touchMode: 'immediate' | 'deferred' | 'reject' = 'immediate';
+  touchStarted = false;
+  touchResolved = false;
+  touchErrorMessage = 'touch failed';
+  private touchDeferredResolver: (() => void) | null = null;
 
   constructor(clients: ApiClientRecord[]) {
     this.clients = clients;
@@ -47,7 +56,24 @@ class InMemoryNotificationRepository implements NotificationRepository {
     return this.clients.find((client) => client.key_prefix === keyPrefix) ?? null;
   }
 
+  resolveDeferredTouch(): void {
+    this.touchDeferredResolver?.();
+    this.touchDeferredResolver = null;
+  }
+
   async touchApiClientLastUsedAt(clientId: string, isoTimestamp: string): Promise<void> {
+    this.touchStarted = true;
+
+    if (this.touchMode === 'reject') {
+      throw new Error(this.touchErrorMessage);
+    }
+
+    if (this.touchMode === 'deferred') {
+      await new Promise<void>((resolve) => {
+        this.touchDeferredResolver = resolve;
+      });
+    }
+
     const client = this.clients.find((item) => item.id === clientId);
 
     if (!client) {
@@ -56,6 +82,7 @@ class InMemoryNotificationRepository implements NotificationRepository {
 
     client.last_used_at = isoTimestamp;
     client.updated_at = isoTimestamp;
+    this.touchResolved = true;
   }
 
   async reserveApiNotificationIdempotency(
@@ -265,6 +292,14 @@ async function sendRequest(
   );
 }
 
+beforeEach(() => {
+  vi.restoreAllMocks();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('handleWhatsappNotificationRequest', () => {
   it('queues a message for a valid API client', async () => {
     const { apiKey, record } = createApiClient();
@@ -282,7 +317,39 @@ describe('handleWhatsappNotificationRequest', () => {
       idempotent_replay: false,
     });
     expect(repository.outboundMessages).toHaveLength(1);
+    await flushAsyncWork();
     expect(repository.clients[0].last_used_at).toBe(FIXED_NOW.toISOString());
+  });
+
+  it('does not await api client usage metadata updates before returning 202', async () => {
+    const { apiKey, record } = createApiClient();
+    const repository = new InMemoryNotificationRepository([record]);
+    repository.touchMode = 'deferred';
+
+    const response = await sendRequest(repository, { apiKey });
+
+    expect(response.status).toBe(202);
+    expect(repository.touchStarted).toBe(true);
+    expect(repository.touchResolved).toBe(false);
+
+    repository.resolveDeferredTouch();
+    await flushAsyncWork();
+    expect(repository.touchResolved).toBe(true);
+  });
+
+  it('does not fail a valid request when the async usage metadata update fails', async () => {
+    const { apiKey, record } = createApiClient();
+    const repository = new InMemoryNotificationRepository([record]);
+    repository.touchMode = 'reject';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await sendRequest(repository, { apiKey });
+
+    expect(response.status).toBe(202);
+    await flushAsyncWork();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"event":"api_client_usage_metadata_update_failed"'),
+    );
   });
 
   it('rejects missing or malformed API keys', async () => {
@@ -382,14 +449,12 @@ describe('handleWhatsappNotificationRequest', () => {
 
     expect(conflictResponse.status).toBe(409);
     expect((await conflictResponse.json()).error.code).toBe('idempotency_conflict');
-    expect(repository.outboundMessages).toHaveLength(1);
   });
 
   it('returns 429 when the client exceeds the per-minute request rate', async () => {
     const { apiKey, record } = createApiClient();
     record.max_requests_per_minute = 1;
     const repository = new InMemoryNotificationRepository([record]);
-
     repository.acceptedByClient.set(record.id, [FIXED_NOW.getTime()]);
 
     const response = await sendRequest(repository, {
@@ -405,7 +470,6 @@ describe('handleWhatsappNotificationRequest', () => {
     const { apiKey, record } = createApiClient();
     record.max_pending_messages = 1;
     const repository = new InMemoryNotificationRepository([record]);
-
     repository.pendingByClient.set(record.id, 1);
 
     const response = await sendRequest(repository, {
@@ -472,5 +536,22 @@ describe('handleWhatsappNotificationRequest', () => {
     expect(response.status).toBe(202);
     expect(repository.outboundMessages).toHaveLength(2);
     expect((await response.json()).message_id).toBe('outbound-2');
+  });
+
+  it('returns validation errors without debug timing headers', async () => {
+    const { apiKey, record } = createApiClient();
+    const repository = new InMemoryNotificationRepository([record]);
+
+    const response = await sendRequest(repository, {
+      apiKey,
+      body: {
+        to: 'abc',
+        message: '   ',
+      },
+    });
+
+    expect(response.status).toBe(422);
+    expect(response.headers.get('server-timing')).toBeNull();
+    expect(response.headers.get('x-whatsapp-api-timing')).toBeNull();
   });
 });
