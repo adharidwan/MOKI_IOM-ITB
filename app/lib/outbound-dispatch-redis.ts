@@ -6,7 +6,6 @@ import type IORedis from 'ioredis';
 
 import {
   API_IDEMPOTENCY_TTL_SECONDS,
-  type ApiClientRecord,
   buildClientAcceptedSetKey,
   buildClientPendingCountKey,
   buildIdempotencyKey,
@@ -15,7 +14,7 @@ import {
   type StoredApiIdempotencyRecord,
 } from './outbound-dispatch-job';
 import { getRedisClient } from './redis-server';
-import type { OutboundMessageSourceType } from './whatsapp-notification-utils';
+import type { ApiClientRecord, OutboundMessageSourceType } from './whatsapp-notification-utils';
 
 const ACCEPTED_RATE_WINDOW_MS = 60_000;
 const ACCEPTED_RATE_WINDOW_SECONDS = 60;
