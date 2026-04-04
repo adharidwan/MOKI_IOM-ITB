@@ -44,4 +44,7 @@ next-env.d.ts
 # bot shit
 .wwebjs_auth/
 .wwebjs_cache/
-supabase/
+supabase/*
+!supabase/migrations/
+!supabase/migrations/*.sql
+!supabase/schema_before_20260331120000_and_20260331130000.sql

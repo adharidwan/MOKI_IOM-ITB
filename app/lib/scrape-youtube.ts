@@ -2,6 +2,8 @@
 
 import YTDlpWrap from 'yt-dlp-wrap';
 
+const SCRAPE_ERROR_MESSAGE = 'Gagal mengambil data YouTube saat ini.';
+
 export interface YouTubeVideo {
   id: string;
   title: string;
@@ -68,7 +70,7 @@ export async function scrape_youtube(channelUrl: string): Promise<ScrapeResult> 
   } catch (error: any) {
     console.error("Scraper Backend Error:", error.message);
     return { 
-      error: `Gagal melakukan scraping: ${error.message}` 
+      error: SCRAPE_ERROR_MESSAGE,
     };
   }
 }

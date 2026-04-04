@@ -9,6 +9,7 @@ export interface Ticket {
   channel: string | null;
   phone_number: string | null;
   whatsapp_chat_id: string | null;
+  whatsapp_instance_id: string | null;
   created_at: string;
   updated_at: string | null;
 }
@@ -30,4 +31,16 @@ export interface Reply {
 
 export interface TicketWithReplies extends Ticket {
   replies: Reply[];
+}
+
+export interface CsvContact {
+  id: string;
+  no_telp: string;
+  nama: string;
+  jenis_kelamin: string;
+  jabatan: string | null;
+  group_names: string[];
+  source_file: string | null;
+  imported_at: string;
+  created_at: string;
 }

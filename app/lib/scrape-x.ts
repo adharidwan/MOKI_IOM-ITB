@@ -1,6 +1,11 @@
 "use server";
 
 import { chromium } from 'playwright-core';
+import { resolveChromiumExecutablePath, shouldUseHeadedBrowser } from './chromium-path';
+
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+const SCRAPE_ERROR_MESSAGE = 'Gagal mengambil data X saat ini.';
 
 interface ScrapeOptions {
   maxScrolls?: number;   // Batasi berapa kali scroll ke bawah
@@ -16,14 +21,16 @@ export async function scrape_x(username: string, options: ScrapeOptions = {}) {
   } = options;
 
   console.log(`--- SCRAPE X: ${username} (Target: ${minPosts} posts) ---`);
+  const executablePath = resolveChromiumExecutablePath();
 
   const browser = await chromium.launch({ 
-    headless: false, // Set false agar kamu bisa memantau prosesnya
-    slowMo: 100 
+    executablePath,
+    headless: !shouldUseHeadedBrowser(),
+    slowMo: shouldUseHeadedBrowser() ? 100 : 0,
   });
 
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    userAgent: USER_AGENT,
   });
 
   const page = await context.newPage();
@@ -87,7 +94,7 @@ export async function scrape_x(username: string, options: ScrapeOptions = {}) {
 
   } catch (error: any) {
     console.error("Scrape Error:", error.message);
-    return { error: error.message };
+    return { error: SCRAPE_ERROR_MESSAGE };
   } finally {
     await browser.close();
   }

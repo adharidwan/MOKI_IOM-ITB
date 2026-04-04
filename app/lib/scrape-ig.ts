@@ -1,18 +1,24 @@
 "use server";
 
 import { chromium } from 'playwright-core';
-import fs from 'fs';
+import { resolveChromiumExecutablePath, shouldUseHeadedBrowser } from './chromium-path';
+
+const USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+const SCRAPE_ERROR_MESSAGE = 'Gagal mengambil data Instagram saat ini.';
 
 export async function scrape_ig(username: string) {
   console.log(`\n--- [DEBUG START] SCRAPE IG: ${username} ---`);
+  const executablePath = resolveChromiumExecutablePath();
   
   const browser = await chromium.launch({ 
-    headless: false, // Biar kamu bisa liat jendelanya
-    slowMo: 200 
+    executablePath,
+    headless: !shouldUseHeadedBrowser(),
+    slowMo: shouldUseHeadedBrowser() ? 200 : 0,
   });
 
   const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    userAgent: USER_AGENT,
     viewport: { width: 1280, height: 800 } 
   });
 
@@ -28,21 +34,14 @@ export async function scrape_ig(username: string) {
     console.log("Menunggu render (5 detik)...");
     await page.waitForTimeout(5000);
 
-    // DEBUG 1: Screenshot apa yang dilihat Bot
-    await page.screenshot({ path: 'debug_ig_view.png' });
-    console.log("📸 Screenshot disimpan sebagai 'debug_ig_view.png'. Cek di root folder proyekmu.");
-
-    // DEBUG 2: Cek Judul Halaman & Konten Dasar
     const title = await page.title();
     console.log(`Judul Halaman: ${title}`);
 
-    // DEBUG 3: Cek apakah ada teks "Login" atau "Masuk" yang mendominasi
     const bodyText = await page.innerText('body');
     if (bodyText.includes("Log In") || bodyText.includes("Masuk") || bodyText.includes("Gunakan akun")) {
       console.log("⚠️ TERDETEKSI: Instagram memunculkan Login Wall. Post tidak akan muncul.");
     }
 
-    // DEBUG 4: Cek keberadaan artikel
     const articleCount = await page.locator('article').count();
     const imgCount = await page.locator('article img').count();
     console.log(`Jumlah <article> ditemukan: ${articleCount}`);
@@ -83,10 +82,8 @@ export async function scrape_ig(username: string) {
 
   } catch (error: any) {
     console.error("❌ CRITICAL ERROR:", error.message);
-    return { error: error.message };
+    return { error: SCRAPE_ERROR_MESSAGE };
   } finally {
-    // Biarkan terbuka sebentar kalau headless false agar kamu bisa liat
-    await page.waitForTimeout(2000);
     await browser.close();
     console.log("--- [DEBUG END] BROWSER CLOSED ---\n");
   }
