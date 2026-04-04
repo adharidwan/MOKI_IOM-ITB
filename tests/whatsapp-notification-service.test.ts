@@ -193,6 +193,7 @@ class InMemoryNotificationRepository implements NotificationRepository {
       source_type: 'api_notification',
       source_id: buildApiNotificationSourceId(input.clientId, input.idempotencyKey),
       ticket_id: null,
+      whatsapp_instance_id: 'default',
       priority: API_NOTIFICATION_PRIORITY,
       recipient_phone_number: input.recipientPhoneNumber,
       recipient_chat_id: null,
