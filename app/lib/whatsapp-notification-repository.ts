@@ -181,6 +181,7 @@ async function createOrReuseBlastOutboundMessage(
     source_type: 'blast',
     source_id: buildBlastSourceId(input.requestId, input.recipientPhoneNumber),
     ticket_id: null,
+    whatsapp_instance_id: DEFAULT_WHATSAPP_INSTANCE_ID,
     priority: BLAST_PRIORITY,
     recipient_phone_number: input.recipientPhoneNumber,
     recipient_chat_id: null,
