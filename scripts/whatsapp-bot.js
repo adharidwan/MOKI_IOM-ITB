@@ -2,7 +2,6 @@
 const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const { DelayedError, Worker } = require('bullmq');
-const qrcode = require('qrcode-terminal');
 const { createClient } = require('@supabase/supabase-js');
 
 const {
@@ -10,6 +9,19 @@ const {
   createRedisConnection,
   decrementPendingOutboundCounts,
 } = require('./outbound-dispatch-redis.js');
+const {
+  clearWhatsappQr,
+  createWhatsappInstanceEvent,
+  getReconnectCount,
+  getWorkerHost,
+  getWorkerId,
+  getWorkerVersion,
+  incrementReconnectCount,
+  publishWhatsappQr,
+  publishWhatsappRuntime,
+  renderTerminalQr,
+  upsertWhatsappInstance,
+} = require('./whatsapp-instance-runtime.js');
 
 const HELP_MESSAGE = [
   'Hello, thank you for contacting us.',
@@ -45,6 +57,9 @@ const DEFAULT_DISPATCH_SETTINGS = {
   global_messages_per_minute: 24,
   api_notifications_paused: false,
 };
+const DEFAULT_WHATSAPP_INSTANCE_ID = process.env.WHATSAPP_INSTANCE_ID || 'default';
+const DEFAULT_WHATSAPP_INSTANCE_LABEL = process.env.WHATSAPP_INSTANCE_LABEL || 'Primary WhatsApp';
+const HEARTBEAT_INTERVAL_MS = 15000;
 
 function getRequiredEnv(name) {
   const value = process.env[name];
@@ -63,6 +78,169 @@ function getSupabaseClient() {
       autoRefreshToken: false,
     },
   });
+}
+
+function createInstanceContext() {
+  return {
+    instanceId: DEFAULT_WHATSAPP_INSTANCE_ID,
+    label: DEFAULT_WHATSAPP_INSTANCE_LABEL,
+    workerId: getWorkerId(),
+    workerHost: getWorkerHost(),
+    workerVersion: getWorkerVersion(),
+    runtimeRedis: createRedisConnection(),
+    heartbeatTimer: null,
+    lastStatus: 'starting',
+    lastError: null,
+    lastDisconnectAt: null,
+    lastReadyAt: null,
+    lastQrAt: null,
+    lastInboundAt: null,
+    lastOutboundAt: null,
+    lastKnownPhoneNumber: null,
+    lastKnownChatId: null,
+  };
+}
+
+async function ensureWhatsappInstanceRecord(supabase, instanceContext, status = 'starting') {
+  const now = new Date().toISOString();
+  await upsertWhatsappInstance(supabase, {
+    id: instanceContext.instanceId,
+    label: instanceContext.label,
+    status,
+    assigned_worker_id: instanceContext.workerId,
+    updated_at: now,
+  });
+}
+
+async function syncWhatsappInstanceState(supabase, instanceContext, patch = {}) {
+  const now = new Date().toISOString();
+  const payload = {
+    id: instanceContext.instanceId,
+    label: instanceContext.label,
+    status: patch.status || instanceContext.lastStatus,
+    last_known_phone_number:
+      patch.last_known_phone_number !== undefined
+        ? patch.last_known_phone_number
+        : instanceContext.lastKnownPhoneNumber,
+    last_known_chat_id:
+      patch.last_known_chat_id !== undefined
+        ? patch.last_known_chat_id
+        : instanceContext.lastKnownChatId,
+    last_ready_at:
+      patch.last_ready_at !== undefined ? patch.last_ready_at : instanceContext.lastReadyAt,
+    last_qr_at: patch.last_qr_at !== undefined ? patch.last_qr_at : instanceContext.lastQrAt,
+    last_disconnect_at:
+      patch.last_disconnect_at !== undefined
+        ? patch.last_disconnect_at
+        : instanceContext.lastDisconnectAt,
+    last_error: patch.last_error !== undefined ? patch.last_error : instanceContext.lastError,
+    assigned_worker_id: instanceContext.workerId,
+    updated_at: now,
+  };
+
+  await upsertWhatsappInstance(supabase, payload);
+
+  if (patch.status) {
+    instanceContext.lastStatus = patch.status;
+  }
+
+  if (patch.last_error !== undefined) {
+    instanceContext.lastError = patch.last_error;
+  }
+
+  if (patch.last_disconnect_at !== undefined) {
+    instanceContext.lastDisconnectAt = patch.last_disconnect_at;
+  }
+
+  if (patch.last_ready_at !== undefined) {
+    instanceContext.lastReadyAt = patch.last_ready_at;
+  }
+
+  if (patch.last_qr_at !== undefined) {
+    instanceContext.lastQrAt = patch.last_qr_at;
+  }
+
+  if (patch.last_known_phone_number !== undefined) {
+    instanceContext.lastKnownPhoneNumber = patch.last_known_phone_number;
+  }
+
+  if (patch.last_known_chat_id !== undefined) {
+    instanceContext.lastKnownChatId = patch.last_known_chat_id;
+  }
+}
+
+async function publishInstanceRuntime(instanceContext, patch = {}) {
+  if (patch.lastInboundAt) {
+    instanceContext.lastInboundAt = patch.lastInboundAt;
+  }
+
+  if (patch.lastOutboundAt) {
+    instanceContext.lastOutboundAt = patch.lastOutboundAt;
+  }
+
+  if (patch.lastError !== undefined) {
+    instanceContext.lastError = patch.lastError;
+  }
+
+  if (patch.lastDisconnectAt !== undefined) {
+    instanceContext.lastDisconnectAt = patch.lastDisconnectAt;
+  }
+
+  if (patch.lastKnownPhoneNumber !== undefined) {
+    instanceContext.lastKnownPhoneNumber = patch.lastKnownPhoneNumber;
+  }
+
+  if (patch.lastKnownChatId !== undefined) {
+    instanceContext.lastKnownChatId = patch.lastKnownChatId;
+  }
+
+  if (patch.status) {
+    instanceContext.lastStatus = patch.status;
+  }
+
+  await publishWhatsappRuntime(instanceContext.runtimeRedis, instanceContext.instanceId, {
+    status: instanceContext.lastStatus,
+    worker_id: instanceContext.workerId,
+    worker_host: instanceContext.workerHost,
+    worker_version: instanceContext.workerVersion,
+    assigned_worker_id: instanceContext.workerId,
+    last_heartbeat_at: new Date().toISOString(),
+    last_error: instanceContext.lastError,
+    last_disconnect_at: instanceContext.lastDisconnectAt,
+    reconnect_count_24h: await getReconnectCount(
+      instanceContext.runtimeRedis,
+      instanceContext.instanceId,
+    ),
+    last_inbound_at: instanceContext.lastInboundAt,
+    last_outbound_at: instanceContext.lastOutboundAt,
+  });
+}
+
+async function recordInstanceEvent(supabase, instanceContext, eventType, message, metadata) {
+  await createWhatsappInstanceEvent(supabase, {
+    whatsapp_instance_id: instanceContext.instanceId,
+    event_type: eventType,
+    message,
+    metadata: metadata || null,
+  });
+}
+
+function startRuntimeHeartbeat(instanceContext) {
+  if (instanceContext.heartbeatTimer) {
+    clearInterval(instanceContext.heartbeatTimer);
+  }
+
+  instanceContext.heartbeatTimer = setInterval(() => {
+    void publishInstanceRuntime(instanceContext).catch((error) => {
+      console.error(
+        `WhatsApp heartbeat publish failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+
+  if (typeof instanceContext.heartbeatTimer.unref === 'function') {
+    instanceContext.heartbeatTimer.unref();
+  }
 }
 
 function normalizePhone(chatId) {
@@ -153,17 +331,18 @@ function parseTicketCommand(messageBody) {
 async function upsertWhatsappContact(supabase, payload) {
   const { error } = await supabase
     .from('whatsapp_contacts')
-    .upsert(payload, { onConflict: 'phone_number' });
+    .upsert(payload, { onConflict: 'whatsapp_instance_id,phone_number' });
 
   if (error) {
     throw new Error(`Failed to upsert WhatsApp contact: ${error.message}`);
   }
 }
 
-async function loadWhatsappContact(supabase, phoneNumber) {
+async function loadWhatsappContact(supabase, whatsappInstanceId, phoneNumber) {
   const { data, error } = await supabase
     .from('whatsapp_contacts')
     .select('*')
+    .eq('whatsapp_instance_id', whatsappInstanceId)
     .eq('phone_number', phoneNumber)
     .maybeSingle();
 
@@ -174,11 +353,12 @@ async function loadWhatsappContact(supabase, phoneNumber) {
   return data;
 }
 
-async function loadLatestActiveTicket(supabase, phoneNumber) {
+async function loadLatestActiveTicket(supabase, whatsappInstanceId, phoneNumber) {
   const { data, error } = await supabase
     .from('tickets')
-    .select('id, status, whatsapp_chat_id, phone_number')
+    .select('id, status, whatsapp_chat_id, phone_number, whatsapp_instance_id')
     .eq('channel', 'whatsapp')
+    .eq('whatsapp_instance_id', whatsappInstanceId)
     .eq('phone_number', phoneNumber)
     .in('status', ACTIVE_TICKET_STATUSES)
     .order('updated_at', { ascending: false })
@@ -192,7 +372,14 @@ async function loadLatestActiveTicket(supabase, phoneNumber) {
   return data;
 }
 
-async function appendCustomerReply(supabase, ticketId, phoneNumber, chatId, content) {
+async function appendCustomerReply(
+  supabase,
+  whatsappInstanceId,
+  ticketId,
+  phoneNumber,
+  chatId,
+  content,
+) {
   const now = new Date().toISOString();
 
   const { error: replyError } = await supabase
@@ -218,6 +405,7 @@ async function appendCustomerReply(supabase, ticketId, phoneNumber, chatId, cont
       updated_at: now,
       whatsapp_chat_id: chatId,
       phone_number: phoneNumber,
+      whatsapp_instance_id: whatsappInstanceId,
     })
     .eq('id', ticketId);
 
@@ -226,6 +414,7 @@ async function appendCustomerReply(supabase, ticketId, phoneNumber, chatId, cont
   }
 
   await upsertWhatsappContact(supabase, {
+    whatsapp_instance_id: whatsappInstanceId,
     phone_number: phoneNumber,
     chat_id: chatId,
     invalid_message_count: 0,
@@ -236,14 +425,15 @@ async function appendCustomerReply(supabase, ticketId, phoneNumber, chatId, cont
   });
 }
 
-async function handleInvalidMessage(client, supabase, msg) {
+async function handleInvalidMessage(client, supabase, instanceContext, msg) {
   const phoneNumber = normalizePhone(msg.from);
   const now = new Date().toISOString();
-  const contact = await loadWhatsappContact(supabase, phoneNumber);
+  const contact = await loadWhatsappContact(supabase, instanceContext.instanceId, phoneNumber);
   const invalidCount = (contact?.invalid_message_count || 0) + 1;
   const shouldSendHelp = invalidCount === 1 || invalidCount % 5 === 0;
 
   await upsertWhatsappContact(supabase, {
+    whatsapp_instance_id: instanceContext.instanceId,
     phone_number: phoneNumber,
     chat_id: msg.from,
     invalid_message_count: invalidCount,
@@ -258,7 +448,7 @@ async function handleInvalidMessage(client, supabase, msg) {
   }
 }
 
-async function createWhatsappTicket(client, supabase, msg, parsedCommand) {
+async function createWhatsappTicket(client, supabase, instanceContext, msg, parsedCommand) {
   const now = new Date().toISOString();
   const phoneNumber = normalizePhone(msg.from);
 
@@ -272,6 +462,7 @@ async function createWhatsappTicket(client, supabase, msg, parsedCommand) {
       channel: 'whatsapp',
       phone_number: phoneNumber,
       whatsapp_chat_id: msg.from,
+      whatsapp_instance_id: instanceContext.instanceId,
       created_at: now,
       updated_at: now,
     })
@@ -299,6 +490,7 @@ async function createWhatsappTicket(client, supabase, msg, parsedCommand) {
   }
 
   await upsertWhatsappContact(supabase, {
+    whatsapp_instance_id: instanceContext.instanceId,
     phone_number: phoneNumber,
     chat_id: msg.from,
     invalid_message_count: 0,
@@ -453,6 +645,7 @@ async function processOutboundDispatchJob(
   redis,
   dispatchState,
   nowMs = Date.now(),
+  instanceContext = null,
 ) {
   const settings = await loadDispatchSettingsWithFallback(supabase, dispatchState, nowMs);
 
@@ -507,6 +700,12 @@ async function processOutboundDispatchJob(
         }),
       );
 
+      if (instanceContext) {
+        await publishInstanceRuntime(instanceContext, {
+          lastOutboundAt: failedAt,
+          lastError: NON_RETRYABLE_DELIVERY_ERROR,
+        });
+      }
       dispatchState.nextDispatchAtMs = Date.now() + minGapMs;
       return { processed: true, settings };
     }
@@ -551,6 +750,13 @@ async function processOutboundDispatchJob(
         source_id: job.data.source_id,
       }),
     );
+
+    if (instanceContext) {
+      await publishInstanceRuntime(instanceContext, {
+        lastOutboundAt: deliveredAt,
+        lastError: null,
+      });
+    }
   } catch (error) {
     const retryState = getNextRetryState(
       attemptNumber,
@@ -584,6 +790,12 @@ async function processOutboundDispatchJob(
       }),
     );
 
+    if (instanceContext) {
+      await publishInstanceRuntime(instanceContext, {
+        lastOutboundAt: updatedAt,
+        lastError: retryState.last_delivery_error,
+      });
+    }
     dispatchState.nextDispatchAtMs = Date.now() + minGapMs;
 
     if (retryState.delivery_status === 'retrying') {
@@ -607,7 +819,7 @@ async function processOutboundDispatchJob(
   return { processed: true, settings };
 }
 
-function startOutboundDispatchWorker(client, supabase, dispatchState) {
+function startOutboundDispatchWorker(client, supabase, dispatchState, instanceContext) {
   const workerRedis = createRedisConnection();
   const counterRedis = createRedisConnection();
   const worker = new Worker(
@@ -619,6 +831,8 @@ function startOutboundDispatchWorker(client, supabase, dispatchState) {
       supabase,
       counterRedis,
       dispatchState,
+      undefined,
+      instanceContext,
     ),
     {
       connection: workerRedis,
@@ -655,6 +869,7 @@ async function main() {
     cachedDispatchSettings: null,
     cachedDispatchSettingsFreshUntilMs: 0,
   };
+  const instanceContext = createInstanceContext();
   let selfChatId = null;
   let readyAtMs = null;
   let outboundWorkerResources = null;
@@ -670,17 +885,121 @@ async function main() {
     },
   });
 
-  client.on('qr', (qr) => {
-    qrcode.generate(qr, { small: true });
+  await ensureWhatsappInstanceRecord(supabase, instanceContext, 'starting');
+  await syncWhatsappInstanceState(supabase, instanceContext, { status: 'connecting', last_error: null });
+  await publishInstanceRuntime(instanceContext, { status: 'connecting', lastError: null });
+  startRuntimeHeartbeat(instanceContext);
+
+  client.on('qr', async (qr) => {
+    const issuedAt = new Date().toISOString();
+
+    console.log(renderTerminalQr(qr) || qr);
+
+    try {
+      await publishWhatsappQr(instanceContext.runtimeRedis, instanceContext.instanceId, qr, issuedAt);
+      await syncWhatsappInstanceState(supabase, instanceContext, {
+        status: 'qr_required',
+        last_qr_at: issuedAt,
+        last_error: null,
+      });
+      await publishInstanceRuntime(instanceContext, { status: 'qr_required', lastError: null });
+      await recordInstanceEvent(supabase, instanceContext, 'qr_issued', 'WhatsApp QR issued.', {
+        generated_at: issuedAt,
+      });
+    } catch (error) {
+      console.error(`Failed to publish WhatsApp QR state: ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
 
-  client.on('ready', () => {
+  client.on('ready', async () => {
     console.log('WhatsApp bot ready');
     selfChatId = client.info?.wid?._serialized || null;
     readyAtMs = Date.now();
+    const readyAt = new Date().toISOString();
+    const phoneNumber = selfChatId ? normalizePhone(selfChatId) : null;
+
+    try {
+      await clearWhatsappQr(instanceContext.runtimeRedis, instanceContext.instanceId);
+      await syncWhatsappInstanceState(supabase, instanceContext, {
+        status: 'ready',
+        last_ready_at: readyAt,
+        last_error: null,
+        last_known_phone_number: phoneNumber,
+        last_known_chat_id: selfChatId,
+      });
+      await publishInstanceRuntime(instanceContext, {
+        status: 'ready',
+        lastError: null,
+        lastKnownPhoneNumber: phoneNumber,
+        lastKnownChatId: selfChatId,
+      });
+      await recordInstanceEvent(supabase, instanceContext, 'ready', 'WhatsApp session ready.', {
+        ready_at: readyAt,
+        phone_number: phoneNumber,
+      });
+    } catch (error) {
+      console.error(`Failed to persist WhatsApp ready state: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     if (!outboundWorkerResources) {
-      outboundWorkerResources = startOutboundDispatchWorker(client, supabase, dispatchState);
+      outboundWorkerResources = startOutboundDispatchWorker(
+        client,
+        supabase,
+        dispatchState,
+        instanceContext,
+      );
+    }
+  });
+
+  client.on('auth_failure', async (message) => {
+    const failedAt = new Date().toISOString();
+    const errorMessage = String(message || 'Authentication failure.');
+
+    try {
+      await syncWhatsappInstanceState(supabase, instanceContext, {
+        status: 'auth_failed',
+        last_error: errorMessage,
+      });
+      await publishInstanceRuntime(instanceContext, {
+        status: 'auth_failed',
+        lastError: errorMessage,
+      });
+      await recordInstanceEvent(supabase, instanceContext, 'auth_failed', errorMessage, {
+        failed_at: failedAt,
+      });
+    } catch (error) {
+      console.error(`Failed to persist WhatsApp auth failure: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+
+  client.on('disconnected', async (reason) => {
+    const disconnectedAt = new Date().toISOString();
+    const disconnectReason = String(reason || 'Disconnected.');
+
+    try {
+      const reconnectCount = await incrementReconnectCount(
+        instanceContext.runtimeRedis,
+        instanceContext.instanceId,
+      );
+      await clearWhatsappQr(instanceContext.runtimeRedis, instanceContext.instanceId);
+      await syncWhatsappInstanceState(supabase, instanceContext, {
+        status: 'disconnected',
+        last_disconnect_at: disconnectedAt,
+        last_error: disconnectReason,
+      });
+      await publishInstanceRuntime(instanceContext, {
+        status: 'disconnected',
+        lastDisconnectAt: disconnectedAt,
+        lastError: disconnectReason,
+      });
+      await recordInstanceEvent(supabase, instanceContext, 'disconnected', disconnectReason, {
+        disconnected_at: disconnectedAt,
+      });
+      await recordInstanceEvent(supabase, instanceContext, 'reconnect_started', 'Reconnect flow started.', {
+        reconnect_count_24h: reconnectCount,
+      });
+    } catch (error) {
+      console.error(`Failed to persist WhatsApp disconnect state: ${error instanceof Error ? error.message : String(error)}`);
     }
   });
 
@@ -707,21 +1026,41 @@ async function main() {
       }
 
       const phoneNumber = normalizePhone(msg.from);
-      const activeTicket = await loadLatestActiveTicket(supabase, phoneNumber);
+      const activeTicket = await loadLatestActiveTicket(
+        supabase,
+        instanceContext.instanceId,
+        phoneNumber,
+      );
+      await publishInstanceRuntime(instanceContext, {
+        lastInboundAt: new Date().toISOString(),
+        lastKnownPhoneNumber: phoneNumber,
+        lastKnownChatId: msg.from,
+      });
+      await syncWhatsappInstanceState(supabase, instanceContext, {
+        last_known_phone_number: phoneNumber,
+        last_known_chat_id: msg.from,
+      });
 
       if (activeTicket) {
-        await appendCustomerReply(supabase, activeTicket.id, phoneNumber, msg.from, String(msg.body || ''));
+        await appendCustomerReply(
+          supabase,
+          instanceContext.instanceId,
+          activeTicket.id,
+          phoneNumber,
+          msg.from,
+          String(msg.body || ''),
+        );
         return;
       }
 
       const parsedCommand = parseTicketCommand(msg.body);
 
       if (!parsedCommand.isTicketCommand || !parsedCommand.isValid) {
-        await handleInvalidMessage(client, supabase, msg);
+        await handleInvalidMessage(client, supabase, instanceContext, msg);
         return;
       }
 
-      await createWhatsappTicket(client, supabase, msg, parsedCommand);
+      await createWhatsappTicket(client, supabase, instanceContext, msg, parsedCommand);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(`Incoming message processing failed: ${errorMessage}`);
