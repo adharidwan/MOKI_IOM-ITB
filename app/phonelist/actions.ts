@@ -159,13 +159,21 @@ export async function sendGroupBlastAction(formData: FormData): Promise<void> {
   }
 
   try {
-    const insertedCount = await createGroupBlastOutboundMessages({ groupNames, content: message });
+    const blastResult = await createGroupBlastOutboundMessages({ groupNames, content: message });
 
-    if (insertedCount === 0) {
+    if (blastResult.totalRecipients === 0) {
       redirect('/phonelist?toast=blast_empty');
     }
 
+    if (blastResult.acceptedCount === 0) {
+      redirect('/phonelist?toast=error');
+    }
+
     revalidatePath('/phonelist');
+
+    if (blastResult.failedCount > 0) {
+      redirect('/phonelist?toast=blast_partial');
+    }
   } catch {
     redirect('/phonelist?toast=error');
   }

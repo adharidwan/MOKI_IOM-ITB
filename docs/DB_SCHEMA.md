@@ -279,7 +279,7 @@ Columns:
 | --- | --- | --- | --- | --- |
 | `id` | `text` | no | `'default'` | singleton key |
 | `global_messages_per_minute` | `integer` | no | `24` | dispatch rate control |
-| `api_notifications_paused` | `boolean` | no | `false` | pause notifications without pausing ticket replies |
+| `api_notifications_paused` | `boolean` | no | `false` | pause non-ticket outbound traffic (`api_notification` and `blast`) without pausing ticket replies |
 | `updated_at` | `timestamptz` | no | `timezone('utc', now())` | last settings update |
 
 Constraints:

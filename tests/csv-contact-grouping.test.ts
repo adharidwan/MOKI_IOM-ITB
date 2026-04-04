@@ -4,6 +4,7 @@ let fakeSupabase: any;
 
 const createdContacts: Array<Record<string, unknown>> = [];
 const updatedContacts: Array<Record<string, unknown>> = [];
+const rpcCalls: Array<Record<string, unknown>> = [];
 
 vi.mock('server-only', () => ({}));
 
@@ -15,8 +16,13 @@ vi.mock('../app/lib/supabase-server', () => ({
 beforeEach(() => {
   createdContacts.length = 0;
   updatedContacts.length = 0;
+  rpcCalls.length = 0;
 
   fakeSupabase = {
+    rpc(fnName: string, params: Record<string, unknown>) {
+      rpcCalls.push({ fnName, params });
+      return Promise.resolve({ data: Array.isArray(params.p_contact_ids) ? params.p_contact_ids.length : 0, error: null });
+    },
     from(tableName: string) {
       if (tableName !== 'csv_contacts') {
         throw new Error(`Unexpected table access: ${tableName}`);
@@ -131,10 +137,29 @@ describe('csv contact grouping helpers', () => {
     expect(updated.group_names).toEqual(['Tim B', 'VIP']);
   });
 
-  it('adds selected group names without removing existing ones', async () => {
+  it('adds selected group names through the atomic rpc helper', async () => {
     const { addCsvContactsGroups } = await import('../app/lib/api');
 
+    const updatedCount = await addCsvContactsGroups(['contact-1', 'contact-2'], ['Tim Sales', 'VIP']);
+
+    expect(updatedCount).toBe(2);
+    expect(rpcCalls[0]).toEqual({
+      fnName: 'add_csv_contact_groups',
+      params: {
+        p_contact_ids: ['contact-1', 'contact-2'],
+        p_group_names: ['Tim Sales', 'VIP'],
+      },
+    });
+  });
+
+  it('syncs save-to-group without overwriting existing contact fields', async () => {
+    const { syncCsvContactsToGroups } = await import('../app/lib/api');
+
     fakeSupabase = {
+      rpc(fnName: string, params: Record<string, unknown>) {
+        rpcCalls.push({ fnName, params });
+        return Promise.resolve({ data: 1, error: null });
+      },
       from(tableName: string) {
         if (tableName !== 'csv_contacts') {
           throw new Error(`Unexpected table access: ${tableName}`);
@@ -143,41 +168,75 @@ describe('csv contact grouping helpers', () => {
         return {
           select() {
             return {
-              in(_column: string, ids: string[]) {
+              in(_column: string, phoneNumbers: string[]) {
                 return Promise.resolve({
-                  data: ids.map((id, index) => ({
-                    id,
-                    group_names: index === 0 ? ['Existing'] : ['VIP'],
-                  })),
+                  data: phoneNumbers.includes('628111111111')
+                    ? [
+                        {
+                          id: 'contact-existing',
+                          no_telp: '628111111111',
+                          nama: 'Sinta Asli',
+                          jenis_kelamin: 'Perempuan',
+                          jabatan: 'Supervisor',
+                          group_names: ['Existing'],
+                          source_file: null,
+                          imported_at: '2026-04-04T00:00:00.000Z',
+                          created_at: '2026-04-04T00:00:00.000Z',
+                        },
+                      ]
+                    : [],
                   error: null,
                 });
               },
             };
           },
-          update(payload: Record<string, unknown>) {
-            return {
-              eq(_column: string, value: string) {
-                updatedContacts.push({ payload, id: value });
+          upsert(payload: Record<string, unknown>[]) {
+            createdContacts.push(...payload);
 
-                return {
-                  async select() {
-                    return { data: { id: value, ...payload }, error: null };
-                  },
-                };
-              },
+            return {
+              error: null,
             };
           },
         };
       },
     };
 
-    const updatedCount = await addCsvContactsGroups(['contact-1', 'contact-2'], ['Tim Sales', 'VIP']);
+    const result = await syncCsvContactsToGroups({
+      contacts: [
+        {
+          no_telp: '628111111111',
+          nama: 'Kontak 628111111111',
+          jenis_kelamin: 'Tidak diketahui',
+        },
+        {
+          no_telp: '628222222222',
+          nama: 'Budi',
+          jenis_kelamin: 'Laki-laki',
+          jabatan: 'Sales',
+        },
+      ],
+      groupNames: ['VIP'],
+      sourceFile: 'manual-input',
+    });
 
-    expect(updatedCount).toBe(2);
-    expect(updatedContacts).toHaveLength(2);
-    expect(updatedContacts[0]).toMatchObject({
-      id: 'contact-1',
-      payload: { group_names: ['Existing', 'Tim Sales', 'VIP'] },
+    expect(result).toEqual({ createdCount: 1, updatedCount: 1 });
+    expect(createdContacts).toEqual([
+      {
+        no_telp: '628222222222',
+        nama: 'Budi',
+        jenis_kelamin: 'Laki-laki',
+        jabatan: 'Sales',
+        group_names: ['VIP'],
+        source_file: 'manual-input',
+        imported_at: expect.any(String),
+      },
+    ]);
+    expect(rpcCalls[0]).toEqual({
+      fnName: 'add_csv_contact_groups',
+      params: {
+        p_contact_ids: ['contact-existing'],
+        p_group_names: ['VIP'],
+      },
     });
   });
 });

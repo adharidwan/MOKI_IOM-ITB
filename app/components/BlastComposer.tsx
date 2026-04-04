@@ -100,6 +100,42 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
 
   const manualCount = useMemo(() => parseManualRecipients(manualRecipientsRaw).length, [manualRecipientsRaw]);
 
+  const buildBlastStatusMessage = (
+    result: {
+      acceptedCount?: number;
+      failedCount?: number;
+      alreadyAcceptedCount?: number;
+      groupName?: string | null;
+    },
+    options: {
+      label: string;
+      saveToGroup: boolean;
+    },
+  ): { type: 'success' | 'error'; message: string } => {
+    const acceptedCount = result.acceptedCount || 0;
+    const failedCount = result.failedCount || 0;
+    const alreadyAcceptedCount = result.alreadyAcceptedCount || 0;
+    const savedSuffix = options.saveToGroup ? ` Disimpan ke group ${result.groupName}.` : '';
+    const dedupeSuffix =
+      alreadyAcceptedCount > 0
+        ? ` ${alreadyAcceptedCount} penerima sudah pernah diterima sebelumnya, jadi tidak diduplikasi.`
+        : '';
+
+    if (failedCount > 0) {
+      return {
+        type: 'error',
+        message:
+          `${options.label} menerima ${acceptedCount} penerima, tetapi ${failedCount} gagal masuk ke antrian.` +
+          `${savedSuffix}${dedupeSuffix}`,
+      };
+    }
+
+    return {
+      type: 'success',
+      message: `${options.label} terkirim ke ${acceptedCount} penerima.${savedSuffix}${dedupeSuffix}`,
+    };
+  };
+
   const handleManualSubmit = async () => {
     const recipients = parseManualRecipients(manualRecipientsRaw);
 
@@ -134,7 +170,13 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
       }),
     });
 
-    const result = (await response.json()) as { error?: string; insertedCount?: number; groupName?: string | null };
+    const result = (await response.json()) as {
+      error?: string;
+      acceptedCount?: number;
+      failedCount?: number;
+      alreadyAcceptedCount?: number;
+      groupName?: string | null;
+    };
 
     if (!response.ok) {
       setStatus({ type: 'error', message: result.error || 'Blast manual gagal dikirim.' });
@@ -142,12 +184,10 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
       return;
     }
 
-    setStatus({
-      type: 'success',
-      message: promptResult.saveToGroup
-        ? `Blast terkirim ke ${result.insertedCount || 0} penerima. Disimpan ke group ${result.groupName}.`
-        : `Blast terkirim ke ${result.insertedCount || 0} penerima.`,
-    });
+    setStatus(buildBlastStatusMessage(result, {
+      label: 'Blast manual',
+      saveToGroup: promptResult.saveToGroup,
+    }));
     setSubmitting(false);
   };
 
@@ -216,7 +256,13 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
       }),
     });
 
-    const result = (await response.json()) as { error?: string; insertedCount?: number; groupName?: string | null };
+    const result = (await response.json()) as {
+      error?: string;
+      acceptedCount?: number;
+      failedCount?: number;
+      alreadyAcceptedCount?: number;
+      groupName?: string | null;
+    };
 
     if (!response.ok) {
       setStatus({ type: 'error', message: result.error || 'Blast CSV gagal dikirim.' });
@@ -224,12 +270,10 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
       return;
     }
 
-    setStatus({
-      type: 'success',
-      message: promptResult.saveToGroup
-        ? `Blast CSV terkirim ke ${result.insertedCount || 0} penerima. Disimpan ke group ${result.groupName}.`
-        : `Blast CSV terkirim ke ${result.insertedCount || 0} penerima.`,
-    });
+    setStatus(buildBlastStatusMessage(result, {
+      label: 'Blast CSV',
+      saveToGroup: promptResult.saveToGroup,
+    }));
     setSubmitting(false);
   };
 

@@ -61,43 +61,247 @@ export interface CreateDirectBlastOutboundMessagesInput {
   content: string;
 }
 
-function normalizeGroupNames(values: string[] | null | undefined): string[] {
+export interface BlastDispatchResult {
+  totalRecipients: number;
+  acceptedCount: number;
+  queuedCount: number;
+  alreadyAcceptedCount: number;
+  failedCount: number;
+}
+
+function normalizeList(values: string[] | null | undefined): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
 
   (values || []).forEach((value) => {
-    const groupName = value.trim();
+    const normalizedValue = value.trim();
 
-    if (!groupName) {
+    if (!normalizedValue) {
       return;
     }
 
-    const dedupeKey = groupName.toLowerCase();
+    const dedupeKey = normalizedValue.toLowerCase();
     if (seen.has(dedupeKey)) {
       return;
     }
 
     seen.add(dedupeKey);
-    normalized.push(groupName);
+    normalized.push(normalizedValue);
   });
 
   return normalized;
 }
 
-function extractGroupNames(record: Record<string, unknown>): string[] {
-  const directValues = Array.isArray(record.group_names)
-    ? record.group_names.filter((value): value is string => typeof value === 'string')
-    : [];
-  const legacyValue = typeof record.group_name === 'string' && record.group_name.trim()
-    ? [record.group_name]
-    : [];
-
-  return normalizeGroupNames([...directValues, ...legacyValue]);
+function normalizePhoneNumbers(phoneNumbers: string[]): string[] {
+  return Array.from(
+    new Set(
+      phoneNumbers
+        .map((phoneNumber) => String(phoneNumber || '').replace(/\D/g, '').trim())
+        .filter((phoneNumber) => phoneNumber.length > 0),
+    ),
+  );
 }
 
-function matchesTargetGroups(record: Record<string, unknown>, targetGroups: string[]): boolean {
-  const contactGroups = extractGroupNames(record).map((groupName) => groupName.toLowerCase());
-  return targetGroups.some((groupName) => contactGroups.includes(groupName.toLowerCase()));
+function buildBlastRequestId(content: string, recipientKeys: string[]): string {
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        content: content.trim(),
+        recipients: normalizeList(recipientKeys).sort((left, right) => left.localeCompare(right)),
+      }),
+    )
+    .digest('hex')
+    .slice(0, 24);
+}
+
+function buildBlastSourceId(requestId: string, recipientPhoneNumber: string): string {
+  return `blast:${requestId}:${recipientPhoneNumber}`;
+}
+
+function isUniqueViolation(error: PostgrestError): boolean {
+  return error.code === '23505';
+}
+
+async function loadBlastOutboundMessageBySourceId(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  sourceId: string,
+): Promise<OutboundMessageRecord | null> {
+  const { data, error } = await supabase
+    .from('outbound_messages')
+    .select('*')
+    .eq('source_type', 'blast')
+    .eq('source_id', sourceId)
+    .maybeSingle();
+
+  if (error) {
+    throw toRepositoryError('Failed to load existing blast delivery ledger entry.', error);
+  }
+
+  return (data as OutboundMessageRecord | null) ?? null;
+}
+
+async function markOutboundMessageAsQueued(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  outboundMessageId: string,
+): Promise<void> {
+  await supabase
+    .from('outbound_messages')
+    .update({
+      delivery_status: 'queued',
+      next_retry_at: null,
+      last_delivery_error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', outboundMessageId);
+}
+
+async function createOrReuseBlastOutboundMessage(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  input: {
+    requestId: string;
+    recipientPhoneNumber: string;
+    content: string;
+  },
+): Promise<{
+  outboundMessage: OutboundMessageRecord;
+  shouldEnqueue: boolean;
+  alreadyAccepted: boolean;
+}> {
+  const now = new Date().toISOString();
+  const outboundMessage: OutboundMessageRecord = {
+    id: crypto.randomUUID(),
+    client_id: null,
+    idempotency_key: null,
+    request_fingerprint: null,
+    source_type: 'blast',
+    source_id: buildBlastSourceId(input.requestId, input.recipientPhoneNumber),
+    ticket_id: null,
+    priority: BLAST_PRIORITY,
+    recipient_phone_number: input.recipientPhoneNumber,
+    recipient_chat_id: null,
+    content: input.content,
+    client_reference: null,
+    delivery_status: 'queued',
+    delivery_attempts: 0,
+    next_retry_at: null,
+    last_delivery_error: null,
+    whatsapp_message_id: null,
+    delivered_at: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  const { data, error } = await supabase
+    .from('outbound_messages')
+    .insert(outboundMessage)
+    .select('*')
+    .single();
+
+  if (!error) {
+    return {
+      outboundMessage: data as OutboundMessageRecord,
+      shouldEnqueue: true,
+      alreadyAccepted: false,
+    };
+  }
+
+  if (!isUniqueViolation(error)) {
+    throw toRepositoryError('Failed to write blast delivery ledger entry.', error);
+  }
+
+  const existingMessage = await loadBlastOutboundMessageBySourceId(supabase, outboundMessage.source_id);
+
+  if (!existingMessage) {
+    throw new NotificationRepositoryError(
+      'Blast delivery ledger entry already exists but could not be reloaded.',
+      error.code,
+    );
+  }
+
+  if (existingMessage.delivery_status === 'failed' && existingMessage.delivery_attempts === 0) {
+    await markOutboundMessageAsQueued(supabase, existingMessage.id);
+    return {
+      outboundMessage: {
+        ...existingMessage,
+        delivery_status: 'queued',
+        next_retry_at: null,
+        last_delivery_error: null,
+        updated_at: new Date().toISOString(),
+      },
+      shouldEnqueue: true,
+      alreadyAccepted: false,
+    };
+  }
+
+  return {
+    outboundMessage: existingMessage,
+    shouldEnqueue: false,
+    alreadyAccepted: true,
+  };
+}
+
+async function dispatchBlastMessages(
+  recipientPhoneNumbers: string[],
+  content: string,
+  requestId: string,
+): Promise<BlastDispatchResult> {
+  const supabase = getSupabaseAdminClient();
+  const normalizedPhoneNumbers = normalizePhoneNumbers(recipientPhoneNumbers);
+
+  if (!normalizedPhoneNumbers.length) {
+    return {
+      totalRecipients: 0,
+      acceptedCount: 0,
+      queuedCount: 0,
+      alreadyAcceptedCount: 0,
+      failedCount: 0,
+    };
+  }
+
+  let queuedCount = 0;
+  let alreadyAcceptedCount = 0;
+  let failedCount = 0;
+
+  for (const recipientPhoneNumber of normalizedPhoneNumbers) {
+    const { outboundMessage, shouldEnqueue, alreadyAccepted } =
+      await createOrReuseBlastOutboundMessage(supabase, {
+        requestId,
+        recipientPhoneNumber,
+        content,
+      });
+
+    if (alreadyAccepted) {
+      alreadyAcceptedCount += 1;
+      continue;
+    }
+
+    if (!shouldEnqueue) {
+      failedCount += 1;
+      continue;
+    }
+
+    try {
+      await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
+      await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
+      queuedCount += 1;
+    } catch (queueError) {
+      await markOutboundMessageAsFailed(
+        supabase,
+        outboundMessage.id,
+        summarizeOperationalQueueError(queueError),
+      );
+      failedCount += 1;
+    }
+  }
+
+  return {
+    totalRecipients: normalizedPhoneNumbers.length,
+    acceptedCount: queuedCount + alreadyAcceptedCount,
+    queuedCount,
+    alreadyAcceptedCount,
+    failedCount,
+  };
 }
 
 export function createSupabaseNotificationRepository(): NotificationRepository {
@@ -211,156 +415,49 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
 
 export async function createGroupBlastOutboundMessages(
   input: CreateGroupBlastOutboundMessagesInput,
-): Promise<number> {
+): Promise<BlastDispatchResult> {
   const supabase = getSupabaseAdminClient();
-  const targetGroups = normalizeGroupNames(input.groupNames);
+  const targetGroups = normalizeList(input.groupNames);
 
   if (!targetGroups.length) {
-    return 0;
+    return {
+      totalRecipients: 0,
+      acceptedCount: 0,
+      queuedCount: 0,
+      alreadyAcceptedCount: 0,
+      failedCount: 0,
+    };
   }
 
   const { data, error } = await supabase
     .from('csv_contacts')
-    .select('id, no_telp, group_names, group_name')
+    .select('no_telp')
+    .overlaps('group_names', targetGroups)
     .order('created_at', { ascending: false });
 
   if (error) {
     throw toRepositoryError('Failed to load blast recipients.', error);
   }
 
-  const contacts = (data || []) as Array<Record<string, unknown>>;
-  const recipients = contacts.filter((contact) => matchesTargetGroups(contact, targetGroups));
+  const recipientPhoneNumbers = (data || []).map((record) => String(record.no_telp || '').trim());
 
-  if (!recipients.length) {
-    return 0;
-  }
-
-  const now = new Date().toISOString();
-  let insertedCount = 0;
-
-  for (const recipient of recipients) {
-    const recipientPhoneNumber = String(recipient.no_telp || '').trim();
-
-    if (!recipientPhoneNumber) {
-      continue;
-    }
-
-    const outboundMessage: OutboundMessageRecord = {
-      id: crypto.randomUUID(),
-      client_id: null,
-      idempotency_key: null,
-      request_fingerprint: null,
-      source_type: 'blast',
-      source_id: `blast:${crypto.randomUUID()}`,
-      ticket_id: null,
-      priority: BLAST_PRIORITY,
-      recipient_phone_number: recipientPhoneNumber,
-      recipient_chat_id: null,
-      content: input.content,
-      client_reference: null,
-      delivery_status: 'queued',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: null,
-      whatsapp_message_id: null,
-      delivered_at: null,
-      created_at: now,
-      updated_at: now,
-    };
-
-    const { error: insertError } = await supabase
-      .from('outbound_messages')
-      .insert(outboundMessage);
-
-    if (insertError) {
-      throw toRepositoryError('Failed to write blast delivery ledger entry.', insertError);
-    }
-
-    try {
-      await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
-      await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
-      insertedCount += 1;
-    } catch (queueError) {
-      await markOutboundMessageAsFailed(
-        supabase,
-        outboundMessage.id,
-        summarizeOperationalQueueError(queueError),
-      );
-
-      throw toOperationalRepositoryError('Failed to queue blast outbound message.', queueError);
-    }
-  }
-
-  return insertedCount;
+  return dispatchBlastMessages(
+    recipientPhoneNumbers,
+    input.content,
+    buildBlastRequestId(input.content, targetGroups.map((groupName) => `group:${groupName}`)),
+  );
 }
 
 export async function createDirectBlastOutboundMessages(
   input: CreateDirectBlastOutboundMessagesInput,
-): Promise<number> {
-  const supabase = getSupabaseAdminClient();
-  const normalizedPhoneNumbers = Array.from(
-    new Set(
-      input.recipientPhoneNumbers
-        .map((phoneNumber) => String(phoneNumber || '').replace(/\D/g, '').trim())
-        .filter((phoneNumber) => phoneNumber.length > 0),
-    ),
+): Promise<BlastDispatchResult> {
+  const normalizedPhoneNumbers = normalizePhoneNumbers(input.recipientPhoneNumbers);
+
+  return dispatchBlastMessages(
+    normalizedPhoneNumbers,
+    input.content,
+    buildBlastRequestId(input.content, normalizedPhoneNumbers),
   );
-
-  if (!normalizedPhoneNumbers.length) {
-    return 0;
-  }
-
-  const now = new Date().toISOString();
-  let insertedCount = 0;
-
-  for (const recipientPhoneNumber of normalizedPhoneNumbers) {
-    const outboundMessage: OutboundMessageRecord = {
-      id: crypto.randomUUID(),
-      client_id: null,
-      idempotency_key: null,
-      request_fingerprint: null,
-      source_type: 'blast',
-      source_id: `blast:${crypto.randomUUID()}`,
-      ticket_id: null,
-      priority: BLAST_PRIORITY,
-      recipient_phone_number: recipientPhoneNumber,
-      recipient_chat_id: null,
-      content: input.content,
-      client_reference: null,
-      delivery_status: 'queued',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: null,
-      whatsapp_message_id: null,
-      delivered_at: null,
-      created_at: now,
-      updated_at: now,
-    };
-
-    const { error: insertError } = await supabase
-      .from('outbound_messages')
-      .insert(outboundMessage);
-
-    if (insertError) {
-      throw toRepositoryError('Failed to write blast delivery ledger entry.', insertError);
-    }
-
-    try {
-      await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
-      await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
-      insertedCount += 1;
-    } catch (queueError) {
-      await markOutboundMessageAsFailed(
-        supabase,
-        outboundMessage.id,
-        summarizeOperationalQueueError(queueError),
-      );
-
-      throw toOperationalRepositoryError('Failed to queue blast outbound message.', queueError);
-    }
-  }
-
-  return insertedCount;
 }
 
 export async function createTicketReplyOutboundMessage(

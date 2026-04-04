@@ -24,6 +24,12 @@ export interface CsvContactInput {
   group_names?: string[];
 }
 
+export interface CsvContactGroupSyncInput {
+  contacts: CsvContactInput[];
+  groupNames: string[];
+  sourceFile?: string;
+}
+
 function normalizeGroupNames(values: string[] | null | undefined): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
@@ -72,6 +78,32 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
     imported_at: String(record.imported_at || ''),
     created_at: String(record.created_at || ''),
   };
+}
+
+export async function getCsvContactsByPhoneNumbers(phoneNumbers: string[]): Promise<CsvContact[]> {
+  const normalizedPhoneNumbers = Array.from(
+    new Set(
+      phoneNumbers
+        .map((phoneNumber) => String(phoneNumber || '').trim())
+        .filter((phoneNumber) => phoneNumber.length > 0),
+    ),
+  );
+
+  if (!normalizedPhoneNumbers.length) {
+    return [];
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('csv_contacts')
+    .select('*')
+    .in('no_telp', normalizedPhoneNumbers);
+
+  if (error) {
+    throw new Error(`Failed to fetch contacts by phone number: ${error.message}`);
+  }
+
+  return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
 }
 
 const SORT_COLUMN_MAP: Record<string, string> = {
@@ -371,36 +403,49 @@ export async function addCsvContactsGroups(
   }
 
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .select('id, group_names, group_name')
-    .in('id', ids)
-  ;
+  const { data, error } = await supabase.rpc('add_csv_contact_groups', {
+    p_contact_ids: ids,
+    p_group_names: normalizedGroupNames,
+  });
 
   if (error) {
     throw new Error(`Failed to update contact group: ${error.message}`);
   }
 
-  const contacts = (data || []) as Array<Record<string, unknown>>;
-  await Promise.all(
-    contacts.map(async (contact) => {
-      const mergedGroupNames = normalizeGroupNames([
-        ...extractGroupNames(contact),
-        ...normalizedGroupNames,
-      ]);
+  return Number(data || 0);
+}
 
-      const { error: updateError } = await supabase
-        .from('csv_contacts')
-        .update({ group_names: mergedGroupNames })
-        .eq('id', String(contact.id || ''));
+export async function syncCsvContactsToGroups(
+  input: CsvContactGroupSyncInput,
+): Promise<{ createdCount: number; updatedCount: number }> {
+  const normalizedGroupNames = normalizeGroupNames(input.groupNames);
 
-      if (updateError) {
-        throw new Error(`Failed to update contact group: ${updateError.message}`);
-      }
-    }),
+  if (!input.contacts.length || !normalizedGroupNames.length) {
+    return { createdCount: 0, updatedCount: 0 };
+  }
+
+  const existingContacts = await getCsvContactsByPhoneNumbers(
+    input.contacts.map((contact) => contact.no_telp),
+  );
+  const existingByPhoneNumber = new Map(
+    existingContacts.map((contact) => [contact.no_telp, contact] as const),
   );
 
-  return contacts.length;
+  const contactsToCreate = input.contacts
+    .filter((contact) => !existingByPhoneNumber.has(contact.no_telp))
+    .map((contact) => ({
+      ...contact,
+      group_names: normalizeGroupNames([...(contact.group_names || []), ...normalizedGroupNames]),
+    }));
+
+  const existingIds = existingContacts.map((contact) => contact.id);
+
+  const [createdCount, updatedCount] = await Promise.all([
+    createCsvContacts(contactsToCreate, input.sourceFile),
+    addCsvContactsGroups(existingIds, normalizedGroupNames),
+  ]);
+
+  return { createdCount, updatedCount };
 }
 
 export async function deleteCsvContact(id: string): Promise<void> {

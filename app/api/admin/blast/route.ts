@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { createCsvContacts, type CsvContactInput } from '@/app/lib/api';
+import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
 import { createDirectBlastOutboundMessages } from '@/app/lib/whatsapp-notification-repository';
 import { normalizePhoneNumber } from '@/app/lib/whatsapp-notification-utils';
 
@@ -69,25 +69,37 @@ export async function POST(request: Request) {
     }
 
     if (saveToGroup) {
-      const rowsWithGroup = recipientRows.map((row) => ({
-        ...row,
-        group_names: [groupName],
-      }));
-
-      await createCsvContacts(rowsWithGroup, String(body.sourceFile || body.source || 'blast-manual'));
+      await syncCsvContactsToGroups({
+        contacts: recipientRows,
+        groupNames: [groupName],
+        sourceFile: String(body.sourceFile || body.source || 'blast-manual'),
+      });
     }
 
-    const insertedCount = await createDirectBlastOutboundMessages({
+    const blastResult = await createDirectBlastOutboundMessages({
       recipientPhoneNumbers: recipientRows.map((row) => row.no_telp),
       content: message,
     });
 
-    return NextResponse.json({
-      success: true,
-      insertedCount,
-      savedToGroup: saveToGroup,
-      groupName: saveToGroup ? groupName : null,
-    });
+    if (blastResult.acceptedCount === 0) {
+      return NextResponse.json(
+        {
+          error: 'Semua pesan blast gagal masuk ke antrian.',
+          ...blastResult,
+        },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        savedToGroup: saveToGroup,
+        groupName: saveToGroup ? groupName : null,
+        ...blastResult,
+      },
+      { status: blastResult.failedCount > 0 ? 207 : 200 },
+    );
   } catch (error) {
     return NextResponse.json(
       {
