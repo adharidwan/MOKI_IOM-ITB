@@ -9,6 +9,7 @@ export interface Ticket {
   channel: string | null;
   phone_number: string | null;
   whatsapp_chat_id: string | null;
+  whatsapp_instance_id: string | null;
   created_at: string;
   updated_at: string | null;
 }

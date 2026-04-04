@@ -1,5 +1,3 @@
-import 'server-only';
-
 import IORedis from 'ioredis';
 
 let redisClient: IORedis | null = null;
