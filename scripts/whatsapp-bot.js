@@ -51,6 +51,7 @@ const ACTIVE_TICKET_STATUSES = ['Open', 'In Progress'];
 const RETRY_DELAYS_MS = [10000, 30000, 60000, 300000, 900000];
 const DISPATCH_SETTINGS_CACHE_TTL_MS = 5000;
 const DISPATCH_CONTROL_RECHECK_DELAY_MS = 1000;
+const INSTANCE_AFFINITY_RECHECK_DELAY_MS = 1000;
 const NON_RETRYABLE_DELIVERY_ERROR = 'Recipient is not a registered WhatsApp user.';
 const DEFAULT_DISPATCH_SETTINGS = {
   id: 'default',
@@ -657,6 +658,27 @@ async function processOutboundDispatchJob(
 
   if (dispatchState.nextDispatchAtMs > nowMs) {
     await delayJobForLater(job, token, dispatchState.nextDispatchAtMs, job.data);
+  }
+
+  if (
+    instanceContext &&
+    job.data.whatsapp_instance_id &&
+    job.data.whatsapp_instance_id !== instanceContext.instanceId
+  ) {
+    console.log(
+      JSON.stringify({
+        event: 'outbound_message_instance_mismatch',
+        outbound_message_id: job.data.outbound_message_id,
+        expected_instance_id: job.data.whatsapp_instance_id,
+        worker_instance_id: instanceContext.instanceId,
+      }),
+    );
+
+    await delayJobForLater(
+      job,
+      token,
+      nowMs + INSTANCE_AFFINITY_RECHECK_DELAY_MS,
+    );
   }
 
   const attemptNumber = (job.data.attempt_number || 0) + 1;

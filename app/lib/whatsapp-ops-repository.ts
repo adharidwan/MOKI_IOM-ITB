@@ -13,7 +13,6 @@ import {
   type WhatsappOutboundSummary,
 } from './whatsapp-notification-utils';
 import {
-  countQueuedOutboundMessagesBySource,
   getOrCreateDefaultWhatsappInstance,
 } from './whatsapp-notification-repository';
 
@@ -226,8 +225,14 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
 
     async getGlobalQueueCounts() {
       const [queuedTicketReplies, queuedApiNotifications] = await Promise.all([
-        countQueuedOutboundMessagesBySource('ticket_reply'),
-        countQueuedOutboundMessagesBySource('api_notification'),
+        countOutboundMessages(supabase, {
+          sourceType: 'ticket_reply',
+          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
+        }),
+        countOutboundMessages(supabase, {
+          sourceType: 'api_notification',
+          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
+        }),
       ]);
 
       return {
