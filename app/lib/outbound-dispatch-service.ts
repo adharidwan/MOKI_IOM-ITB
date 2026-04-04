@@ -12,7 +12,7 @@ interface DispatchControlRepository {
     api_notifications_paused?: boolean;
   }): Promise<DispatchSettingsRecord>;
   countQueuedOutboundMessagesBySource(
-    sourceType: 'api_notification' | 'ticket_reply',
+    sourceType: 'api_notification' | 'ticket_reply' | 'blast',
   ): Promise<number>;
 }
 
@@ -125,11 +125,13 @@ async function buildDispatchSettingsResponse(
   effective_min_gap_ms: number;
   queued_ticket_replies: number;
   queued_api_notifications: number;
+  queued_blast_messages: number;
   updated_at: string;
 }> {
-  const [queuedTicketReplies, queuedApiNotifications] = await Promise.all([
+  const [queuedTicketReplies, queuedApiNotifications, queuedBlastMessages] = await Promise.all([
     repository.countQueuedOutboundMessagesBySource('ticket_reply'),
     repository.countQueuedOutboundMessagesBySource('api_notification'),
+    repository.countQueuedOutboundMessagesBySource('blast'),
   ]);
 
   return {
@@ -138,6 +140,7 @@ async function buildDispatchSettingsResponse(
     effective_min_gap_ms: computeEffectiveMinGapMs(settings.global_messages_per_minute),
     queued_ticket_replies: queuedTicketReplies,
     queued_api_notifications: queuedApiNotifications,
+    queued_blast_messages: queuedBlastMessages,
     updated_at: settings.updated_at,
   };
 }

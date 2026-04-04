@@ -20,6 +20,7 @@ import type { CsvContact } from '../lib/types';
 import {
   deletePhoneListContactAction,
   deletePhoneListContactsBulkAction,
+  assignPhoneListGroupAction,
   updatePhoneListContactAction,
 } from '../phonelist/actions';
 
@@ -32,6 +33,7 @@ interface ColumnFilters {
   nama: string;
   jenis_kelamin: string;
   jabatan: string;
+  group_name: string;
 }
 
 export default function PhoneListTable({ contacts }: PhoneListTableProps) {
@@ -40,6 +42,7 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
     nama: '',
     jenis_kelamin: '',
     jabatan: '',
+    group_name: '',
   });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
@@ -51,8 +54,12 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
         .toLowerCase()
         .includes(filters.jenis_kelamin.toLowerCase());
       const jabatanMatch = (contact.jabatan || '').toLowerCase().includes(filters.jabatan.toLowerCase());
+      const groupNameMatch = contact.group_names
+        .join(' ')
+        .toLowerCase()
+        .includes(filters.group_name.toLowerCase());
 
-      return noTelpMatch && namaMatch && jenisKelaminMatch && jabatanMatch;
+      return noTelpMatch && namaMatch && jenisKelaminMatch && jabatanMatch && groupNameMatch;
     });
   }, [contacts, filters]);
 
@@ -95,7 +102,7 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr 1fr' },
+            gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr 1fr 1fr' },
             gap: 1,
           }}
         >
@@ -123,26 +130,47 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
             value={filters.jabatan}
             onChange={(event) => setFilters((prev) => ({ ...prev, jabatan: event.target.value }))}
           />
+          <TextField
+            label="Cari Group"
+            size="small"
+            value={filters.group_name}
+            onChange={(event) => setFilters((prev) => ({ ...prev, group_name: event.target.value }))}
+          />
         </Box>
       </Paper>
 
       <Box
-        component="form"
-        action={deletePhoneListContactsBulkAction}
-        sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}
+        sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, justifyContent: 'space-between', alignItems: 'center', mb: 2 }}
       >
         <Typography variant="body2" color="textSecondary">
           {selectedIds.length} data dipilih dari {filteredContacts.length} hasil filter.
         </Typography>
-        <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
-        <Button
-          type="submit"
-          variant="contained"
-          color="error"
-          disabled={selectedIds.length === 0}
-        >
-          Hapus Massal ({selectedIds.length})
-        </Button>
+
+        <Box component="form" action={assignPhoneListGroupAction} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
+          <TextField
+            name="group_names"
+            label="Tambah group"
+            size="small"
+            placeholder="Contoh: Tim Sales, VIP"
+            disabled={selectedIds.length === 0}
+          />
+          <Button type="submit" variant="outlined" disabled={selectedIds.length === 0}>
+            Tambah Group ke Terpilih
+          </Button>
+        </Box>
+
+        <Box component="form" action={deletePhoneListContactsBulkAction} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+          <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
+          <Button
+            type="submit"
+            variant="contained"
+            color="error"
+            disabled={selectedIds.length === 0}
+          >
+            Hapus Massal ({selectedIds.length})
+          </Button>
+        </Box>
       </Box>
 
       {filteredContacts.length === 0 ? (
@@ -164,6 +192,7 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
                 <TableCell sx={{ fontWeight: 'bold' }}>Nama</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Jenis kelamin</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Jabatan</TableCell>
+                <TableCell sx={{ fontWeight: 'bold' }}>Group</TableCell>
                 <TableCell sx={{ fontWeight: 'bold' }}>Aksi</TableCell>
               </TableRow>
             </TableHead>
@@ -177,7 +206,7 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
                       inputProps={{ 'aria-label': `select ${contact.no_telp}` }}
                     />
                   </TableCell>
-                  <TableCell colSpan={5} sx={{ py: 1.5 }}>
+                  <TableCell colSpan={6} sx={{ py: 1.5 }}>
                     <Box
                       sx={{
                         display: 'grid',
@@ -191,7 +220,7 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
                         action={updatePhoneListContactAction}
                         sx={{
                           display: 'grid',
-                          gridTemplateColumns: { xs: '1fr', lg: '1.3fr 1.2fr 1fr 1fr auto' },
+                          gridTemplateColumns: { xs: '1fr', lg: '1.3fr 1.2fr 1fr 1fr 1fr auto' },
                           gap: 1,
                           alignItems: 'center',
                         }}
@@ -206,6 +235,11 @@ export default function PhoneListTable({ contacts }: PhoneListTableProps) {
                           size="small"
                         />
                         <TextField name="jabatan" defaultValue={contact.jabatan || ''} size="small" />
+                        <TextField
+                          name="group_names"
+                          defaultValue={contact.group_names.join(', ')}
+                          size="small"
+                        />
 
                         <Button type="submit" variant="outlined" color="primary" sx={{ minWidth: 90 }}>
                           Update

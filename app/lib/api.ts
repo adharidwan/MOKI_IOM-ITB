@@ -21,6 +21,89 @@ export interface CsvContactInput {
   nama: string;
   jenis_kelamin: string;
   jabatan?: string;
+  group_names?: string[];
+}
+
+export interface CsvContactGroupSyncInput {
+  contacts: CsvContactInput[];
+  groupNames: string[];
+  sourceFile?: string;
+}
+
+function normalizeGroupNames(values: string[] | null | undefined): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  (values || []).forEach((value) => {
+    const groupName = value.trim();
+
+    if (!groupName) {
+      return;
+    }
+
+    const dedupeKey = groupName.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+
+    seen.add(dedupeKey);
+    normalized.push(groupName);
+  });
+
+  return normalized;
+}
+
+function extractGroupNames(record: Record<string, unknown>): string[] {
+  const directValues = Array.isArray(record.group_names)
+    ? record.group_names.filter((value): value is string => typeof value === 'string')
+    : [];
+  const legacyValue = typeof record.group_name === 'string' && record.group_name.trim()
+    ? [record.group_name]
+    : [];
+
+  return normalizeGroupNames([...directValues, ...legacyValue]);
+}
+
+function toCsvContact(record: Record<string, unknown>): CsvContact {
+  return {
+    id: String(record.id || ''),
+    no_telp: String(record.no_telp || ''),
+    nama: String(record.nama || ''),
+    jenis_kelamin: String(record.jenis_kelamin || ''),
+    jabatan: record.jabatan === null || record.jabatan === undefined ? null : String(record.jabatan),
+    group_names: extractGroupNames(record),
+    source_file: record.source_file === null || record.source_file === undefined
+      ? null
+      : String(record.source_file),
+    imported_at: String(record.imported_at || ''),
+    created_at: String(record.created_at || ''),
+  };
+}
+
+export async function getCsvContactsByPhoneNumbers(phoneNumbers: string[]): Promise<CsvContact[]> {
+  const normalizedPhoneNumbers = Array.from(
+    new Set(
+      phoneNumbers
+        .map((phoneNumber) => String(phoneNumber || '').trim())
+        .filter((phoneNumber) => phoneNumber.length > 0),
+    ),
+  );
+
+  if (!normalizedPhoneNumbers.length) {
+    return [];
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('csv_contacts')
+    .select('*')
+    .in('no_telp', normalizedPhoneNumbers);
+
+  if (error) {
+    throw new Error(`Failed to fetch contacts by phone number: ${error.message}`);
+  }
+
+  return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
 }
 
 const SORT_COLUMN_MAP: Record<string, string> = {
@@ -220,6 +303,7 @@ export async function createCsvContacts(
       nama: row.nama.trim(),
       jenis_kelamin: row.jenis_kelamin.trim(),
       jabatan: row.jabatan?.trim() || undefined,
+      group_names: normalizeGroupNames(row.group_names),
     });
   });
 
@@ -228,6 +312,7 @@ export async function createCsvContacts(
     nama: row.nama,
     jenis_kelamin: row.jenis_kelamin,
     jabatan: row.jabatan || null,
+    group_names: row.group_names || [],
     source_file: sourceFile || null,
     imported_at: new Date().toISOString(),
   }));
@@ -254,7 +339,7 @@ export async function getCsvContacts(): Promise<CsvContact[]> {
     throw new Error(`Failed to fetch phone list: ${error.message}`);
   }
 
-  return (data as CsvContact[]) || [];
+  return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
 }
 
 export async function createCsvContact(row: CsvContactInput): Promise<CsvContact> {
@@ -267,6 +352,7 @@ export async function createCsvContact(row: CsvContactInput): Promise<CsvContact
         nama: row.nama.trim(),
         jenis_kelamin: row.jenis_kelamin.trim(),
         jabatan: row.jabatan?.trim() || null,
+        group_names: normalizeGroupNames(row.group_names),
         imported_at: new Date().toISOString(),
       },
       { onConflict: 'no_telp' },
@@ -278,7 +364,7 @@ export async function createCsvContact(row: CsvContactInput): Promise<CsvContact
     throw new Error(`Failed to create phone list row: ${error.message}`);
   }
 
-  return data as CsvContact;
+  return toCsvContact(data as Record<string, unknown>);
 }
 
 export async function updateCsvContact(
@@ -293,6 +379,7 @@ export async function updateCsvContact(
       nama: row.nama,
       jenis_kelamin: row.jenis_kelamin,
       jabatan: row.jabatan || null,
+      group_names: normalizeGroupNames(row.group_names),
     })
     .eq('id', id)
     .select()
@@ -302,7 +389,63 @@ export async function updateCsvContact(
     throw new Error(`Failed to update phone list row: ${error.message}`);
   }
 
-  return data as CsvContact;
+  return toCsvContact(data as Record<string, unknown>);
+}
+
+export async function addCsvContactsGroups(
+  ids: string[],
+  groupNames: string[],
+): Promise<number> {
+  const normalizedGroupNames = normalizeGroupNames(groupNames);
+
+  if (!ids.length || !normalizedGroupNames.length) {
+    return 0;
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase.rpc('add_csv_contact_groups', {
+    p_contact_ids: ids,
+    p_group_names: normalizedGroupNames,
+  });
+
+  if (error) {
+    throw new Error(`Failed to update contact group: ${error.message}`);
+  }
+
+  return Number(data || 0);
+}
+
+export async function syncCsvContactsToGroups(
+  input: CsvContactGroupSyncInput,
+): Promise<{ createdCount: number; updatedCount: number }> {
+  const normalizedGroupNames = normalizeGroupNames(input.groupNames);
+
+  if (!input.contacts.length || !normalizedGroupNames.length) {
+    return { createdCount: 0, updatedCount: 0 };
+  }
+
+  const existingContacts = await getCsvContactsByPhoneNumbers(
+    input.contacts.map((contact) => contact.no_telp),
+  );
+  const existingByPhoneNumber = new Map(
+    existingContacts.map((contact) => [contact.no_telp, contact] as const),
+  );
+
+  const contactsToCreate = input.contacts
+    .filter((contact) => !existingByPhoneNumber.has(contact.no_telp))
+    .map((contact) => ({
+      ...contact,
+      group_names: normalizeGroupNames([...(contact.group_names || []), ...normalizedGroupNames]),
+    }));
+
+  const existingIds = existingContacts.map((contact) => contact.id);
+
+  const [createdCount, updatedCount] = await Promise.all([
+    createCsvContacts(contactsToCreate, input.sourceFile),
+    addCsvContactsGroups(existingIds, normalizedGroupNames),
+  ]);
+
+  return { createdCount, updatedCount };
 }
 
 export async function deleteCsvContact(id: string): Promise<void> {

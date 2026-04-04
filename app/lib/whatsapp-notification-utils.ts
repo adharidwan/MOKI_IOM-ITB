@@ -5,7 +5,7 @@ import { z } from 'zod';
 export const API_CLIENT_KEY_PATTERN = /^wapi_([A-Za-z0-9]+)_[A-Za-z0-9\-_]+$/;
 export const API_CLIENT_STATUSES = ['active', 'disabled'] as const;
 export const OUTBOUND_MESSAGE_STATUSES = ['queued', 'retrying', 'sent', 'failed'] as const;
-export const OUTBOUND_MESSAGE_SOURCE_TYPES = ['api_notification', 'ticket_reply'] as const;
+export const OUTBOUND_MESSAGE_SOURCE_TYPES = ['api_notification', 'ticket_reply', 'blast'] as const;
 export const MAX_MESSAGE_LENGTH = 4096;
 export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 export const MAX_CLIENT_REFERENCE_LENGTH = 255;
@@ -13,6 +13,7 @@ export const DEFAULT_GLOBAL_MESSAGES_PER_MINUTE = 24;
 export const DEFAULT_MAX_REQUESTS_PER_MINUTE = 60;
 export const DEFAULT_MAX_PENDING_MESSAGES = 100;
 export const TICKET_REPLY_PRIORITY = 10;
+export const BLAST_PRIORITY = 50;
 export const API_NOTIFICATION_PRIORITY = 100;
 export const DEFAULT_DISPATCH_SETTINGS_ID = 'default';
 

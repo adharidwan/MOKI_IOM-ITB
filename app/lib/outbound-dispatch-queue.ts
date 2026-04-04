@@ -28,6 +28,7 @@ export async function enqueueOutboundDispatchJob(
   jobData: OutboundDispatchJobData,
 ): Promise<void> {
   await getOutboundDispatchQueue().add('dispatch', jobData, {
+    jobId: jobData.source_id,
     priority: jobData.priority,
     removeOnComplete: true,
     removeOnFail: true,

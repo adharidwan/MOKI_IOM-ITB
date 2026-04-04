@@ -157,6 +157,8 @@ Columns:
 | `nama` | `text` | no | none | imported name |
 | `jenis_kelamin` | `text` | no | none | imported gender |
 | `jabatan` | `text` | yes | none | imported job title |
+| `group_names` | `text[]` | no | `'{}'::text[]` | contact segments or labels |
+| `group_name` | `text` | yes | none | legacy single group label, retained for backfill |
 | `source_file` | `text` | yes | none | source filename |
 | `imported_at` | `timestamptz` | no | `now()` | import timestamp |
 | `created_at` | `timestamptz` | no | `now()` | row creation timestamp |
@@ -165,6 +167,8 @@ Constraints and indexes:
 
 - primary key on `id`
 - unique index `idx_csv_contacts_no_telp(no_telp)`
+- GIN index `idx_csv_contacts_group_names(group_names)`
+- index `idx_csv_contacts_group_name(group_name)`
 - index `idx_csv_contacts_imported_at(imported_at)`
 
 ## API And Dispatch Tables
@@ -216,7 +220,7 @@ Columns:
 | `client_id` | `uuid` | yes | none | FK to `api_clients.id`, only for `api_notification` |
 | `idempotency_key` | `text` | yes | none | only for `api_notification` |
 | `request_fingerprint` | `text` | yes | none | only for `api_notification` |
-| `source_type` | `text` | no | none | `api_notification` or `ticket_reply` |
+| `source_type` | `text` | no | none | `api_notification`, `ticket_reply`, or `blast` |
 | `source_id` | `text` | no | none | app-level source identifier |
 | `ticket_id` | `uuid` | yes | none | FK to `tickets.id`, mainly for `ticket_reply` |
 | `priority` | `smallint` | no | `100` | lower number = higher priority |
@@ -237,10 +241,11 @@ Constraints:
 
 - primary key on `id`
 - unique index: `outbound_messages_source_type_source_id_unique_idx(source_type, source_id)`
-- check constraint: `source_type in ('api_notification', 'ticket_reply')`
+- check constraint: `source_type in ('api_notification', 'ticket_reply', 'blast')`
 - check constraint:
   - `api_notification` rows must have `client_id`, `idempotency_key`, and `request_fingerprint`
   - `ticket_reply` rows must have those three columns set to `NULL`
+  - `blast` rows must have those three columns set to `NULL`
 
 Foreign keys:
 
@@ -274,7 +279,7 @@ Columns:
 | --- | --- | --- | --- | --- |
 | `id` | `text` | no | `'default'` | singleton key |
 | `global_messages_per_minute` | `integer` | no | `24` | dispatch rate control |
-| `api_notifications_paused` | `boolean` | no | `false` | pause notifications without pausing ticket replies |
+| `api_notifications_paused` | `boolean` | no | `false` | pause non-ticket outbound traffic (`api_notification` and `blast`) without pausing ticket replies |
 | `updated_at` | `timestamptz` | no | `timezone('utc', now())` | last settings update |
 
 Constraints:
