@@ -650,7 +650,7 @@ async function processOutboundDispatchJob(
 ) {
   const settings = await loadDispatchSettingsWithFallback(supabase, dispatchState, nowMs);
 
-  if (job.data.source_type === 'api_notification' && settings.api_notifications_paused) {
+  if (job.data.source_type !== 'ticket_reply' && settings.api_notifications_paused) {
     await delayJobForLater(job, token, nowMs + DISPATCH_CONTROL_RECHECK_DELAY_MS, job.data);
   }
 

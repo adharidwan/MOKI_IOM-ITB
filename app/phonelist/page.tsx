@@ -8,17 +8,19 @@ import {
 } from '@mui/material';
 
 import { getCsvContacts } from '../lib/api';
-import {
-	createPhoneListContactAction,
-} from './actions';
+import { createPhoneListContactAction } from './actions';
 import PhoneListToast from '../components/PhoneListToast';
 import PhoneListTable from '../components/PhoneListSearch';
+import BlastComposer from '../components/BlastComposer';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 export default async function PhoneListPage() {
 	const contacts = await getCsvContacts();
+	const availableGroups = Array.from(
+		new Set(contacts.flatMap((contact) => contact.group_names)),
+	).sort((left, right) => left.localeCompare(right));
 
 	return (
 		<main style={{ padding: '2rem' }}>
@@ -37,7 +39,7 @@ export default async function PhoneListPage() {
 					action={createPhoneListContactAction}
 					sx={{
 						display: 'grid',
-						gridTemplateColumns: { xs: '1fr', md: '1.3fr 1.2fr 1fr 1fr auto' },
+						gridTemplateColumns: { xs: '1fr', md: '1.3fr 1.2fr 1fr 1fr 1fr auto' },
 						gap: 2,
 						mb: 3,
 						alignItems: 'center',
@@ -47,10 +49,17 @@ export default async function PhoneListPage() {
 					<TextField name="nama" label="Nama" required size="small" />
 					<TextField name="jenis_kelamin" label="Jenis kelamin" required size="small" />
 					<TextField name="jabatan" label="Jabatan (opsional)" size="small" />
+					<TextField
+						name="group_names"
+						label="Group / label (opsional, pisahkan koma)"
+						size="small"
+					/>
 					<Button type="submit" variant="contained" sx={{ backgroundColor: '#4e8d9c', height: 40 }}>
 						Tambah
 					</Button>
 				</Box>
+
+				<BlastComposer availableGroups={availableGroups} />
 
 				{contacts.length === 0 ? (
 					<Alert severity="info">Belum ada data phone list.</Alert>

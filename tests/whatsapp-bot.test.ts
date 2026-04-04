@@ -255,6 +255,7 @@ describe('processOutboundDispatchJob', () => {
       },
     ];
     const supabase = createFakeSupabase(records);
+
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
@@ -290,6 +291,42 @@ describe('processOutboundDispatchJob', () => {
     expect(job.moveToDelayed).toHaveBeenCalledWith(2_501_000, 'job-token');
     expect(records[0].delivery_status).toBe('queued');
     expect(supabase.replies[0].delivery_status).toBe('queued');
+    expect(redis.eval).not.toHaveBeenCalled();
+  });
+
+  it('also delays blast traffic when non-ticket dispatch is paused', async () => {
+    const supabase = createFakeSupabase([]);
+    supabase.dispatchSettings.api_notifications_paused = true;
+    const redis = createFakeRedis();
+    const client = {
+      getNumberId: vi.fn(),
+      sendMessage: vi.fn(),
+    };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-blast',
+      source_type: 'blast',
+      source_id: 'blast:req-1:6281234567890',
+      recipient_phone_number: '6281234567890',
+      recipient_chat_id: null,
+      content: 'Promo blast',
+      attempt_number: 0,
+      client_id: null,
+    });
+
+    await expect(
+      processOutboundDispatchJob(
+        job,
+        'job-token',
+        client,
+        supabase,
+        redis,
+        { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
+        2_500_000,
+      ),
+    ).rejects.toBeInstanceOf(DelayedError);
+
+    expect(job.moveToDelayed).toHaveBeenCalledWith(2_501_000, 'job-token');
+    expect(client.sendMessage).not.toHaveBeenCalled();
     expect(redis.eval).not.toHaveBeenCalled();
   });
 

@@ -15,6 +15,7 @@ class InMemoryDispatchControlRepository {
   };
   queuedApiNotifications = 3;
   queuedTicketReplies = 1;
+  queuedBlastMessages = 2;
 
   async getDispatchSettings(): Promise<DispatchSettingsRecord> {
     return this.settings;
@@ -34,8 +35,12 @@ class InMemoryDispatchControlRepository {
   }
 
   async countQueuedOutboundMessagesBySource(
-    sourceType: 'api_notification' | 'ticket_reply',
+    sourceType: 'api_notification' | 'ticket_reply' | 'blast',
   ): Promise<number> {
+    if (sourceType === 'blast') {
+      return this.queuedBlastMessages;
+    }
+
     return sourceType === 'api_notification'
       ? this.queuedApiNotifications
       : this.queuedTicketReplies;
@@ -54,6 +59,7 @@ describe('outbound dispatch settings service', () => {
       effective_min_gap_ms: 2500,
       queued_ticket_replies: 1,
       queued_api_notifications: 3,
+      queued_blast_messages: 2,
       updated_at: '2026-03-31T05:30:00.000Z',
     });
   });
@@ -81,6 +87,7 @@ describe('outbound dispatch settings service', () => {
       effective_min_gap_ms: 2000,
       queued_ticket_replies: 1,
       queued_api_notifications: 3,
+      queued_blast_messages: 2,
       updated_at: '2026-03-31T05:35:00.000Z',
     });
   });
