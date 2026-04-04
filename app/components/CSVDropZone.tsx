@@ -15,7 +15,8 @@ import {
   TableRow,
   Alert,
   Button,
-  LinearProgress
+  LinearProgress,
+  TextField,
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
@@ -54,6 +55,7 @@ interface ParsedData {
 export default function CSVDropZone() {
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [defaultGroupName, setDefaultGroupName] = useState('');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [inputKey, setInputKey] = useState(0);
   
@@ -183,6 +185,7 @@ export default function CSVDropZone() {
   const handleReset = () => {
     setParsedData(null);
     setStatus(null);
+    setDefaultGroupName('');
     setInputKey((prev) => prev + 1);
   };
 
@@ -195,6 +198,16 @@ export default function CSVDropZone() {
       <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
         Drag and drop a CSV file or click to select. Required columns: No Telp, Nama, Jenis kelamin. Optional: Jabatan, Group Name
       </Typography>
+
+      <TextField
+        label="Default Group untuk Semua Baris (opsional)"
+        size="small"
+        fullWidth
+        value={defaultGroupName}
+        onChange={(event) => setDefaultGroupName(event.target.value)}
+        sx={{ mb: 2 }}
+        placeholder="Contoh: Campaign April"
+      />
 
       {/* Drop Zone */}
       <div
@@ -336,7 +349,15 @@ export default function CSVDropZone() {
                     setIsProcessing(true);
                     setStatus({ type: 'info', message: 'Menyimpan data ke database...' });
 
-                    const result = await importCsvContactsAction(parsedData.data, parsedData.fileName);
+                    const defaultGroup = defaultGroupName.trim();
+                    const rowsToImport = defaultGroup
+                      ? parsedData.data.map((row) => ({
+                          ...row,
+                          group_names: parseGroupNames(`${(row.group_names || []).join(',')},${defaultGroup}`),
+                        }))
+                      : parsedData.data;
+
+                    const result = await importCsvContactsAction(rowsToImport, parsedData.fileName);
 
                     if (!result.success) {
                       setStatus({ type: 'error', message: result.error || 'Import gagal' });

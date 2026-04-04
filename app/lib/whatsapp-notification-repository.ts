@@ -56,6 +56,11 @@ export interface CreateGroupBlastOutboundMessagesInput {
   content: string;
 }
 
+export interface CreateDirectBlastOutboundMessagesInput {
+  recipientPhoneNumbers: string[];
+  content: string;
+}
+
 function normalizeGroupNames(values: string[] | null | undefined): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
@@ -240,6 +245,75 @@ export async function createGroupBlastOutboundMessages(
       continue;
     }
 
+    const outboundMessage: OutboundMessageRecord = {
+      id: crypto.randomUUID(),
+      client_id: null,
+      idempotency_key: null,
+      request_fingerprint: null,
+      source_type: 'blast',
+      source_id: `blast:${crypto.randomUUID()}`,
+      ticket_id: null,
+      priority: BLAST_PRIORITY,
+      recipient_phone_number: recipientPhoneNumber,
+      recipient_chat_id: null,
+      content: input.content,
+      client_reference: null,
+      delivery_status: 'queued',
+      delivery_attempts: 0,
+      next_retry_at: null,
+      last_delivery_error: null,
+      whatsapp_message_id: null,
+      delivered_at: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { error: insertError } = await supabase
+      .from('outbound_messages')
+      .insert(outboundMessage);
+
+    if (insertError) {
+      throw toRepositoryError('Failed to write blast delivery ledger entry.', insertError);
+    }
+
+    try {
+      await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
+      await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
+      insertedCount += 1;
+    } catch (queueError) {
+      await markOutboundMessageAsFailed(
+        supabase,
+        outboundMessage.id,
+        summarizeOperationalQueueError(queueError),
+      );
+
+      throw toOperationalRepositoryError('Failed to queue blast outbound message.', queueError);
+    }
+  }
+
+  return insertedCount;
+}
+
+export async function createDirectBlastOutboundMessages(
+  input: CreateDirectBlastOutboundMessagesInput,
+): Promise<number> {
+  const supabase = getSupabaseAdminClient();
+  const normalizedPhoneNumbers = Array.from(
+    new Set(
+      input.recipientPhoneNumbers
+        .map((phoneNumber) => String(phoneNumber || '').replace(/\D/g, '').trim())
+        .filter((phoneNumber) => phoneNumber.length > 0),
+    ),
+  );
+
+  if (!normalizedPhoneNumbers.length) {
+    return 0;
+  }
+
+  const now = new Date().toISOString();
+  let insertedCount = 0;
+
+  for (const recipientPhoneNumber of normalizedPhoneNumbers) {
     const outboundMessage: OutboundMessageRecord = {
       id: crypto.randomUUID(),
       client_id: null,

@@ -147,7 +147,11 @@ export async function assignPhoneListGroupAction(formData: FormData): Promise<vo
 }
 
 export async function sendGroupBlastAction(formData: FormData): Promise<void> {
-  const groupNames = parseGroupNames(String(formData.get('group_names') || ''));
+  const groupNames = normalizeGroupNames(
+    formData
+      .getAll('group_names')
+      .map((value) => String(value || '')),
+  );
   const message = String(formData.get('message') || '').trim();
 
   if (!groupNames.length || !message) {
@@ -167,4 +171,26 @@ export async function sendGroupBlastAction(formData: FormData): Promise<void> {
   }
 
   redirect('/phonelist?toast=blast_sent');
+}
+
+function normalizeGroupNames(values: string[]): string[] {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  values.forEach((value) => {
+    const groupName = value.trim();
+    if (!groupName) {
+      return;
+    }
+
+    const dedupeKey = groupName.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+
+    seen.add(dedupeKey);
+    normalized.push(groupName);
+  });
+
+  return normalized;
 }
