@@ -130,6 +130,36 @@ function createFakeRedis() {
   };
 }
 
+function createFakeRuntimeRedis() {
+  const multi = {
+    set: vi.fn(),
+    exec: vi.fn().mockResolvedValue([]),
+  };
+  multi.set.mockReturnValue(multi);
+
+  return {
+    get: vi.fn().mockResolvedValue('0'),
+    multi: vi.fn(() => multi),
+  };
+}
+
+function createFakeInstanceContext(instanceId: string) {
+  return {
+    instanceId,
+    runtimeRedis: createFakeRuntimeRedis(),
+    lastStatus: 'ready',
+    lastError: null,
+    lastDisconnectAt: null,
+    lastInboundAt: null,
+    lastOutboundAt: null,
+    lastKnownPhoneNumber: null,
+    lastKnownChatId: null,
+    workerId: 'worker-a',
+    workerHost: 'bot-1',
+    workerVersion: '0.1.0',
+  };
+}
+
 describe('processOutboundDispatchJob', () => {
   it('marks unresolved recipients as terminal failures and releases pending counts', async () => {
     const records: FakeOutboundMessageRecord[] = [
@@ -214,6 +244,55 @@ describe('processOutboundDispatchJob', () => {
     expect(redis.eval).not.toHaveBeenCalled();
   });
 
+  it('re-delays jobs owned by a different whatsapp instance without mutating delivery state', async () => {
+    const records: FakeOutboundMessageRecord[] = [
+      {
+        id: 'outbound-foreign',
+        recipient_chat_id: '6281111111111@c.us',
+        delivery_status: 'queued',
+        delivery_attempts: 0,
+        next_retry_at: null,
+      },
+    ];
+    const supabase = createFakeSupabase(records);
+    const redis = createFakeRedis();
+    const client = {
+      getNumberId: vi.fn(),
+      sendMessage: vi.fn(),
+    };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-foreign',
+      source_type: 'ticket_reply',
+      source_id: 'reply-1',
+      whatsapp_instance_id: 'backup',
+      recipient_phone_number: '6281111111111',
+      recipient_chat_id: '6281111111111@c.us',
+      content: 'Support reply',
+      attempt_number: 0,
+      client_id: null,
+    });
+
+    await expect(
+      processOutboundDispatchJob(
+        job,
+        'job-token',
+        client,
+        supabase,
+        redis,
+        { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
+        2_500_000,
+        createFakeInstanceContext('default'),
+      ),
+    ).rejects.toBeInstanceOf(DelayedError);
+
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(job.updateData).not.toHaveBeenCalled();
+    expect(job.moveToDelayed).toHaveBeenCalledWith(2_501_000, 'job-token');
+    expect(records[0].delivery_status).toBe('queued');
+    expect(supabase.replies[0].delivery_status).toBe('queued');
+    expect(redis.eval).not.toHaveBeenCalled();
+  });
+
   it('delays work until the configured global dispatch gap has elapsed', async () => {
     const supabase = createFakeSupabase([]);
     const redis = createFakeRedis();
@@ -282,6 +361,7 @@ describe('processOutboundDispatchJob', () => {
       outbound_message_id: 'outbound-ticket',
       source_type: 'ticket_reply',
       source_id: 'reply-1',
+      whatsapp_instance_id: 'default',
       recipient_phone_number: '6289999999999',
       recipient_chat_id: '6289999999999@c.us',
       content: 'Support reply',
@@ -298,6 +378,7 @@ describe('processOutboundDispatchJob', () => {
       redis,
       dispatchState,
       2_000_000,
+      createFakeInstanceContext('default'),
     );
     vi.restoreAllMocks();
 
