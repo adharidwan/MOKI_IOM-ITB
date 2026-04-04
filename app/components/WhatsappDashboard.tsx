@@ -55,6 +55,7 @@ interface WhatsappDashboardProps {
   initialOverview: WhatsappDashboardOverview;
   initialOutbound: OutboundResponse;
   initialEvents: WhatsappInstanceEventRecord[];
+  initialRenderedAt: string;
 }
 
 type OutboundFilter = 'all' | 'queued' | 'retrying' | 'failed' | 'sent';
@@ -120,12 +121,16 @@ function formatDateTime(value: string | null): string {
   return dateTimeFormatter.format(date);
 }
 
-function formatAge(value: string | null): string {
+function formatAgeWithNow(value: string | null, nowMs: number | null): string {
   if (!value) {
     return '-';
   }
 
-  const diffMs = Date.now() - Date.parse(value);
+  if (nowMs === null) {
+    return formatDateTime(value);
+  }
+
+  const diffMs = nowMs - Date.parse(value);
   if (!Number.isFinite(diffMs) || diffMs < 0) {
     return formatDateTime(value);
   }
@@ -251,6 +256,28 @@ function groupEvents(events: WhatsappInstanceEventRecord[]): GroupedEvent[] {
   return grouped;
 }
 
+function updateOverviewWithDetail(
+  currentOverview: WhatsappDashboardOverview,
+  detail: WhatsappInstanceSummary,
+): WhatsappDashboardOverview {
+  const instances = currentOverview.instances.map((item) =>
+    item.instance.id === detail.instance.id ? detail : item,
+  );
+
+  return {
+    summary: {
+      ...currentOverview.summary,
+      total_instances: instances.length,
+      ready_instances: instances.filter((item) => item.derived_status === 'ready').length,
+      qr_required_instances: instances.filter((item) => item.derived_status === 'qr_required').length,
+      degraded_instances: instances.filter((item) =>
+        ['degraded', 'disconnected', 'auth_failed'].includes(item.derived_status),
+      ).length,
+    },
+    instances,
+  };
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { cache: 'no-store' });
 
@@ -339,6 +366,7 @@ export default function WhatsappDashboard({
   initialOverview,
   initialOutbound,
   initialEvents,
+  initialRenderedAt,
 }: WhatsappDashboardProps) {
   const [overview, setOverview] = useState(initialOverview);
   const [outbound, setOutbound] = useState(initialOutbound);
@@ -354,89 +382,96 @@ export default function WhatsappDashboard({
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [outboundFilter, setOutboundFilter] = useState<OutboundFilter>('all');
   const [detailTab, setDetailTab] = useState<DetailTab>('ringkasan');
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const refreshOverview = async () => {
-      try {
-        const [nextOverview, nextOutbound] = await Promise.all([
-          fetchJson<WhatsappDashboardOverview>('/api/admin/whatsapp/instances'),
-          fetchJson<OutboundResponse>('/api/admin/whatsapp/outbound'),
-        ]);
-
-        if (cancelled) {
-          return;
-        }
-
-        setOverview(nextOverview);
-        setOutbound(nextOutbound);
-        const selectedStillExists = nextOverview.instances.some(
-          (instance) => instance.instance.id === selectedInstanceId,
-        );
-
-        if (!selectedStillExists) {
-          setSelectedInstanceId(nextOverview.instances[0]?.instance.id || null);
-          setSelectedDetail(nextOverview.instances[0] || null);
-          setEvents([]);
-          setShowQr(false);
-        }
-
-        setErrorMessage(null);
-      } catch (error) {
-        if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : 'Gagal memperbarui dashboard WhatsApp.');
-        }
-      }
-    };
-
-    void refreshOverview();
-    const intervalId = window.setInterval(refreshOverview, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [selectedInstanceId]);
+  const initialSelectedInstanceId = initialOverview.instances[0]?.instance.id || null;
+  const [overviewUpdatedAt, setOverviewUpdatedAt] = useState(initialRenderedAt);
+  const [detailUpdatedAt, setDetailUpdatedAt] = useState(initialRenderedAt);
+  const [eventsUpdatedAt, setEventsUpdatedAt] = useState(initialRenderedAt);
+  const [outboundUpdatedAt, setOutboundUpdatedAt] = useState(initialRenderedAt);
+  const [eventsInstanceId, setEventsInstanceId] = useState<string | null>(initialSelectedInstanceId);
 
   useEffect(() => {
     if (!selectedInstanceId) {
       return;
     }
 
-    let cancelled = false;
+    if (detailTab === 'aktivitas' && eventsInstanceId !== selectedInstanceId) {
+      let cancelled = false;
 
-    const refreshDetail = async () => {
-      try {
-        const [detailResponse, eventsResponse] = await Promise.all([
-          fetchJson<WhatsappInstanceSummary>(`/api/admin/whatsapp/instances/${selectedInstanceId}`),
-          fetchJson<{ instance_id: string; events: WhatsappInstanceEventRecord[] }>(
+      const loadEvents = async () => {
+        try {
+          const eventsResponse = await fetchJson<{ instance_id: string; events: WhatsappInstanceEventRecord[] }>(
             `/api/admin/whatsapp/instances/${selectedInstanceId}/events`,
-          ),
-        ]);
+          );
 
-        if (cancelled) {
+          if (cancelled) {
+            return;
+          }
+
+          setEvents(eventsResponse.events);
+          setEventsInstanceId(selectedInstanceId);
+          setEventsUpdatedAt(new Date().toISOString());
+          setErrorMessage(null);
+        } catch (error) {
+          if (!cancelled) {
+            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat aktivitas perangkat.');
+          }
+        }
+      };
+
+      void loadEvents();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+  }, [detailTab, eventsInstanceId, selectedInstanceId]);
+
+  const selectedDerivedStatus = selectedDetail?.derived_status;
+
+  useEffect(() => {
+    if (
+      !selectedInstanceId ||
+      detailTab !== 'ringkasan' ||
+      !selectedDerivedStatus ||
+      !['qr_required', 'auth_failed'].includes(selectedDerivedStatus)
+    ) {
+      return;
+    }
+
+    const eventSource = new EventSource(`/api/admin/whatsapp/instances/${selectedInstanceId}/qr-stream`);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data) as { detail?: WhatsappInstanceSummary; error?: string };
+
+        if (payload.error) {
+          setErrorMessage(payload.error);
           return;
         }
 
-        setSelectedDetail(detailResponse);
-        setEvents(eventsResponse.events);
-        setErrorMessage(null);
-      } catch (error) {
-        if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : 'Gagal memperbarui detail perangkat.');
+        if (!payload.detail) {
+          return;
         }
+
+        const updatedAt = new Date().toISOString();
+        setSelectedDetail(payload.detail);
+        setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, payload.detail));
+        setDetailUpdatedAt(updatedAt);
+        setErrorMessage(null);
+      } catch {
+        setErrorMessage('Gagal membaca pembaruan QR secara langsung.');
       }
     };
 
-    void refreshDetail();
-    const intervalMs = selectedDetail?.derived_status === 'qr_required' ? 2000 : 5000;
-    const intervalId = window.setInterval(refreshDetail, intervalMs);
+    eventSource.onerror = () => {
+      setErrorMessage('Sambungan QR langsung terputus. Gunakan tombol perbarui jika diperlukan.');
+      eventSource.close();
+    };
 
     return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
+      eventSource.close();
     };
-  }, [selectedDetail?.derived_status, selectedInstanceId]);
+  }, [detailTab, selectedDerivedStatus, selectedInstanceId]);
 
   const sortedInstances = useMemo(
     () =>
@@ -476,12 +511,106 @@ export default function WhatsappDashboard({
     overview.summary.queued_api_notifications +
     outbound.summary.retrying;
 
+  const activePanelUpdatedAt = useMemo(() => {
+    if (detailTab === 'aktivitas') {
+      return eventsUpdatedAt;
+    }
+
+    if (detailTab === 'pengiriman') {
+      return outboundUpdatedAt;
+    }
+
+    return detailUpdatedAt;
+  }, [detailTab, detailUpdatedAt, eventsUpdatedAt, outboundUpdatedAt]);
+  const overviewNowMs = Date.parse(overviewUpdatedAt);
+  const activePanelNowMs = Date.parse(activePanelUpdatedAt);
+
+  const refreshOverview = async () => {
+    const nextOverview = await fetchJson<WhatsappDashboardOverview>('/api/admin/whatsapp/instances');
+    setOverview(nextOverview);
+    setOverviewUpdatedAt(new Date().toISOString());
+
+    const selectedStillExists = nextOverview.instances.some(
+      (instance) => instance.instance.id === selectedInstanceId,
+    );
+
+    if (!selectedStillExists) {
+      const nextSelected = nextOverview.instances[0] || null;
+      setSelectedInstanceId(nextSelected?.instance.id || null);
+      setSelectedDetail(nextSelected);
+      setEvents([]);
+      setEventsInstanceId(nextSelected?.instance.id || null);
+      setShowQr(false);
+      return;
+    }
+
+    if (selectedInstanceId) {
+      const nextSelected = nextOverview.instances.find((instance) => instance.instance.id === selectedInstanceId);
+      if (nextSelected) {
+        setSelectedDetail((current) =>
+          current && current.instance.id === nextSelected.instance.id ? current : nextSelected,
+        );
+      }
+    }
+  };
+
+  const refreshSelectedDetail = async (instanceId = selectedInstanceId) => {
+    if (!instanceId) {
+      return;
+    }
+
+    const detailResponse = await fetchJson<WhatsappInstanceSummary>(`/api/admin/whatsapp/instances/${instanceId}`);
+    setSelectedDetail(detailResponse);
+    setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, detailResponse));
+    setDetailUpdatedAt(new Date().toISOString());
+  };
+
+  const refreshEvents = async (instanceId = selectedInstanceId) => {
+    if (!instanceId) {
+      return;
+    }
+
+    const eventsResponse = await fetchJson<{ instance_id: string; events: WhatsappInstanceEventRecord[] }>(
+      `/api/admin/whatsapp/instances/${instanceId}/events`,
+    );
+    setEvents(eventsResponse.events);
+    setEventsInstanceId(instanceId);
+    setEventsUpdatedAt(new Date().toISOString());
+  };
+
+  const refreshOutbound = async () => {
+    const nextOutbound = await fetchJson<OutboundResponse>('/api/admin/whatsapp/outbound');
+    setOutbound(nextOutbound);
+    setOutboundUpdatedAt(new Date().toISOString());
+  };
+
+  const handleManualRefresh = async () => {
+    try {
+      await refreshOverview();
+
+      if (detailTab === 'aktivitas') {
+        await Promise.all([refreshSelectedDetail(), refreshEvents()]);
+      } else if (detailTab === 'pengiriman') {
+        await Promise.all([refreshSelectedDetail(), refreshOutbound()]);
+      } else {
+        await refreshSelectedDetail();
+      }
+
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal memperbarui data dashboard.');
+    }
+  };
+
   const selectInstance = (instanceSummary: WhatsappInstanceSummary) => {
     setSelectedInstanceId(instanceSummary.instance.id);
     setSelectedDetail(instanceSummary);
     setShowQr(instanceSummary.derived_status === 'qr_required' || instanceSummary.derived_status === 'auth_failed');
     setShowAllEvents(false);
     setDetailTab('ringkasan');
+    void refreshSelectedDetail(instanceSummary.instance.id).catch((error) => {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat detail perangkat.');
+    });
   };
 
   return (
@@ -495,6 +624,36 @@ export default function WhatsappDashboard({
           dengan cepat.
         </Typography>
       </Box>
+
+      <Paper
+        sx={{
+          p: 2,
+          borderRadius: 3,
+          border: (theme) => `1px solid ${alpha(theme.palette.divider, 1)}`,
+          background: (theme) =>
+            `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.06)}, ${alpha(theme.palette.background.paper, 0.96)})`,
+        }}
+      >
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          spacing={2}
+          justifyContent="space-between"
+          alignItems={{ xs: 'flex-start', md: 'center' }}
+        >
+          <Box>
+            <Typography variant="subtitle2">Terakhir diperbarui</Typography>
+            <Typography color="text.secondary" variant="body2">
+              Ringkasan halaman: {formatDateTime(overviewUpdatedAt)}
+            </Typography>
+            <Typography color="text.secondary" variant="body2">
+              Panel aktif: {formatDateTime(activePanelUpdatedAt)}
+            </Typography>
+          </Box>
+          <Button variant="contained" onClick={() => void handleManualRefresh()}>
+            Perbarui Sekarang
+          </Button>
+        </Stack>
+      </Paper>
 
       {errorMessage ? <Alert severity="warning">{errorMessage}</Alert> : null}
 
@@ -553,7 +712,7 @@ export default function WhatsappDashboard({
                             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                               <Chip
                                 icon={<ScheduleRoundedIcon />}
-                                label={`Aktivitas terakhir ${formatAge(getLastActivityAt(instance))}`}
+                                label={`Aktivitas terakhir ${formatAgeWithNow(getLastActivityAt(instance), overviewNowMs)}`}
                                 size="small"
                                 variant="outlined"
                               />
@@ -564,9 +723,7 @@ export default function WhatsappDashboard({
                               />
                             </Stack>
                             <Box>
-                              <Button size="small" variant="contained">
-                                {getPrimaryActionLabel(instance)}
-                              </Button>
+                              <Chip color={status.color} label={getPrimaryActionLabel(instance)} size="small" />
                             </Box>
                           </Stack>
                         </CardContent>
@@ -640,7 +797,7 @@ export default function WhatsappDashboard({
             <SummaryCard
               label="Pesan Tertunda"
               value={totalPendingMessages}
-              helper={`Antrean terlama: ${formatAge(overview.summary.oldest_queued_at)}`}
+              helper={`Antrean terlama: ${formatAgeWithNow(overview.summary.oldest_queued_at, overviewNowMs)}`}
               icon={<ScheduleRoundedIcon />}
               tone={totalPendingMessages ? 'warning' : 'default'}
               onClick={() => {
@@ -714,7 +871,7 @@ export default function WhatsappDashboard({
                             <Box>
                               <Typography fontWeight={700}>{instance.instance.label}</Typography>
                               <Typography color="text.secondary" variant="body2">
-                                Aktivitas terakhir {formatAge(getLastActivityAt(instance))}
+                                Aktivitas terakhir {formatAgeWithNow(getLastActivityAt(instance), overviewNowMs)}
                               </Typography>
                             </Box>
                             <Chip color={status.color} label={status.label} size="small" />
@@ -740,7 +897,7 @@ export default function WhatsappDashboard({
                             <Typography color="text.secondary" variant="caption">
                               {status.shortAction}
                             </Typography>
-                            <Button size="small">{getPrimaryActionLabel(instance)}</Button>
+                            <Chip color={status.color} label={getPrimaryActionLabel(instance)} size="small" variant="outlined" />
                           </Stack>
                         </Stack>
                       </ListItemButton>
@@ -778,7 +935,27 @@ export default function WhatsappDashboard({
                   >
                     <Tabs
                       value={detailTab}
-                      onChange={(_, nextValue: DetailTab) => setDetailTab(nextValue)}
+                      onChange={(_, nextValue: DetailTab) => {
+                        setDetailTab(nextValue);
+
+                        if (nextValue === 'aktivitas' && selectedInstanceId) {
+                          void refreshEvents(selectedInstanceId).catch((error) => {
+                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat aktivitas perangkat.');
+                          });
+                        }
+
+                        if (nextValue === 'pengiriman') {
+                          void Promise.all([refreshSelectedDetail(), refreshOutbound()]).catch((error) => {
+                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat status pengiriman.');
+                          });
+                        }
+
+                        if ((nextValue === 'ringkasan' || nextValue === 'teknis') && selectedInstanceId) {
+                          void refreshSelectedDetail(selectedInstanceId).catch((error) => {
+                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat detail perangkat.');
+                          });
+                        }
+                      }}
                       variant="scrollable"
                       scrollButtons="auto"
                       sx={{
@@ -810,7 +987,7 @@ export default function WhatsappDashboard({
                                     Tindakan berikutnya: <strong>{getStatusPresentation(selectedDetail.derived_status).shortAction}</strong>
                                   </Typography>
                                   <Typography variant="body2">
-                                    Dicek terakhir: <strong>{formatAge(selectedDetail.runtime?.last_heartbeat_at || null)}</strong>
+                                    Dicek terakhir: <strong>{formatAgeWithNow(selectedDetail.runtime?.last_heartbeat_at || null, activePanelNowMs)}</strong>
                                   </Typography>
                                   <Typography variant="body2">
                                     Nomor terhubung: <strong>{selectedDetail.instance.last_known_phone_number || '-'}</strong>
@@ -905,10 +1082,10 @@ export default function WhatsappDashboard({
                                 <Stack spacing={1.5}>
                                   <Typography variant="h6">Aktivitas Terakhir</Typography>
                                   <Typography variant="body2">
-                                    Pesan masuk terakhir: <strong>{formatAge(selectedDetail.staff.latest_inbound_at)}</strong>
+                                    Pesan masuk terakhir: <strong>{formatAgeWithNow(selectedDetail.staff.latest_inbound_at, activePanelNowMs)}</strong>
                                   </Typography>
                                   <Typography variant="body2">
-                                    Pesan keluar terakhir: <strong>{formatAge(selectedDetail.runtime?.last_outbound_at || null)}</strong>
+                                    Pesan keluar terakhir: <strong>{formatAgeWithNow(selectedDetail.runtime?.last_outbound_at || null, activePanelNowMs)}</strong>
                                   </Typography>
                                   <Typography variant="body2">
                                     Ringkasan pesan: <strong>{selectedDetail.staff.latest_inbound_preview || '-'}</strong>
@@ -958,7 +1135,7 @@ export default function WhatsappDashboard({
                                                   ) : null}
                                                 </Stack>
                                               }
-                                              secondary={`${event.description} • ${formatAge(event.createdAt)}`}
+                                              secondary={`${event.description} • ${formatAgeWithNow(event.createdAt, activePanelNowMs)}`}
                                             />
                                           </ListItemButton>
                                         </Tooltip>
@@ -1002,7 +1179,7 @@ export default function WhatsappDashboard({
                                   Notifikasi API tertunda: <strong>{selectedDetail.queue.queued_api_notifications}</strong>
                                 </Typography>
                                 <Typography variant="body2">
-                                  Antrean terlama: <strong>{formatAge(selectedDetail.queue.oldest_queued_at)}</strong>
+                                  Antrean terlama: <strong>{formatAgeWithNow(selectedDetail.queue.oldest_queued_at, activePanelNowMs)}</strong>
                                 </Typography>
                                 <Typography variant="body2">
                                   Percobaan sambung ulang 24 jam: <strong>{selectedDetail.runtime?.reconnect_count_24h || 0}</strong>

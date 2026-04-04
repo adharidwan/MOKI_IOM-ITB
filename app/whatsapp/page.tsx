@@ -6,6 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export default async function WhatsappPage() {
   const repository = createWhatsappOpsRepository();
+  const initialRenderedAt = new Date().toISOString();
   const [overview, outboundResponse, initialEvents] = await Promise.all([
     getWhatsappDashboardOverview(repository),
     repository.listRecentOutbound(25).then(async (items) => ({
@@ -28,6 +29,7 @@ export default async function WhatsappPage() {
       initialOverview={overview}
       initialOutbound={outboundResponse}
       initialEvents={initialEvents}
+      initialRenderedAt={initialRenderedAt}
     />
   );
 }
