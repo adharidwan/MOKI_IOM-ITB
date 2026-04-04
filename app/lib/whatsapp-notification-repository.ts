@@ -24,12 +24,15 @@ import {
   API_NOTIFICATION_PRIORITY,
   BLAST_PRIORITY,
   ApiClientRecord,
+  DEFAULT_WHATSAPP_INSTANCE_ID,
+  DEFAULT_WHATSAPP_INSTANCE_LABEL,
   DEFAULT_DISPATCH_SETTINGS_ID,
   DEFAULT_GLOBAL_MESSAGES_PER_MINUTE,
   DispatchSettingsRecord,
   OutboundMessageRecord,
   OutboundMessageSourceType,
   TICKET_REPLY_PRIORITY,
+  WhatsappInstanceRecord,
   buildApiNotificationSourceId,
 } from './whatsapp-notification-utils';
 import {
@@ -46,6 +49,7 @@ export interface UpdateDispatchSettingsInput {
 export interface CreateTicketReplyOutboundMessageInput {
   replyId: string;
   ticketId: string;
+  whatsappInstanceId: string;
   recipientPhoneNumber: string | null;
   recipientChatId: string;
   content: string;
@@ -363,6 +367,7 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
     async createOutboundMessage(
       input: CreateOutboundMessageInput,
     ): Promise<OutboundMessageRecord> {
+      await getOrCreateDefaultWhatsappInstance();
       const outboundMessage: OutboundMessageRecord = {
         id: crypto.randomUUID(),
         client_id: input.clientId,
@@ -371,6 +376,7 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         source_type: 'api_notification',
         source_id: buildApiNotificationSourceId(input.clientId, input.idempotencyKey),
         ticket_id: null,
+        whatsapp_instance_id: DEFAULT_WHATSAPP_INSTANCE_ID,
         priority: API_NOTIFICATION_PRIORITY,
         recipient_phone_number: input.recipientPhoneNumber,
         recipient_chat_id: null,
@@ -464,6 +470,7 @@ export async function createTicketReplyOutboundMessage(
   input: CreateTicketReplyOutboundMessageInput,
 ): Promise<OutboundMessageRecord> {
   const supabase = getSupabaseAdminClient();
+  await getOrCreateDefaultWhatsappInstance();
   const now = new Date().toISOString();
   const { data, error } = await supabase
     .from('outbound_messages')
@@ -474,6 +481,7 @@ export async function createTicketReplyOutboundMessage(
       source_type: 'ticket_reply',
       source_id: input.replyId,
       ticket_id: input.ticketId,
+      whatsapp_instance_id: input.whatsappInstanceId,
       priority: TICKET_REPLY_PRIORITY,
       recipient_phone_number: input.recipientPhoneNumber,
       recipient_chat_id: input.recipientChatId,
@@ -565,6 +573,27 @@ export async function countQueuedOutboundMessagesBySource(
   sourceType: OutboundMessageSourceType,
 ): Promise<number> {
   return getPendingOutboundMessageCountBySource(sourceType);
+}
+
+export async function getOrCreateDefaultWhatsappInstance(): Promise<WhatsappInstanceRecord> {
+  const supabase = getSupabaseAdminClient();
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('whatsapp_instances')
+    .upsert({
+      id: DEFAULT_WHATSAPP_INSTANCE_ID,
+      label: DEFAULT_WHATSAPP_INSTANCE_LABEL,
+      status: 'starting',
+      updated_at: now,
+    })
+    .select('*')
+    .single();
+
+  if (error) {
+    throw toRepositoryError('Failed to initialize default WhatsApp instance.', error);
+  }
+
+  return data as WhatsappInstanceRecord;
 }
 
 export async function releasePendingOutboundMessageCounts(

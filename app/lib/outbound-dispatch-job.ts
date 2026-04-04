@@ -23,6 +23,7 @@ export interface OutboundDispatchJobData {
   source_type: OutboundMessageSourceType;
   source_id: string;
   ticket_id: string | null;
+  whatsapp_instance_id: string;
   recipient_phone_number: string;
   recipient_chat_id: string | null;
   content: string;
@@ -49,6 +50,7 @@ export function buildOutboundDispatchJobData(
     source_type: message.source_type,
     source_id: message.source_id,
     ticket_id: message.ticket_id,
+    whatsapp_instance_id: message.whatsapp_instance_id,
     recipient_phone_number: message.recipient_phone_number,
     recipient_chat_id: message.recipient_chat_id,
     content: message.content,

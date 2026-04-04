@@ -9,6 +9,7 @@ interface GetTicketsParams {
   search?: string;
   sort?: string;
   pageSize?: number;
+  instanceId?: string;
 }
 
 interface GetTicketsResponse {
@@ -118,7 +119,8 @@ export async function getTickets({
   page = 1, 
   search = '', 
   sort = 'created_at',
-  pageSize = 10 
+  pageSize = 10,
+  instanceId,
 }: GetTicketsParams): Promise<GetTicketsResponse> {
   const supabase = getSupabaseServerClient();
   const from = (page - 1) * pageSize;
@@ -133,6 +135,10 @@ export async function getTickets({
 
   if (search) {
     query = query.ilike('subject', `%${search}%`);
+  }
+
+  if (instanceId) {
+    query = query.eq('whatsapp_instance_id', instanceId);
   }
 
   const { data, error, count } = await query;
@@ -201,7 +207,7 @@ export async function addReply(ticketId: string, author: string, content: string
   const supabase = getSupabaseAdminClient();
   const { data: ticket, error: ticketLookupError } = await supabase
     .from('tickets')
-    .select('id, channel, whatsapp_chat_id, phone_number')
+    .select('id, channel, whatsapp_chat_id, phone_number, whatsapp_instance_id')
     .eq('id', ticketId)
     .single();
 
@@ -242,6 +248,7 @@ export async function addReply(ticketId: string, author: string, content: string
       await createTicketReplyOutboundMessage({
         replyId: data.id,
         ticketId,
+        whatsappInstanceId: ticket.whatsapp_instance_id || 'default',
         recipientPhoneNumber: ticket.phone_number,
         recipientChatId: ticket.whatsapp_chat_id,
         content,

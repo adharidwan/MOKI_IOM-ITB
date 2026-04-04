@@ -111,6 +111,7 @@ describe('addReply', () => {
     expect(createTicketReplyOutboundMessage).toHaveBeenCalledWith({
       replyId: 'reply-1',
       ticketId: 'ticket-1',
+      whatsappInstanceId: 'default',
       recipientPhoneNumber: '6281234567890',
       recipientChatId: '6281234567890@c.us',
       content: 'Support message',

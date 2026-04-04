@@ -5,6 +5,15 @@ import { z } from 'zod';
 export const API_CLIENT_KEY_PATTERN = /^wapi_([A-Za-z0-9]+)_[A-Za-z0-9\-_]+$/;
 export const API_CLIENT_STATUSES = ['active', 'disabled'] as const;
 export const OUTBOUND_MESSAGE_STATUSES = ['queued', 'retrying', 'sent', 'failed'] as const;
+export const WHATSAPP_INSTANCE_STATUSES = [
+  'starting',
+  'qr_required',
+  'connecting',
+  'ready',
+  'degraded',
+  'disconnected',
+  'auth_failed',
+] as const;
 export const OUTBOUND_MESSAGE_SOURCE_TYPES = ['api_notification', 'ticket_reply', 'blast'] as const;
 export const MAX_MESSAGE_LENGTH = 4096;
 export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
@@ -16,10 +25,19 @@ export const TICKET_REPLY_PRIORITY = 10;
 export const BLAST_PRIORITY = 50;
 export const API_NOTIFICATION_PRIORITY = 100;
 export const DEFAULT_DISPATCH_SETTINGS_ID = 'default';
+export const DEFAULT_WHATSAPP_INSTANCE_ID = 'default';
+export const DEFAULT_WHATSAPP_INSTANCE_LABEL = 'Primary WhatsApp';
 
 export type ApiClientStatus = (typeof API_CLIENT_STATUSES)[number];
 export type OutboundMessageStatus = (typeof OUTBOUND_MESSAGE_STATUSES)[number];
 export type OutboundMessageSourceType = (typeof OUTBOUND_MESSAGE_SOURCE_TYPES)[number];
+export type WhatsappInstanceStatus = (typeof WHATSAPP_INSTANCE_STATUSES)[number];
+
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
 
 export interface ApiClientRecord {
   id: string;
@@ -42,6 +60,7 @@ export interface OutboundMessageRecord {
   source_type: OutboundMessageSourceType;
   source_id: string;
   ticket_id: string | null;
+  whatsapp_instance_id: string;
   priority: number;
   recipient_phone_number: string;
   recipient_chat_id: string | null;
@@ -62,6 +81,122 @@ export interface DispatchSettingsRecord {
   global_messages_per_minute: number;
   api_notifications_paused: boolean;
   updated_at: string;
+}
+
+export interface WhatsappInstanceRecord {
+  id: string;
+  label: string;
+  status: WhatsappInstanceStatus;
+  last_known_phone_number: string | null;
+  last_known_chat_id: string | null;
+  last_ready_at: string | null;
+  last_qr_at: string | null;
+  last_disconnect_at: string | null;
+  last_error: string | null;
+  assigned_worker_id: string | null;
+  updated_at: string;
+}
+
+export interface WhatsappInstanceEventRecord {
+  id: string;
+  whatsapp_instance_id: string;
+  event_type:
+    | 'qr_issued'
+    | 'ready'
+    | 'disconnected'
+    | 'auth_failed'
+    | 'worker_stale'
+    | 'reconnect_started';
+  message: string | null;
+  metadata: JsonValue | null;
+  created_at: string;
+}
+
+export interface WhatsappInstanceRuntime {
+  instance_id: string;
+  status: WhatsappInstanceStatus;
+  worker_id: string | null;
+  worker_host: string | null;
+  worker_version: string | null;
+  assigned_worker_id: string | null;
+  last_heartbeat_at: string | null;
+  qr_code: string | null;
+  qr_terminal: string | null;
+  qr_generated_at: string | null;
+  qr_expires_at: string | null;
+  last_error: string | null;
+  last_disconnect_at: string | null;
+  reconnect_count_24h: number;
+  last_inbound_at: string | null;
+  last_outbound_at: string | null;
+  has_worker_conflict: boolean;
+}
+
+export interface WhatsappInstanceQueueSummary {
+  queued_ticket_replies: number;
+  queued_api_notifications: number;
+  retrying_messages: number;
+  failed_messages: number;
+  sent_messages: number;
+  oldest_queued_at: string | null;
+}
+
+export interface WhatsappInstanceStaffSummary {
+  active_ticket_count: number;
+  latest_ticket_id: string | null;
+  latest_ticket_subject: string | null;
+  latest_ticket_updated_at: string | null;
+  latest_inbound_preview: string | null;
+  latest_inbound_at: string | null;
+  latest_outbound_reply_status: OutboundMessageStatus | null;
+}
+
+export interface WhatsappInstanceSummary {
+  instance: WhatsappInstanceRecord;
+  runtime: WhatsappInstanceRuntime | null;
+  derived_status: WhatsappInstanceStatus;
+  has_qr: boolean;
+  queue: WhatsappInstanceQueueSummary;
+  staff: WhatsappInstanceStaffSummary;
+}
+
+export interface WhatsappDashboardSummary {
+  total_instances: number;
+  ready_instances: number;
+  qr_required_instances: number;
+  degraded_instances: number;
+  queued_ticket_replies: number;
+  queued_api_notifications: number;
+  oldest_queued_at: string | null;
+  failed_or_retrying_messages: number;
+}
+
+export interface WhatsappDashboardOverview {
+  summary: WhatsappDashboardSummary;
+  instances: WhatsappInstanceSummary[];
+}
+
+export interface WhatsappOutboundSummary {
+  queued: number;
+  retrying: number;
+  failed: number;
+  sent: number;
+  ticket_reply: number;
+  api_notification: number;
+}
+
+export interface WhatsappOutboundListItem {
+  id: string;
+  whatsapp_instance_id: string;
+  instance_label: string | null;
+  ticket_id: string | null;
+  source_type: OutboundMessageSourceType;
+  delivery_status: OutboundMessageStatus;
+  recipient_phone_number: string;
+  client_reference: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  last_delivery_error: string | null;
 }
 
 export interface ValidatedQueueWhatsappMessagePayload {
