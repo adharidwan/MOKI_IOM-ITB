@@ -2,6 +2,8 @@ import WhatsappDashboard from '../components/WhatsappDashboard';
 import { createWhatsappOpsRepository } from '../lib/whatsapp-ops-repository';
 import { getWhatsappDashboardOverview } from '../lib/whatsapp-ops-service';
 
+export const dynamic = 'force-dynamic';
+
 export default async function WhatsappPage() {
   const repository = createWhatsappOpsRepository();
   const [overview, outboundResponse, initialEvents] = await Promise.all([
