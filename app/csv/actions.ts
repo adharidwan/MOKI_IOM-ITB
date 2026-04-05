@@ -25,6 +25,9 @@ export async function importCsvContactsAction(
   try {
     const inserted = await createCsvContacts(rows, fileName);
     revalidatePath('/csv');
+    revalidatePath('/contacts');
+    revalidatePath('/blastmessage');
+    revalidatePath('/phonelist');
 
     return {
       success: true,

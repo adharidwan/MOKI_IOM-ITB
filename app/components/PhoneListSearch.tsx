@@ -2,264 +2,366 @@
 
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
+  Chip,
+  MenuItem,
   Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
+  Stack,
   TextField,
   Typography,
 } from '@mui/material';
 
 import type { CsvContact } from '../lib/types';
 import {
-  deletePhoneListContactAction,
-  deletePhoneListContactsBulkAction,
-  assignPhoneListGroupAction,
-  updatePhoneListContactAction,
-} from '../phonelist/actions';
+  assignContactGroupAction,
+  deleteContactAction,
+  deleteContactsBulkAction,
+  updateContactAction,
+} from '../contacts/actions';
 
 interface PhoneListTableProps {
   contacts: CsvContact[];
 }
 
-interface ColumnFilters {
-  no_telp: string;
-  nama: string;
-  jenis_kelamin: string;
-  jabatan: string;
-  group_name: string;
+interface ContactFilters {
+  keyword: string;
+  groupName: string;
 }
 
+const GENDER_OPTIONS = ['Laki-laki', 'Perempuan', 'Tidak diketahui'];
+
 export default function PhoneListTable({ contacts }: PhoneListTableProps) {
-  const [filters, setFilters] = useState<ColumnFilters>({
-    no_telp: '',
-    nama: '',
-    jenis_kelamin: '',
-    jabatan: '',
-    group_name: '',
+  const [filters, setFilters] = useState<ContactFilters>({
+    keyword: '',
+    groupName: '',
   });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const filteredContacts = useMemo(() => {
     return contacts.filter((contact) => {
-      const noTelpMatch = contact.no_telp.toLowerCase().includes(filters.no_telp.toLowerCase());
-      const namaMatch = contact.nama.toLowerCase().includes(filters.nama.toLowerCase());
-      const jenisKelaminMatch = contact.jenis_kelamin
-        .toLowerCase()
-        .includes(filters.jenis_kelamin.toLowerCase());
-      const jabatanMatch = (contact.jabatan || '').toLowerCase().includes(filters.jabatan.toLowerCase());
-      const groupNameMatch = contact.group_names
-        .join(' ')
-        .toLowerCase()
-        .includes(filters.group_name.toLowerCase());
+      const keyword = filters.keyword.toLowerCase();
+      const groupName = filters.groupName.toLowerCase();
+      const matchesKeyword =
+        contact.no_telp.toLowerCase().includes(keyword) ||
+        contact.nama.toLowerCase().includes(keyword) ||
+        (contact.jabatan || '').toLowerCase().includes(keyword);
+      const matchesGroup = contact.group_names.join(' ').toLowerCase().includes(groupName);
 
-      return noTelpMatch && namaMatch && jenisKelaminMatch && jabatanMatch && groupNameMatch;
+      return matchesKeyword && matchesGroup;
     });
   }, [contacts, filters]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-  const allFilteredSelected = filteredContacts.length > 0
-    && filteredContacts.every((contact) => selectedSet.has(contact.id));
+  const toggleSelection = (id: string) => {
+    setSelectedIds((previous) => {
+      if (previous.includes(id)) {
+        return previous.filter((item) => item !== id);
+      }
 
-  const toggleSelectAllFiltered = () => {
-    if (allFilteredSelected) {
-      const filteredIds = new Set(filteredContacts.map((contact) => contact.id));
-      setSelectedIds((prev) => prev.filter((id) => !filteredIds.has(id)));
-      return;
-    }
-
-    setSelectedIds((prev) => {
-      const merged = new Set(prev);
-      filteredContacts.forEach((contact) => merged.add(contact.id));
-      return Array.from(merged);
+      return [...previous, id];
     });
   };
 
-  const toggleSelectOne = (id: string) => {
-    setSelectedIds((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter((item) => item !== id);
-      }
-
-      return [...prev, id];
-    });
+  const clearFilters = () => {
+    setFilters({ keyword: '', groupName: '' });
   };
 
   return (
-    <>
-      <Paper sx={{ mb: 2, backgroundColor: 'transparent', boxShadow: 'none' }}>
-        <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 'bold', color: '#4e8d9c' }}>
-          Search per kolom
-        </Typography>
-
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: '1fr 1fr 1fr 1fr 1fr' },
-            gap: 1,
-          }}
-        >
-          <TextField
-            label="Cari No Telp"
-            size="small"
-            value={filters.no_telp}
-            onChange={(event) => setFilters((prev) => ({ ...prev, no_telp: event.target.value }))}
-          />
-          <TextField
-            label="Cari Nama"
-            size="small"
-            value={filters.nama}
-            onChange={(event) => setFilters((prev) => ({ ...prev, nama: event.target.value }))}
-          />
-          <TextField
-            label="Cari Jenis kelamin"
-            size="small"
-            value={filters.jenis_kelamin}
-            onChange={(event) => setFilters((prev) => ({ ...prev, jenis_kelamin: event.target.value }))}
-          />
-          <TextField
-            label="Cari Jabatan"
-            size="small"
-            value={filters.jabatan}
-            onChange={(event) => setFilters((prev) => ({ ...prev, jabatan: event.target.value }))}
-          />
-          <TextField
-            label="Cari Group"
-            size="small"
-            value={filters.group_name}
-            onChange={(event) => setFilters((prev) => ({ ...prev, group_name: event.target.value }))}
-          />
-        </Box>
+    <Stack spacing={3}>
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2.5, md: 3 },
+          borderRadius: 3,
+          border: '1px solid rgba(31, 111, 95, 0.14)',
+          backgroundColor: '#ffffff',
+        }}
+      >
+        <Stack spacing={2}>
+          <Typography sx={{ fontSize: '1.3rem', fontWeight: 800, color: '#163020' }}>
+            Cari dan rapikan kontak
+          </Typography>
+          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#4c6258' }}>
+            Gunakan pencarian singkat. Setelah itu, pilih kontak yang ingin ditambahkan ke grup atau dihapus.
+          </Typography>
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: '1.5fr 1fr auto' },
+              gap: 2,
+              alignItems: 'center',
+            }}
+          >
+            <TextField
+              label="Cari nama, nomor, atau jabatan"
+              value={filters.keyword}
+              onChange={(event) => setFilters((prev) => ({ ...prev, keyword: event.target.value }))}
+              placeholder="Contoh: Budi atau 62812"
+              fullWidth
+            />
+            <TextField
+              label="Filter grup"
+              value={filters.groupName}
+              onChange={(event) => setFilters((prev) => ({ ...prev, groupName: event.target.value }))}
+              placeholder="Contoh: Orang Tua TK A"
+              fullWidth
+            />
+            <Button
+              variant="outlined"
+              size="large"
+              onClick={clearFilters}
+              sx={{
+                minHeight: 56,
+                borderRadius: 3,
+                px: 3,
+                borderColor: '#1f6f5f',
+                color: '#1f6f5f',
+                textTransform: 'none',
+                fontWeight: 700,
+              }}
+            >
+              Reset pencarian
+            </Button>
+          </Box>
+        </Stack>
       </Paper>
 
-      <Box
-        sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, justifyContent: 'space-between', alignItems: 'center', mb: 2 }}
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2.5, md: 3 },
+          borderRadius: 3,
+          border: '1px solid rgba(31, 111, 95, 0.14)',
+          backgroundColor: '#f8fcfb',
+        }}
       >
-        <Typography variant="body2" color="textSecondary">
-          {selectedIds.length} data dipilih dari {filteredContacts.length} hasil filter.
-        </Typography>
+        <Stack
+          direction={{ xs: 'column', lg: 'row' }}
+          spacing={2}
+          justifyContent="space-between"
+          alignItems={{ xs: 'flex-start', lg: 'center' }}
+        >
+          <Stack spacing={0.5}>
+            <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
+              {filteredContacts.length} kontak ditemukan
+            </Typography>
+            <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+              {selectedIds.length} kontak sedang dipilih.
+            </Typography>
+          </Stack>
 
-        <Box component="form" action={assignPhoneListGroupAction} sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
-          <TextField
-            name="group_names"
-            label="Tambah group"
-            size="small"
-            placeholder="Contoh: Tim Sales, VIP"
-            disabled={selectedIds.length === 0}
-          />
-          <Button type="submit" variant="outlined" disabled={selectedIds.length === 0}>
-            Tambah Group ke Terpilih
-          </Button>
-        </Box>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ width: { xs: '100%', lg: 'auto' } }}>
+            <Box
+              component="form"
+              action={assignContactGroupAction}
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: '1fr auto' },
+                gap: 1.5,
+                width: { xs: '100%', lg: 420 },
+              }}
+            >
+              <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
+              <TextField
+                name="group_names"
+                label="Tambahkan ke grup"
+                placeholder="Contoh: Orang Tua Kelas A"
+                disabled={selectedIds.length === 0}
+                fullWidth
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={selectedIds.length === 0}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 3,
+                  backgroundColor: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Simpan grup
+              </Button>
+            </Box>
 
-        <Box component="form" action={deletePhoneListContactsBulkAction} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-          <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
-          <Button
-            type="submit"
-            variant="contained"
-            color="error"
-            disabled={selectedIds.length === 0}
-          >
-            Hapus Massal ({selectedIds.length})
-          </Button>
-        </Box>
-      </Box>
+            <Box component="form" action={deleteContactsBulkAction}>
+              <input type="hidden" name="ids" value={JSON.stringify(selectedIds)} />
+              <Button
+                type="submit"
+                variant="outlined"
+                color="error"
+                disabled={selectedIds.length === 0}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 3,
+                  px: 3,
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  width: { xs: '100%', md: 'auto' },
+                }}
+              >
+                Hapus {selectedIds.length || ''} kontak
+              </Button>
+            </Box>
+          </Stack>
+        </Stack>
+      </Paper>
 
       {filteredContacts.length === 0 ? (
-        <Typography variant="body2" color="textSecondary">Tidak ada data yang cocok dengan filter.</Typography>
+        <Alert severity="info" sx={{ borderRadius: 3 }}>
+          Tidak ada kontak yang cocok. Coba ubah kata pencarian atau filter grup.
+        </Alert>
       ) : (
-        <TableContainer sx={{ border: '1px solid #ccc', borderRadius: 1, backgroundColor: 'transparent' }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                <TableCell padding="checkbox">
-                  <Checkbox
-                    checked={allFilteredSelected}
-                    indeterminate={selectedIds.length > 0 && !allFilteredSelected}
-                    onChange={toggleSelectAllFiltered}
-                    inputProps={{ 'aria-label': 'select all filtered' }}
-                  />
-                </TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>No Telp</TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>Nama</TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>Jenis kelamin</TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>Jabatan</TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>Group</TableCell>
-                <TableCell sx={{ fontWeight: 'bold' }}>Aksi</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {filteredContacts.map((contact) => (
-                <TableRow key={contact.id} hover>
-                  <TableCell padding="checkbox">
+        <Stack spacing={2}>
+          {filteredContacts.map((contact, index) => (
+            <Paper
+              key={contact.id}
+              elevation={0}
+              sx={{
+                p: { xs: 2.5, md: 3 },
+                borderRadius: 3,
+                border: selectedSet.has(contact.id)
+                  ? '2px solid #1f6f5f'
+                  : '1px solid rgba(31, 111, 95, 0.14)',
+                backgroundColor: selectedSet.has(contact.id) ? '#f2fbf8' : '#ffffff',
+              }}
+            >
+              <Stack spacing={2.5}>
+                <Stack
+                  direction={{ xs: 'column', md: 'row' }}
+                  spacing={2}
+                  justifyContent="space-between"
+                  alignItems={{ xs: 'flex-start', md: 'center' }}
+                >
+                  <Stack direction="row" spacing={1.5} alignItems="center">
                     <Checkbox
                       checked={selectedSet.has(contact.id)}
-                      onChange={() => toggleSelectOne(contact.id)}
-                      inputProps={{ 'aria-label': `select ${contact.no_telp}` }}
+                      onChange={() => toggleSelection(contact.id)}
+                      inputProps={{ 'aria-label': `pilih kontak ${contact.no_telp}` }}
                     />
-                  </TableCell>
-                  <TableCell colSpan={6} sx={{ py: 1.5 }}>
-                    <Box
+                    <Stack spacing={0.5}>
+                      <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                        Kontak {index + 1}
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.98rem', color: '#51645d' }}>
+                        Centang jika ingin masukkan ke grup atau hapus bersama.
+                      </Typography>
+                    </Stack>
+                  </Stack>
+
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {contact.group_names.length > 0 ? (
+                      contact.group_names.map((groupName) => (
+                        <Chip
+                          key={`${contact.id}-${groupName}`}
+                          label={groupName}
+                          sx={{
+                            backgroundColor: '#e6f4ef',
+                            color: '#1f4d3a',
+                            fontWeight: 700,
+                          }}
+                        />
+                      ))
+                    ) : (
+                      <Chip
+                        label="Belum ada grup"
+                        sx={{ backgroundColor: '#f3f1e8', color: '#655f50', fontWeight: 700 }}
+                      />
+                    )}
+                  </Stack>
+                </Stack>
+
+                <Stack spacing={2}>
+                  <Box
+                    component="form"
+                    action={updateContactAction}
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', md: '1fr 1fr', xl: '1.2fr 1fr 0.8fr 1fr' },
+                      gap: 2,
+                    }}
+                  >
+                    <input type="hidden" name="id" value={contact.id} />
+                    <TextField
+                      name="no_telp"
+                      label="Nomor WhatsApp"
+                      defaultValue={contact.no_telp}
+                      required
+                      fullWidth
+                    />
+                    <TextField name="nama" label="Nama kontak" defaultValue={contact.nama} required fullWidth />
+                    <TextField
+                      name="jenis_kelamin"
+                      label="Jenis kelamin"
+                      defaultValue={contact.jenis_kelamin}
+                      select
+                      fullWidth
+                    >
+                      {GENDER_OPTIONS.map((option) => (
+                        <MenuItem key={option} value={option}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                    <TextField
+                      name="jabatan"
+                      label="Keterangan tambahan"
+                      defaultValue={contact.jabatan || ''}
+                      placeholder="Contoh: Orang tua murid"
+                      fullWidth
+                    />
+                    <TextField
+                      name="group_names"
+                      label="Grup"
+                      defaultValue={contact.group_names.join(', ')}
+                      placeholder="Pisahkan dengan koma"
+                      fullWidth
+                      sx={{ gridColumn: { xs: '1 / -1', xl: '1 / span 3' } }}
+                    />
+                    <Button
+                      type="submit"
+                      variant="contained"
                       sx={{
-                        display: 'grid',
-                        gridTemplateColumns: { xs: '1fr', lg: '1fr auto' },
-                        gap: 1,
-                        alignItems: 'center',
+                        minHeight: 56,
+                        borderRadius: 3,
+                        backgroundColor: '#1f6f5f',
+                        textTransform: 'none',
+                        fontWeight: 700,
+                        gridColumn: { xs: '1 / -1', xl: '4 / 5' },
                       }}
                     >
-                      <Box
-                        component="form"
-                        action={updatePhoneListContactAction}
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: { xs: '1fr', lg: '1.3fr 1.2fr 1fr 1fr 1fr auto' },
-                          gap: 1,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <input type="hidden" name="id" value={contact.id} />
-                        <TextField name="no_telp" defaultValue={contact.no_telp} required size="small" />
-                        <TextField name="nama" defaultValue={contact.nama} required size="small" />
-                        <TextField
-                          name="jenis_kelamin"
-                          defaultValue={contact.jenis_kelamin}
-                          required
-                          size="small"
-                        />
-                        <TextField name="jabatan" defaultValue={contact.jabatan || ''} size="small" />
-                        <TextField
-                          name="group_names"
-                          defaultValue={contact.group_names.join(', ')}
-                          size="small"
-                        />
+                      Simpan perubahan
+                    </Button>
+                  </Box>
 
-                        <Button type="submit" variant="outlined" color="primary" sx={{ minWidth: 90 }}>
-                          Update
-                        </Button>
-                      </Box>
-
-                      <Box component="form" action={deletePhoneListContactAction} sx={{ justifySelf: { lg: 'end' } }}>
-                        <input type="hidden" name="id" value={contact.id} />
-                        <Button type="submit" variant="outlined" color="error" sx={{ minWidth: 90 }}>
-                          Hapus
-                        </Button>
-                      </Box>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+                  <Box component="form" action={deleteContactAction} sx={{ alignSelf: 'flex-start' }}>
+                    <input type="hidden" name="id" value={contact.id} />
+                    <Button
+                      type="submit"
+                      variant="outlined"
+                      color="error"
+                      sx={{
+                        minHeight: 52,
+                        borderRadius: 999,
+                        px: 3,
+                        textTransform: 'none',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Hapus kontak ini
+                    </Button>
+                  </Box>
+                </Stack>
+              </Stack>
+            </Paper>
+          ))}
+        </Stack>
       )}
-    </>
+    </Stack>
   );
 }
