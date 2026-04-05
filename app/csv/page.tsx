@@ -1,9 +1,5 @@
-import CSVDropZone from "../components/CSVDropZone";
+import { redirect } from 'next/navigation';
 
-export default function CSVPage() {
-  return (
-    <main style={{ padding: "2rem" }}>
-      <CSVDropZone />
-    </main>
-  );
+export default function CSVRedirectPage() {
+  redirect('/contacts');
 }
