@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 
 import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
-import { createDirectBlastOutboundMessages } from '@/app/lib/whatsapp-notification-repository';
+import {
+  createDirectBlastOutboundMessages,
+  createGroupBlastOutboundMessages,
+} from '@/app/lib/whatsapp-notification-repository';
 import { normalizePhoneNumber } from '@/app/lib/whatsapp-notification-utils';
 
 interface BlastRecipientInput {
@@ -13,11 +16,22 @@ interface BlastRecipientInput {
 
 interface BlastRequestBody {
   message?: string;
-  source?: 'manual' | 'csv';
+  source?: 'manual' | 'csv' | 'group';
   recipients?: BlastRecipientInput[];
+  groupNames?: string[];
   saveToGroup?: boolean;
   groupName?: string;
   sourceFile?: string;
+}
+
+function normalizeGroupNames(values: string[]): string[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => String(value || '').trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
 }
 
 function normalizeRecipients(recipients: BlastRecipientInput[]): CsvContactInput[] {
@@ -58,7 +72,43 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Pesan blast wajib diisi.' }, { status: 400 });
     }
 
+    const source = body.source || 'manual';
+    const groupNames = normalizeGroupNames(Array.isArray(body.groupNames) ? body.groupNames : []);
     const recipientRows = normalizeRecipients(Array.isArray(body.recipients) ? body.recipients : []);
+
+    if (source === 'group') {
+      if (!groupNames.length) {
+        return NextResponse.json({ error: 'Pilih minimal satu grup penerima.' }, { status: 400 });
+      }
+
+      const blastResult = await createGroupBlastOutboundMessages({
+        groupNames,
+        content: message,
+      });
+
+      if (blastResult.totalRecipients === 0) {
+        return NextResponse.json({ error: 'Grup terpilih belum memiliki kontak.' }, { status: 400 });
+      }
+
+      if (blastResult.acceptedCount === 0) {
+        return NextResponse.json(
+          {
+            error: 'Semua pesan blast gagal masuk ke antrian.',
+            ...blastResult,
+          },
+          { status: 500 },
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          source,
+          ...blastResult,
+        },
+        { status: blastResult.failedCount > 0 ? 207 : 200 },
+      );
+    }
 
     if (!recipientRows.length) {
       return NextResponse.json({ error: 'Tidak ada nomor tujuan valid.' }, { status: 400 });
