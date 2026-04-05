@@ -453,9 +453,10 @@ export default function WhatsappDashboard({
           return;
         }
 
+        const detail = payload.detail;
         const updatedAt = new Date().toISOString();
-        setSelectedDetail(payload.detail);
-        setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, payload.detail));
+        setSelectedDetail(detail);
+        setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, detail));
         setDetailUpdatedAt(updatedAt);
         setErrorMessage(null);
       } catch {
