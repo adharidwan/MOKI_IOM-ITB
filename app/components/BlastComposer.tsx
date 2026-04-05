@@ -6,192 +6,181 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
   Paper,
-  Tab,
-  Tabs,
+  Stack,
   TextField,
   Typography,
 } from '@mui/material';
+import CampaignRoundedIcon from '@mui/icons-material/CampaignRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import GroupRoundedIcon from '@mui/icons-material/GroupRounded';
+import PersonAddAltRoundedIcon from '@mui/icons-material/PersonAddAltRounded';
+import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 
-import { sendGroupBlastAction } from '../phonelist/actions';
+import type { CsvContact } from '../lib/types';
+
+type RecipientSource = 'group' | 'csv' | 'manual';
 
 interface BlastComposerProps {
+  contacts: CsvContact[];
   availableGroups: string[];
 }
 
-interface ParsedCsvRecipient {
+interface RecipientInput {
   no_telp: string;
   nama?: string;
-  jenis_kelamin?: string;
-  jabatan?: string;
 }
 
 interface ParsedCsvRow {
-  'no telp'?: string;
-  no_telp?: string;
-  phone?: string;
   nomor?: string;
+  no_telp?: string;
+  'no telp'?: string;
+  phone?: string;
   nama?: string;
-  'jenis kelamin'?: string;
-  jenis_kelamin?: string;
-  jabatan?: string;
 }
 
-function parseManualRecipients(rawValue: string): ParsedCsvRecipient[] {
-  const lines = rawValue
-    .split(/\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+const STEP_TITLES = [
+  'Pilih penerima',
+  'Review penerima',
+  'Tulis pesan',
+  'Preview & kirim',
+];
+const MAX_MESSAGE_LENGTH = 4096;
 
-  const recipients: ParsedCsvRecipient[] = [];
+function normalizePhoneNumber(rawValue: string): string | null {
+  const digitsOnly = String(rawValue || '').replace(/\D/g, '');
+  return digitsOnly.length >= 8 && digitsOnly.length <= 15 ? digitsOnly : null;
+}
 
-  lines.forEach((line) => {
-    const [phone, name, gender, title] = line.split('|').map((part) => part.trim());
+function uniqueRecipients(recipients: RecipientInput[]): RecipientInput[] {
+  const deduped = new Map<string, RecipientInput>();
 
-    if (!phone) {
+  recipients.forEach((recipient) => {
+    const normalizedPhone = normalizePhoneNumber(recipient.no_telp);
+
+    if (!normalizedPhone) {
       return;
     }
 
-    recipients.push({
-      no_telp: phone,
-      nama: name || undefined,
-      jenis_kelamin: gender || undefined,
-      jabatan: title || undefined,
+    deduped.set(normalizedPhone, {
+      no_telp: normalizedPhone,
+      nama: String(recipient.nama || '').trim() || undefined,
     });
   });
 
-  return recipients;
+  return Array.from(deduped.values());
 }
 
-function getCsvPhone(row: ParsedCsvRow): string {
-  return String(row['no telp'] || row.no_telp || row.phone || row.nomor || '').trim();
+function sourceLabel(source: RecipientSource | null): string {
+  if (source === 'group') return 'Grup kontak';
+  if (source === 'csv') return 'File CSV';
+  if (source === 'manual') return 'Input manual';
+  return '-';
 }
 
-function askSaveGroupPrompt(sourceLabel: string): { saveToGroup: boolean; groupName: string | null } | null {
-  const shouldSave = window.confirm(
-    `Sebelum kirim blast dari ${sourceLabel}, apakah penerima mau disimpan sebagai group?`,
-  );
-
-  if (!shouldSave) {
-    return { saveToGroup: false, groupName: null };
-  }
-
-  const groupName = window.prompt('Masukkan nama group baru / existing group:')?.trim() || '';
-  if (!groupName) {
-    window.alert('Nama group wajib diisi jika memilih save ke group.');
-    return null;
-  }
-
-  return {
-    saveToGroup: true,
-    groupName,
-  };
-}
-
-export default function BlastComposer({ availableGroups }: BlastComposerProps) {
-  const [activeTab, setActiveTab] = useState(0);
-  const [manualRecipientsRaw, setManualRecipientsRaw] = useState('');
-  const [manualMessage, setManualMessage] = useState('');
-  const [csvMessage, setCsvMessage] = useState('');
-  const [csvRecipients, setCsvRecipients] = useState<ParsedCsvRecipient[]>([]);
+export default function BlastComposer({ contacts, availableGroups }: BlastComposerProps) {
+  const [currentStep, setCurrentStep] = useState(1);
+  const [selectedSource, setSelectedSource] = useState<RecipientSource | null>(null);
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
+  const [manualPhone, setManualPhone] = useState('');
+  const [manualName, setManualName] = useState('');
+  const [manualRecipients, setManualRecipients] = useState<RecipientInput[]>([]);
+  const [csvRecipients, setCsvRecipients] = useState<RecipientInput[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
+  const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [status, setStatus] = useState<
+    { type: 'success' | 'error' | 'info' | 'warning'; message: string } | null
+  >(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const manualCount = useMemo(() => parseManualRecipients(manualRecipientsRaw).length, [manualRecipientsRaw]);
-
-  const buildBlastStatusMessage = (
-    result: {
-      acceptedCount?: number;
-      failedCount?: number;
-      alreadyAcceptedCount?: number;
-      groupName?: string | null;
-    },
-    options: {
-      label: string;
-      saveToGroup: boolean;
-    },
-  ): { type: 'success' | 'error'; message: string } => {
-    const acceptedCount = result.acceptedCount || 0;
-    const failedCount = result.failedCount || 0;
-    const alreadyAcceptedCount = result.alreadyAcceptedCount || 0;
-    const savedSuffix = options.saveToGroup ? ` Disimpan ke group ${result.groupName}.` : '';
-    const dedupeSuffix =
-      alreadyAcceptedCount > 0
-        ? ` ${alreadyAcceptedCount} penerima sudah pernah diterima sebelumnya, jadi tidak diduplikasi.`
-        : '';
-
-    if (failedCount > 0) {
-      return {
-        type: 'error',
-        message:
-          `${options.label} menerima ${acceptedCount} penerima, tetapi ${failedCount} gagal masuk ke antrian.` +
-          `${savedSuffix}${dedupeSuffix}`,
-      };
-    }
-
-    return {
-      type: 'success',
-      message: `${options.label} terkirim ke ${acceptedCount} penerima.${savedSuffix}${dedupeSuffix}`,
-    };
-  };
-
-  const handleManualSubmit = async () => {
-    const recipients = parseManualRecipients(manualRecipientsRaw);
-
-    if (!recipients.length) {
-      setStatus({ type: 'error', message: 'Minimal isi satu nomor tujuan pada input manual.' });
-      return;
-    }
-
-    if (!manualMessage.trim()) {
-      setStatus({ type: 'error', message: 'Pesan blast wajib diisi.' });
-      return;
-    }
-
-    const promptResult = askSaveGroupPrompt('input satu per satu');
-    if (!promptResult) {
-      return;
-    }
-
-    setSubmitting(true);
-    setStatus({ type: 'info', message: 'Mengirim blast manual ke antrian...' });
-
-    const response = await fetch('/api/admin/blast', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source: 'manual',
-        message: manualMessage,
-        recipients,
-        saveToGroup: promptResult.saveToGroup,
-        groupName: promptResult.groupName,
-        sourceFile: 'manual-input',
-      }),
-    });
-
-    const result = (await response.json()) as {
-      error?: string;
-      acceptedCount?: number;
-      failedCount?: number;
-      alreadyAcceptedCount?: number;
-      groupName?: string | null;
-    };
-
-    if (!response.ok) {
-      setStatus({ type: 'error', message: result.error || 'Blast manual gagal dikirim.' });
-      setSubmitting(false);
-      return;
-    }
-
-    setStatus(buildBlastStatusMessage(result, {
-      label: 'Blast manual',
-      saveToGroup: promptResult.saveToGroup,
+  const groupsWithCounts = useMemo(() => {
+    return availableGroups.map((groupName) => ({
+      name: groupName,
+      count: contacts.filter((contact) => contact.group_names.includes(groupName)).length,
     }));
-    setSubmitting(false);
+  }, [availableGroups, contacts]);
+
+  const recipients = useMemo(() => {
+    if (selectedSource === 'group') {
+      return uniqueRecipients(
+        contacts
+          .filter((contact) => contact.group_names.some((groupName) => selectedGroups.includes(groupName)))
+          .map((contact) => ({
+            no_telp: contact.no_telp,
+            nama: contact.nama,
+          })),
+      );
+    }
+
+    if (selectedSource === 'csv') {
+      return uniqueRecipients(csvRecipients);
+    }
+
+    if (selectedSource === 'manual') {
+      return uniqueRecipients(manualRecipients);
+    }
+
+    return [];
+  }, [contacts, csvRecipients, manualRecipients, selectedGroups, selectedSource]);
+
+  const canContinueFromStepOne =
+    (selectedSource === 'group' && selectedGroups.length > 0 && recipients.length > 0) ||
+    (selectedSource === 'csv' && recipients.length > 0) ||
+    (selectedSource === 'manual' && recipients.length > 0);
+  const canContinueFromStepThree =
+    message.trim().length > 0 && message.trim().length <= MAX_MESSAGE_LENGTH;
+
+  const handleSourceChange = (source: RecipientSource) => {
+    setSelectedSource(source);
+    setStatus(null);
+    setCurrentStep(1);
   };
 
-  const handleCsvFile = async (file: File) => {
+  const toggleGroup = (groupName: string) => {
+    setSelectedGroups((previous) => {
+      if (previous.includes(groupName)) {
+        return previous.filter((item) => item !== groupName);
+      }
+
+      return [...previous, groupName];
+    });
+  };
+
+  const handleAddManualRecipient = () => {
+    const normalizedPhone = normalizePhoneNumber(manualPhone);
+
+    if (!normalizedPhone) {
+      setStatus({ type: 'error', message: 'Nomor belum valid. Gunakan 8 sampai 15 digit angka.' });
+      return;
+    }
+
+    setManualRecipients((previous) =>
+      uniqueRecipients([
+        ...previous,
+        {
+          no_telp: normalizedPhone,
+          nama: manualName.trim() || undefined,
+        },
+      ]),
+    );
+    setManualPhone('');
+    setManualName('');
+    setStatus({ type: 'success', message: 'Nomor berhasil ditambahkan ke daftar penerima.' });
+  };
+
+  const handleRemoveManualRecipient = (phoneNumber: string) => {
+    setManualRecipients((previous) => previous.filter((recipient) => recipient.no_telp !== phoneNumber));
+  };
+
+  const handleCsvFile = (file: File) => {
     setStatus({ type: 'info', message: 'Membaca file CSV...' });
     setCsvFileName(file.name);
 
@@ -200,59 +189,80 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
       skipEmptyLines: true,
       transformHeader: (header) => header.trim().toLowerCase(),
       complete: (results) => {
-        const recipients = results.data
-          .map((row) => ({
-            no_telp: getCsvPhone(row),
+        const parsedRecipients = uniqueRecipients(
+          results.data.map((row) => ({
+            no_telp: String(row.nomor || row.no_telp || row['no telp'] || row.phone || '').trim(),
             nama: String(row.nama || '').trim() || undefined,
-            jenis_kelamin: String(row['jenis kelamin'] || row.jenis_kelamin || '').trim() || undefined,
-            jabatan: String(row.jabatan || '').trim() || undefined,
-          }))
-          .filter((row) => row.no_telp.length > 0);
+          })),
+        );
 
-        setCsvRecipients(recipients);
+        setCsvRecipients(parsedRecipients);
 
-        if (recipients.length === 0) {
-          setStatus({ type: 'error', message: 'Tidak ada nomor valid pada CSV.' });
+        if (parsedRecipients.length === 0) {
+          setStatus({
+            type: 'error',
+            message: 'File CSV belum berisi nomor yang valid. Gunakan kolom: nomor, nama (opsional).',
+          });
           return;
         }
 
-        setStatus({ type: 'success', message: `CSV terbaca: ${recipients.length} penerima siap diblast.` });
+        setStatus({
+          type: 'success',
+          message: `${parsedRecipients.length} penerima ditemukan dari file CSV.`,
+        });
       },
       error: (error) => {
-        setStatus({ type: 'error', message: `Gagal membaca CSV: ${error.message}` });
+        setStatus({ type: 'error', message: `CSV gagal dibaca: ${error.message}` });
       },
     });
   };
 
-  const handleCsvSubmit = async () => {
-    if (!csvRecipients.length) {
-      setStatus({ type: 'error', message: 'Upload CSV dulu sebelum kirim blast.' });
+  const handleNextStep = () => {
+    if (currentStep === 1 && !canContinueFromStepOne) {
+      setStatus({
+        type: 'error',
+        message: 'Pilih penerima terlebih dahulu sampai jumlah penerima tampil.',
+      });
       return;
     }
 
-    if (!csvMessage.trim()) {
-      setStatus({ type: 'error', message: 'Pesan blast wajib diisi.' });
+    if (currentStep === 3 && !canContinueFromStepThree) {
+      setStatus({
+        type: 'error',
+        message: 'Tulis pesan terlebih dahulu sebelum lanjut.',
+      });
       return;
     }
 
-    const promptResult = askSaveGroupPrompt('CSV');
-    if (!promptResult) {
+    setStatus(null);
+    setCurrentStep((previous) => Math.min(previous + 1, 4));
+  };
+
+  const handlePreviousStep = () => {
+    setStatus(null);
+    setCurrentStep((previous) => Math.max(previous - 1, 1));
+  };
+
+  const handleSendBlast = async () => {
+    if (!selectedSource || recipients.length === 0 || !message.trim()) {
+      setConfirmOpen(false);
+      setStatus({ type: 'error', message: 'Data blast belum lengkap. Periksa lagi sebelum kirim.' });
       return;
     }
 
     setSubmitting(true);
-    setStatus({ type: 'info', message: 'Mengirim blast dari CSV ke antrian...' });
+    setConfirmOpen(false);
+    setStatus({ type: 'info', message: 'Mengirim pesan ke antrian...' });
 
     const response = await fetch('/api/admin/blast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        source: 'csv',
-        message: csvMessage,
-        recipients: csvRecipients,
-        saveToGroup: promptResult.saveToGroup,
-        groupName: promptResult.groupName,
-        sourceFile: csvFileName || 'csv-blast',
+        source: selectedSource,
+        message,
+        recipients: selectedSource === 'group' ? undefined : recipients,
+        groupNames: selectedSource === 'group' ? selectedGroups : undefined,
+        sourceFile: selectedSource === 'csv' ? csvFileName || 'blast-csv' : undefined,
       }),
     });
 
@@ -260,163 +270,745 @@ export default function BlastComposer({ availableGroups }: BlastComposerProps) {
       error?: string;
       acceptedCount?: number;
       failedCount?: number;
-      alreadyAcceptedCount?: number;
-      groupName?: string | null;
+      totalRecipients?: number;
     };
 
     if (!response.ok) {
-      setStatus({ type: 'error', message: result.error || 'Blast CSV gagal dikirim.' });
+      setStatus({ type: 'error', message: result.error || 'Pesan gagal dikirim.' });
       setSubmitting(false);
       return;
     }
 
-    setStatus(buildBlastStatusMessage(result, {
-      label: 'Blast CSV',
-      saveToGroup: promptResult.saveToGroup,
-    }));
+    if ((result.failedCount || 0) > 0) {
+      setStatus({
+        type: 'warning',
+        message: `Pesan masuk ke antrian untuk ${result.acceptedCount || 0} penerima. ${
+          result.failedCount || 0
+        } penerima gagal dan perlu diperiksa.`,
+      });
+    } else {
+      setStatus({
+        type: 'success',
+        message: `Pesan berhasil dikirim ke ${result.acceptedCount || recipients.length} penerima.`,
+      });
+    }
+
+    setCurrentStep(4);
     setSubmitting(false);
   };
 
-  return (
-    <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '1px solid rgba(78, 141, 156, 0.25)' }}>
-      <Typography variant="h6" sx={{ mb: 1, color: '#4e8d9c', fontWeight: 'bold' }}>
-        Blast Message (End-to-End)
-      </Typography>
-      <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-        Kirim blast dari tiga sumber: input satu per satu, CSV, atau segment group. Untuk input manual dan CSV,
-        sistem akan selalu meminta konfirmasi apakah penerima ingin disimpan sebagai group.
-      </Typography>
+  const handleReset = () => {
+    setCurrentStep(1);
+    setSelectedSource(null);
+    setSelectedGroups([]);
+    setManualPhone('');
+    setManualName('');
+    setManualRecipients([]);
+    setCsvRecipients([]);
+    setCsvFileName('');
+    setMessage('');
+    setSubmitting(false);
+    setStatus(null);
+    setConfirmOpen(false);
+  };
 
-      <Tabs value={activeTab} onChange={(_event, next) => setActiveTab(next)} sx={{ mb: 2 }}>
-        <Tab label="Input Satu per Satu" />
-        <Tab label="CSV" />
-        <Tab label="Segment Group" />
-      </Tabs>
+  return (
+    <Stack spacing={3}>
+      <Paper
+        elevation={0}
+        sx={{
+          p: { xs: 2.5, md: 3 },
+          borderRadius: 3,
+          border: '1px solid rgba(31, 111, 95, 0.14)',
+          backgroundColor: '#ffffff',
+        }}
+      >
+        <Stack spacing={2}>
+          <Typography sx={{ fontSize: '1.35rem', fontWeight: 800, color: '#163020' }}>
+            Langkah cepat kirim pesan
+          </Typography>
+          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+            Ikuti urutan ini: pilih penerima, cek daftar, tulis pesan, lalu kirim.
+          </Typography>
+
+          <Box
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', md: 'repeat(4, 1fr)' },
+              gap: 1.5,
+            }}
+          >
+            {STEP_TITLES.map((stepTitle, index) => {
+              const stepNumber = index + 1;
+              const active = currentStep === stepNumber;
+              const completed = currentStep > stepNumber;
+
+              return (
+                <Paper
+                  key={stepTitle}
+                  elevation={0}
+                  sx={{
+                    p: 2,
+                    borderRadius: 3,
+                    border: active
+                      ? '2px solid #1f6f5f'
+                      : '1px solid rgba(31, 111, 95, 0.14)',
+                    backgroundColor: completed ? '#eef8f3' : '#fafcfb',
+                  }}
+                >
+                  <Stack spacing={0.8}>
+                    <Typography sx={{ fontSize: '0.95rem', fontWeight: 800, color: '#1f6f5f' }}>
+                      Langkah {stepNumber}
+                    </Typography>
+                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#163020' }}>
+                      {stepTitle}
+                    </Typography>
+                  </Stack>
+                </Paper>
+              );
+            })}
+          </Box>
+        </Stack>
+      </Paper>
 
       {status ? (
-        <Alert severity={status.type} sx={{ mb: 2 }}>
+        <Alert severity={status.type} sx={{ borderRadius: 3, '& .MuiAlert-message': { fontSize: '1rem' } }}>
           {status.message}
         </Alert>
       ) : null}
 
-      {activeTab === 0 ? (
-        <Box sx={{ display: 'grid', gap: 2 }}>
-          <TextField
-            label="Daftar Penerima"
-            multiline
-            minRows={5}
-            value={manualRecipientsRaw}
-            onChange={(event) => setManualRecipientsRaw(event.target.value)}
-            placeholder={[
-              'Format per baris: nomor|nama|jenis_kelamin|jabatan',
-              'Contoh:',
-              '6281234567890|Budi|Laki-laki|Sales',
-              '6289876543210|Sari|Perempuan|Support',
-              '',
-              'Minimal nomor saja: 628111222333',
-            ].join('\n')}
-          />
-          <Typography variant="body2" color="textSecondary">
-            Total baris penerima terbaca: {manualCount}
-          </Typography>
-          <TextField
-            label="Pesan Blast"
-            multiline
-            minRows={4}
-            value={manualMessage}
-            onChange={(event) => setManualMessage(event.target.value)}
-          />
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button variant="contained" disabled={submitting} onClick={handleManualSubmit} sx={{ backgroundColor: '#4e8d9c' }}>
-              Kirim Blast Manual
-            </Button>
-          </Box>
-        </Box>
-      ) : null}
+      {currentStep === 1 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3.5 },
+            borderRadius: 3,
+            border: '1px solid rgba(31, 111, 95, 0.14)',
+            backgroundColor: '#ffffff',
+          }}
+        >
+          <Stack spacing={3}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+              1. Pilih penerima
+            </Typography>
 
-      {activeTab === 1 ? (
-        <Box sx={{ display: 'grid', gap: 2 }}>
-          <Button component="label" variant="outlined">
-            Upload CSV Penerima
-            <input
-              hidden
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  void handleCsvFile(file);
-                }
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' },
+                gap: 2,
               }}
-            />
-          </Button>
-          <Typography variant="body2" color="textSecondary">
-            {csvFileName
-              ? `File: ${csvFileName} | Penerima valid: ${csvRecipients.length}`
-              : 'Belum ada file dipilih.'}
-          </Typography>
-          <Typography variant="body2" color="textSecondary">
-            Kolom nomor yang didukung: no telp, no_telp, phone, nomor.
-          </Typography>
-          <TextField
-            label="Pesan Blast"
-            multiline
-            minRows={4}
-            value={csvMessage}
-            onChange={(event) => setCsvMessage(event.target.value)}
-          />
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <Button variant="contained" disabled={submitting} onClick={handleCsvSubmit} sx={{ backgroundColor: '#4e8d9c' }}>
-              Kirim Blast CSV
-            </Button>
-          </Box>
-        </Box>
-      ) : null}
+            >
+              {[
+                {
+                  value: 'group' as const,
+                  title: 'Pilih dari grup',
+                  helper: 'Pakai kontak yang sudah dikelompokkan sebelumnya.',
+                  icon: <GroupRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
+                },
+                {
+                  value: 'csv' as const,
+                  title: 'Upload CSV',
+                  helper: 'Upload daftar nomor dari file CSV sederhana.',
+                  icon: <UploadFileRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
+                },
+                {
+                  value: 'manual' as const,
+                  title: 'Input manual',
+                  helper: 'Masukkan nomor satu per satu dengan tombol tambah.',
+                  icon: <PersonAddAltRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
+                },
+              ].map((option) => {
+                const active = selectedSource === option.value;
 
-      {activeTab === 2 ? (
-        availableGroups.length === 0 ? (
-          <Alert severity="info">Belum ada segment. Tambahkan group pada kontak terlebih dahulu.</Alert>
-        ) : (
-          <Box component="form" action={sendGroupBlastAction} sx={{ display: 'grid', gap: 2 }}>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
-              {availableGroups.map((groupName) => (
-                <Box
-                  key={groupName}
+                return (
+                  <Paper
+                    key={option.value}
+                    elevation={0}
+                    sx={{
+                      p: 2.5,
+                      borderRadius: 3,
+                      border: active ? '2px solid #1f6f5f' : '1px solid rgba(31, 111, 95, 0.14)',
+                      backgroundColor: active ? '#f2fbf8' : '#fffdf8',
+                    }}
+                  >
+                    <Stack spacing={1.5}>
+                      {option.icon}
+                      <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                        {option.title}
+                      </Typography>
+                      <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+                        {option.helper}
+                      </Typography>
+                      <Button
+                        variant={active ? 'contained' : 'outlined'}
+                        onClick={() => handleSourceChange(option.value)}
+                        sx={{
+                          alignSelf: 'flex-start',
+                          minHeight: 50,
+                          borderRadius: 999,
+                          px: 3,
+                          backgroundColor: active ? '#1f6f5f' : undefined,
+                          borderColor: '#1f6f5f',
+                          color: active ? '#ffffff' : '#1f6f5f',
+                          textTransform: 'none',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {active ? 'Sedang dipilih' : 'Pilih cara ini'}
+                      </Button>
+                    </Stack>
+                  </Paper>
+                );
+              })}
+            </Box>
+
+            {selectedSource === 'group' ? (
+              <Stack spacing={2}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                  Pilih grup penerima
+                </Typography>
+                {groupsWithCounts.length === 0 ? (
+                  <Alert severity="info" sx={{ borderRadius: 3 }}>
+                    Belum ada grup kontak. Tambahkan grup dulu di halaman Kontak & Grup.
+                  </Alert>
+                ) : (
+                  <Box
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' },
+                      gap: 1.5,
+                    }}
+                  >
+                    {groupsWithCounts.map((group) => {
+                      const active = selectedGroups.includes(group.name);
+
+                      return (
+                        <Paper
+                          key={group.name}
+                          elevation={0}
+                          sx={{
+                            p: 2,
+                            borderRadius: 3,
+                            border: active
+                              ? '2px solid #1f6f5f'
+                              : '1px solid rgba(31, 111, 95, 0.14)',
+                            backgroundColor: active ? '#f2fbf8' : '#fafcfb',
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => toggleGroup(group.name)}
+                        >
+                          <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between">
+                            <Stack spacing={0.4}>
+                              <Typography sx={{ fontSize: '1.05rem', fontWeight: 800, color: '#163020' }}>
+                                {group.name}
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.98rem', color: '#50665d' }}>
+                                {group.count} kontak
+                              </Typography>
+                            </Stack>
+                            <Checkbox checked={active} />
+                          </Stack>
+                        </Paper>
+                      );
+                    })}
+                  </Box>
+                )}
+              </Stack>
+            ) : null}
+
+            {selectedSource === 'csv' ? (
+              <Stack spacing={2}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                  Upload file CSV penerima
+                </Typography>
+                <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                  Gunakan kolom: nomor, nama (opsional).
+                </Typography>
+                <Button
                   component="label"
+                  variant="outlined"
                   sx={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    px: 1.5,
-                    py: 0.75,
-                    borderRadius: 999,
-                    border: '1px solid rgba(78, 141, 156, 0.35)',
-                    backgroundColor: '#fff',
+                    alignSelf: 'flex-start',
+                    minHeight: 56,
+                    borderRadius: 3,
+                    px: 3,
+                    borderColor: '#1f6f5f',
+                    color: '#1f6f5f',
+                    textTransform: 'none',
+                    fontWeight: 700,
                   }}
                 >
-                  <input type="checkbox" name="group_names" value={groupName} />
-                  <Typography variant="body2">{groupName}</Typography>
+                  Pilih file CSV
+                  <input
+                    hidden
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        handleCsvFile(file);
+                      }
+                    }}
+                  />
+                </Button>
+
+                {csvRecipients.length > 0 ? (
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      p: 2,
+                      borderRadius: 3,
+                      backgroundColor: '#f7faf8',
+                      border: '1px solid rgba(31, 111, 95, 0.12)',
+                    }}
+                  >
+                    <Stack spacing={1}>
+                      <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                        File siap dipakai: {csvFileName}
+                      </Typography>
+                      <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                        {csvRecipients.length} nomor berhasil dibaca.
+                      </Typography>
+                    </Stack>
+                  </Paper>
+                ) : null}
+              </Stack>
+            ) : null}
+
+            {selectedSource === 'manual' ? (
+              <Stack spacing={2}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                  Tambah nomor satu per satu
+                </Typography>
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr auto' },
+                    gap: 1.5,
+                    alignItems: 'center',
+                  }}
+                >
+                  <TextField
+                    label="Nomor WhatsApp"
+                    value={manualPhone}
+                    onChange={(event) => setManualPhone(event.target.value)}
+                    placeholder="Contoh: 6281234567890"
+                    fullWidth
+                  />
+                  <TextField
+                    label="Nama penerima (opsional)"
+                    value={manualName}
+                    onChange={(event) => setManualName(event.target.value)}
+                    placeholder="Contoh: Ibu Rina"
+                    fullWidth
+                  />
+                  <Button
+                    variant="contained"
+                    onClick={handleAddManualRecipient}
+                    sx={{
+                      minHeight: 56,
+                      borderRadius: 3,
+                      backgroundColor: '#1f6f5f',
+                      px: 3,
+                      textTransform: 'none',
+                      fontWeight: 700,
+                    }}
+                  >
+                    Tambah
+                  </Button>
+                </Box>
+
+                {manualRecipients.length > 0 ? (
+                  <Stack spacing={1}>
+                    {manualRecipients.map((recipient) => (
+                      <Paper
+                        key={recipient.no_telp}
+                        elevation={0}
+                        sx={{
+                          p: 2,
+                          borderRadius: 3,
+                          border: '1px solid rgba(31, 111, 95, 0.12)',
+                          backgroundColor: '#f7faf8',
+                        }}
+                      >
+                        <Stack
+                          direction={{ xs: 'column', md: 'row' }}
+                          spacing={1.5}
+                          alignItems={{ xs: 'flex-start', md: 'center' }}
+                          justifyContent="space-between"
+                        >
+                          <Stack spacing={0.4}>
+                            <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                              {recipient.no_telp}
+                            </Typography>
+                            <Typography sx={{ fontSize: '0.98rem', color: '#50665d' }}>
+                              {recipient.nama || 'Tanpa nama'}
+                            </Typography>
+                          </Stack>
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            onClick={() => handleRemoveManualRecipient(recipient.no_telp)}
+                            sx={{ borderRadius: 999, textTransform: 'none', fontWeight: 700 }}
+                          >
+                            Hapus
+                          </Button>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                ) : null}
+              </Stack>
+            ) : null}
+
+            <Divider />
+
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={1.5}
+              justifyContent="space-between"
+              alignItems={{ xs: 'flex-start', md: 'center' }}
+            >
+              <Chip
+                label={`${recipients.length} penerima siap`}
+                sx={{
+                  backgroundColor: recipients.length > 0 ? '#e6f4ef' : '#f3f1e8',
+                  color: recipients.length > 0 ? '#1f4d3a' : '#665d4d',
+                  fontSize: '1rem',
+                  fontWeight: 700,
+                  px: 1,
+                  py: 2.5,
+                }}
+              />
+              <Button
+                variant="contained"
+                onClick={handleNextStep}
+                disabled={!canContinueFromStepOne}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  backgroundColor: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Lanjut review penerima
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {currentStep === 2 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3.5 },
+            borderRadius: 3,
+            border: '1px solid rgba(31, 111, 95, 0.14)',
+            backgroundColor: '#ffffff',
+          }}
+        >
+          <Stack spacing={2.5}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+              2. Review penerima
+            </Typography>
+            <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+              Sumber penerima: <strong>{sourceLabel(selectedSource)}</strong>
+            </Typography>
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                borderRadius: 3,
+                backgroundColor: '#f7faf8',
+                border: '1px solid rgba(31, 111, 95, 0.12)',
+              }}
+            >
+              <Stack spacing={1}>
+                <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                  Total penerima
+                </Typography>
+                <Typography sx={{ fontSize: '2rem', fontWeight: 800, color: '#1f6f5f' }}>
+                  {recipients.length}
+                </Typography>
+              </Stack>
+            </Paper>
+
+            <Stack spacing={1}>
+              {recipients.slice(0, 8).map((recipient, index) => (
+                <Box
+                  key={`${recipient.no_telp}-${index}`}
+                  sx={{
+                    p: 2,
+                    borderRadius: 3,
+                    backgroundColor: '#fcfdfb',
+                    border: '1px solid rgba(31, 111, 95, 0.12)',
+                    display: 'grid',
+                    gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr' },
+                    gap: 1,
+                  }}
+                >
+                  <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                    {recipient.no_telp}
+                  </Typography>
+                  <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                    {recipient.nama || 'Tanpa nama'}
+                  </Typography>
                 </Box>
               ))}
-            </Box>
+              {recipients.length > 8 ? (
+                <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                  Masih ada {recipients.length - 8} penerima lain.
+                </Typography>
+              ) : null}
+            </Stack>
 
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+              <Button
+                variant="outlined"
+                onClick={handlePreviousStep}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  borderColor: '#1f6f5f',
+                  color: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Kembali
+              </Button>
+              <Button
+                variant="contained"
+                onClick={handleNextStep}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  backgroundColor: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Lanjut tulis pesan
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {currentStep === 3 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3.5 },
+            borderRadius: 3,
+            border: '1px solid rgba(31, 111, 95, 0.14)',
+            backgroundColor: '#ffffff',
+          }}
+        >
+          <Stack spacing={2.5}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+              3. Tulis pesan
+            </Typography>
             <TextField
-              name="message"
-              label="Pesan blast"
+              label="Isi pesan"
               multiline
-              minRows={4}
-              required
-              placeholder="Tulis pesan yang akan dikirim ke semua kontak dalam segment terpilih"
+              minRows={7}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder={[
+                'Contoh pesan:',
+                'Halo Bapak/Ibu,',
+                'Besok ada pertemuan orang tua pukul 08.00 di aula sekolah.',
+                'Mohon hadir 10 menit lebih awal.',
+                'Terima kasih.',
+              ].join('\n')}
+              helperText={`${message.trim().length}/${MAX_MESSAGE_LENGTH} karakter`}
+              fullWidth
             />
 
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <Button type="submit" variant="contained" sx={{ backgroundColor: '#4e8d9c' }}>
-                Kirim Blast Segment
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+              <Button
+                variant="outlined"
+                onClick={handlePreviousStep}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  borderColor: '#1f6f5f',
+                  color: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Kembali
               </Button>
-            </Box>
-          </Box>
-        )
+              <Button
+                variant="contained"
+                onClick={handleNextStep}
+                disabled={!canContinueFromStepThree}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  backgroundColor: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Lanjut preview pesan
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
       ) : null}
-    </Paper>
+
+      {currentStep === 4 ? (
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3.5 },
+            borderRadius: 3,
+            border: '1px solid rgba(31, 111, 95, 0.14)',
+            backgroundColor: '#ffffff',
+          }}
+        >
+          <Stack spacing={2.5}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+              4. Preview & konfirmasi
+            </Typography>
+
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                borderRadius: 3,
+                backgroundColor: '#f7faf8',
+                border: '1px solid rgba(31, 111, 95, 0.12)',
+              }}
+            >
+              <Stack spacing={1.5}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <CampaignRoundedIcon sx={{ color: '#1f6f5f' }} />
+                  <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                    Siap dikirim ke {recipients.length} penerima
+                  </Typography>
+                </Stack>
+                <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                  Sumber penerima: {sourceLabel(selectedSource)}
+                </Typography>
+                <Divider />
+                <Typography sx={{ fontSize: '1rem', lineHeight: 1.8, whiteSpace: 'pre-wrap', color: '#163020' }}>
+                  {message.trim()}
+                </Typography>
+              </Stack>
+            </Paper>
+
+            {status?.type === 'success' ? (
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2.5,
+                  borderRadius: 3,
+                  backgroundColor: '#eef8f3',
+                  border: '1px solid rgba(31, 111, 95, 0.14)',
+                }}
+              >
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <CheckCircleRoundedIcon sx={{ color: '#1f6f5f', fontSize: 32 }} />
+                  <Stack spacing={0.4}>
+                    <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                      Pesan sudah masuk ke antrian
+                    </Typography>
+                    <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>{status.message}</Typography>
+                  </Stack>
+                </Stack>
+              </Paper>
+            ) : null}
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+              <Button
+                variant="outlined"
+                onClick={handlePreviousStep}
+                disabled={submitting}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  borderColor: '#1f6f5f',
+                  color: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Kembali
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => setConfirmOpen(true)}
+                disabled={submitting || recipients.length === 0 || !message.trim()}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 4,
+                  backgroundColor: '#1f6f5f',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                {submitting ? 'Mengirim pesan...' : 'Kirim pesan sekarang'}
+              </Button>
+              <Button
+                variant="text"
+                onClick={handleReset}
+                disabled={submitting}
+                sx={{
+                  minHeight: 56,
+                  borderRadius: 999,
+                  px: 2,
+                  color: '#5b6b65',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                }}
+              >
+                Mulai lagi
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      ) : null}
+
+      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: '#163020' }}>Konfirmasi pengiriman</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+            Pesan akan dikirim ke {recipients.length} penerima. Pastikan isi pesan dan daftar penerima sudah benar.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setConfirmOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Cek lagi
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSendBlast}
+            sx={{
+              borderRadius: 999,
+              backgroundColor: '#1f6f5f',
+              px: 3,
+              textTransform: 'none',
+              fontWeight: 700,
+            }}
+          >
+            Ya, kirim sekarang
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Stack>
   );
 }

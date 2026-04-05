@@ -1,82 +1,72 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useCallback, useState } from 'react';
 import Papa from 'papaparse';
-import { 
-  Box, 
-  Typography, 
-  Paper, 
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
+import { useDropzone } from 'react-dropzone';
+import {
   Alert,
+  Box,
   Button,
   LinearProgress,
-  TextField,
+  Paper,
+  Stack,
+  Typography,
 } from '@mui/material';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
+import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
+import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
+
 import { importCsvContactsAction } from '../csv/actions';
 
 interface CSVRow {
   no_telp: string;
   nama: string;
   jenis_kelamin: string;
-  jabatan?: string;
-  group_names?: string[];
 }
 
 interface RawCSVRow {
+  nomor?: string;
+  no_telp?: string;
   'no telp'?: string;
+  phone?: string;
   nama?: string;
-  'jenis kelamin'?: string;
-  jabatan?: string;
-  'group name'?: string;
-  group_name?: string;
 }
 
-function parseGroupNames(rawValue?: string): string[] {
-  return (rawValue || '')
-    .split(/[;,\n]/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
 interface ParsedData {
   data: CSVRow[];
   errors: string[];
   fileName: string;
-  fileSize: number;
+}
+
+function normalizePhoneNumber(rawValue: string): string | null {
+  const digitsOnly = String(rawValue || '').replace(/\D/g, '');
+  return digitsOnly.length >= 8 && digitsOnly.length <= 15 ? digitsOnly : null;
+}
+
+function readPhoneNumber(row: RawCSVRow): string {
+  return String(row.nomor || row.no_telp || row['no telp'] || row.phone || '').trim();
 }
 
 export default function CSVDropZone() {
   const [parsedData, setParsedData] = useState<ParsedData | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [defaultGroupName, setDefaultGroupName] = useState('');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [inputKey, setInputKey] = useState(0);
-  
-  // Handle file selection
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
-    
+
     if (!file) {
-      setStatus({ type: 'error', message: 'No file selected' });
+      setStatus({ type: 'error', message: 'Silakan pilih file CSV terlebih dahulu.' });
       return;
     }
 
-    // Validate by file extension
-    const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.csv')) {
-      setStatus({ type: 'error', message: 'File must have .csv extension' });
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setStatus({ type: 'error', message: 'File harus berformat .csv.' });
       return;
     }
 
     setIsProcessing(true);
-    setStatus({ type: 'info', message: 'Processing file...' });
+    setStatus({ type: 'info', message: 'Membaca file CSV...' });
     setParsedData(null);
 
     Papa.parse<RawCSVRow>(file, {
@@ -84,83 +74,59 @@ export default function CSVDropZone() {
       skipEmptyLines: true,
       transformHeader: (header) => header.trim().toLowerCase(),
       complete: (results) => {
-        const validData: CSVRow[] = [];
         const errors: string[] = [];
+        const rows: CSVRow[] = [];
 
-        if (results.errors.length > 0) {
-          results.errors.forEach((err) => {
-            const rowNum = err.row !== undefined ? err.row + 1 : '?';
-            errors.push(`Row ${rowNum}: ${err.message}`);
-          });
-        }
-
-        const headers = (results.meta.fields || []).map((field) => field.trim().toLowerCase());
-        const requiredHeaders = ['no telp', 'nama', 'jenis kelamin'];
-
-        requiredHeaders.forEach((requiredHeader) => {
-          if (!headers.includes(requiredHeader)) {
-            errors.push(`Missing required column: ${requiredHeader}`);
-          }
-        });
-        
         results.data.forEach((row, index) => {
-          const rowNum = index + 2;
-          const noTelp = row['no telp']?.trim();
-          const nama = row.nama?.trim();
-          const jenisKelamin = row['jenis kelamin']?.trim();
-          const jabatan = row.jabatan?.trim();
-          const groupNames = parseGroupNames(row['group name'] || row.group_name);
-          
-          if (!noTelp) {
-            errors.push(`Row ${rowNum}: No Telp is required`);
+          const lineNumber = index + 2;
+          const phoneNumber = normalizePhoneNumber(readPhoneNumber(row));
+
+          if (!phoneNumber) {
+            errors.push(`Baris ${lineNumber}: nomor belum valid.`);
             return;
           }
-          if (!nama) {
-            errors.push(`Row ${rowNum}: Nama is required`);
-            return;
-          }
-          if (!jenisKelamin) {
-            errors.push(`Row ${rowNum}: Jenis kelamin is required`);
-            return;
-          }
-          
-          validData.push({
-            no_telp: noTelp,
-            nama,
-            jenis_kelamin: jenisKelamin,
-            jabatan,
-            group_names: groupNames,
+
+          const name = String(row.nama || '').trim() || `Kontak ${phoneNumber}`;
+
+          rows.push({
+            no_telp: phoneNumber,
+            nama: name,
+            jenis_kelamin: 'Tidak diketahui',
           });
         });
 
         setParsedData({
-          data: validData,
+          data: rows,
           errors,
           fileName: file.name,
-          fileSize: file.size
         });
 
-        if (validData.length > 0) {
-          setStatus({ type: 'success', message: `Found ${validData.length} valid records` });
+        if (rows.length > 0) {
+          setStatus({
+            type: 'success',
+            message: `${rows.length} kontak siap disimpan. Cek ringkasan di bawah sebelum lanjut.`,
+          });
         } else {
-          setStatus({ type: 'error', message: 'No valid records found' });
+          setStatus({
+            type: 'error',
+            message: 'Belum ada kontak yang bisa diproses. Periksa isi file CSV Anda.',
+          });
         }
-        
+
         setIsProcessing(false);
       },
       error: (error) => {
-        setStatus({ type: 'error', message: `Parse error: ${error.message}` });
+        setStatus({ type: 'error', message: `File tidak bisa dibaca: ${error.message}` });
         setIsProcessing(false);
-      }
+      },
     });
   }, []);
 
   const onDropRejected = useCallback(() => {
-    setStatus({ type: 'error', message: 'Only .csv files are allowed' });
+    setStatus({ type: 'error', message: 'Hanya file .csv yang bisa digunakan.' });
   }, []);
 
-  // Only accept CSV files
-  const { getRootProps, getInputProps, isDragActive, isDragReject, open } = useDropzone({
+  const { getInputProps, getRootProps, isDragActive, open } = useDropzone({
     onDrop,
     onDropRejected,
     accept: {
@@ -174,208 +140,175 @@ export default function CSVDropZone() {
     noKeyboard: true,
   });
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
   const handleReset = () => {
     setParsedData(null);
     setStatus(null);
-    setDefaultGroupName('');
-    setInputKey((prev) => prev + 1);
+    setInputKey((previous) => previous + 1);
+  };
+
+  const handleImport = async () => {
+    if (!parsedData?.data.length) {
+      setStatus({ type: 'error', message: 'Belum ada kontak yang siap disimpan.' });
+      return;
+    }
+
+    setIsProcessing(true);
+    setStatus({ type: 'info', message: 'Menyimpan kontak ke sistem...' });
+
+    const result = await importCsvContactsAction(parsedData.data, parsedData.fileName);
+
+    if (!result.success) {
+      setStatus({ type: 'error', message: result.error || 'Import kontak gagal.' });
+      setIsProcessing(false);
+      return;
+    }
+
+    setStatus({
+      type: 'success',
+      message: `${result.inserted} kontak berhasil disimpan dan siap dipakai untuk blast message.`,
+    });
+    setIsProcessing(false);
   };
 
   return (
-    <Paper sx={{ p: 4, maxWidth: 900, mx: 'auto', mt: 4, backgroundColor: '#EDF7BD', borderRadius: 2 }}>
-      <Typography variant="h5" gutterBottom sx={{ color: '#4e8d9c', fontWeight: 'bold' }}>
-        Import Tickets from CSV
-      </Typography>
-      
-      <Typography variant="body2" color="textSecondary" sx={{ mb: 3 }}>
-        Drag and drop a CSV file or click to select. Required columns: No Telp, Nama, Jenis kelamin. Optional: Jabatan, Group Name
-      </Typography>
-
-      <TextField
-        label="Default Group untuk Semua Baris (opsional)"
-        size="small"
-        fullWidth
-        value={defaultGroupName}
-        onChange={(event) => setDefaultGroupName(event.target.value)}
-        sx={{ mb: 2 }}
-        placeholder="Contoh: Campaign April"
-      />
-
-      {/* Drop Zone */}
-      <div
-        {...getRootProps()}
-        onClick={open}
-        style={{
-          border: '2px dashed',
-          borderColor: isDragReject ? '#f44336' : isDragActive ? '#4e8d9c' : '#ccc',
-          borderRadius: '8px',
-          padding: '32px',
-          textAlign: 'center',
-          cursor: 'pointer',
-          backgroundColor: isDragActive ? 'rgba(78, 141, 156, 0.1)' : 'transparent',
-          transition: 'all 0.3s ease',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = '#4e8d9c';
-          e.currentTarget.style.backgroundColor = 'rgba(78, 141, 156, 0.05)';
-        }}
-        onMouseLeave={(e) => {
-          if (!isDragActive) {
-            e.currentTarget.style.borderColor = '#ccc';
-            e.currentTarget.style.backgroundColor = 'transparent';
-          }
-        }}
-      >
-        {/* Accept only CSV */}
-        <input
-          key={inputKey}
-          {...getInputProps({ accept: '.csv,text/csv' })}
-          style={{ display: 'none' }}
-        />
-        
-        {isDragActive ? (
-          <CloudUploadIcon sx={{ fontSize: 60, color: '#4e8d9c' }} />
-        ) : (
-          <InsertDriveFileIcon sx={{ fontSize: 60, color: '#4e8d9c' }} />
-        )}
-        
-        <Typography variant="h6" sx={{ mt: 2, color: '#4e8d9c' }}>
-          {isDragActive ? 'Drop the file here' : 'Drag & drop CSV file here'}
-        </Typography>
-        
-        <Typography variant="body2" color="textSecondary">
-          or click to select file
-        </Typography>
-      </div>
-
-      {/* Processing Indicator */}
-      {isProcessing && (
-        <Box sx={{ mt: 3 }}>
-          <LinearProgress />
-          <Typography variant="body2" sx={{ mt: 1, textAlign: 'center' }}>
-            Processing file...
+    <Paper
+      elevation={0}
+      sx={{
+        p: { xs: 2.5, md: 3.5 },
+        borderRadius: 3,
+        border: '1px solid rgba(31, 111, 95, 0.14)',
+        backgroundColor: '#ffffff',
+      }}
+    >
+      <Stack spacing={2.5}>
+        <Stack spacing={1}>
+          <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+            Tambah kontak dari file CSV
           </Typography>
-        </Box>
-      )}
+          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+            Upload file CSV dengan kolom: <strong>nomor</strong>, <strong>nama</strong> (opsional).
+            Jika nama kosong, sistem akan tetap menyimpan nomor teleponnya.
+          </Typography>
+        </Stack>
 
-      {/* Status Alert */}
-      {status && (
-        <Alert severity={status.type} sx={{ mt: 3 }}>
-          {status.message}
-        </Alert>
-      )}
-
-      {/* Parsed Data Preview */}
-      {parsedData && (
-        <Box sx={{ mt: 3 }}>
-          {/* File Info */}
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-              File: {parsedData.fileName} ({formatFileSize(parsedData.fileSize)})
-            </Typography>
-            <Button variant="outlined" color="secondary" onClick={handleReset}>
-              Reset
-            </Button>
-          </Box>
-
-          {/* Errors */}
-          {parsedData.errors.length > 0 && (
-            <Alert severity="warning" sx={{ mb: 2 }}>
-              <Typography variant="subtitle2">{parsedData.errors.length} validation errors</Typography>
-              <Box component="ul" sx={{ m: 1, pl: 2 }}>
-                {parsedData.errors.slice(0, 5).map((err, idx) => (
-                  <li key={idx}>{err}</li>
-                ))}
-                {parsedData.errors.length > 5 && (
-                  <li>...and {parsedData.errors.length - 5} more</li>
-                )}
-              </Box>
-            </Alert>
+        <Paper
+          {...getRootProps()}
+          elevation={0}
+          onClick={open}
+          sx={{
+            borderRadius: 3,
+            border: isDragActive ? '2px solid #1f6f5f' : '2px dashed rgba(31, 111, 95, 0.3)',
+            backgroundColor: isDragActive ? '#f2fbf8' : '#f9fcfb',
+            p: { xs: 3, md: 4 },
+            textAlign: 'center',
+            cursor: 'pointer',
+          }}
+        >
+          <input key={inputKey} {...getInputProps({ accept: '.csv,text/csv' })} />
+          {isDragActive ? (
+            <CloudUploadRoundedIcon sx={{ fontSize: 58, color: '#1f6f5f' }} />
+          ) : (
+            <DescriptionRoundedIcon sx={{ fontSize: 58, color: '#1f6f5f' }} />
           )}
+          <Typography sx={{ mt: 1.5, fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
+            {isDragActive ? 'Lepaskan file di sini' : 'Klik atau tarik file CSV ke area ini'}
+          </Typography>
+          <Typography sx={{ mt: 1, fontSize: '1rem', color: '#567066' }}>
+            Contoh isi file: `nomor,nama`
+          </Typography>
+        </Paper>
 
-          {/* Preview Table */}
-          {parsedData.data.length > 0 && (
-            <>
-              <Typography variant="h6" sx={{ mb: 1, color: '#4e8d9c' }}>
-                Preview (showing {Math.min(parsedData.data.length, 5)} of {parsedData.data.length} rows)
+        {isProcessing ? <LinearProgress sx={{ borderRadius: 999 }} /> : null}
+
+        {status ? (
+          <Alert severity={status.type} sx={{ borderRadius: 3, '& .MuiAlert-message': { fontSize: '1rem' } }}>
+            {status.message}
+          </Alert>
+        ) : null}
+
+        {parsedData ? (
+          <Paper
+            elevation={0}
+            sx={{
+              p: 2.5,
+              borderRadius: 3,
+              border: '1px solid rgba(31, 111, 95, 0.12)',
+              backgroundColor: '#fcfdfb',
+            }}
+          >
+            <Stack spacing={2}>
+              <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                Ringkasan file: {parsedData.fileName}
               </Typography>
-              
-              <TableContainer sx={{ maxHeight: 400, border: '1px solid #ccc', borderRadius: 1 }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
-                      <TableCell sx={{ fontWeight: 'bold' }}>#</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>No Telp</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Nama</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Jenis kelamin</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Jabatan</TableCell>
-                      <TableCell sx={{ fontWeight: 'bold' }}>Group</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {parsedData.data.slice(0, 5).map((row, idx) => (
-                      <TableRow key={idx} hover>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell>{row.no_telp}</TableCell>
-                        <TableCell>{row.nama}</TableCell>
-                        <TableCell>{row.jenis_kelamin}</TableCell>
-                        <TableCell>{row.jabatan || '-'}</TableCell>
-                        <TableCell>{row.group_names?.join(', ') || '-'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+              <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                {parsedData.data.length} kontak siap dipakai.
+              </Typography>
 
-              {/* Import Button */}
-              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
-                <Button 
-                  variant="contained" 
-                  sx={{ backgroundColor: '#4e8d9c' }}
+              {parsedData.errors.length > 0 ? (
+                <Alert severity="warning" sx={{ borderRadius: 3 }}>
+                  {parsedData.errors.slice(0, 4).join(' ')}
+                  {parsedData.errors.length > 4 ? ' Masih ada baris lain yang perlu diperiksa.' : ''}
+                </Alert>
+              ) : null}
+
+              <Stack spacing={1}>
+                {parsedData.data.slice(0, 5).map((row, index) => (
+                  <Box
+                    key={`${row.no_telp}-${index}`}
+                    sx={{
+                      px: 2,
+                      py: 1.5,
+                      borderRadius: 2,
+                      backgroundColor: '#f4f8f6',
+                      display: 'grid',
+                      gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr' },
+                      gap: 1,
+                    }}
+                  >
+                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#163020' }}>
+                      {row.no_telp}
+                    </Typography>
+                    <Typography sx={{ fontSize: '1rem', color: '#4d635b' }}>{row.nama}</Typography>
+                  </Box>
+                ))}
+              </Stack>
+
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                <Button
+                  variant="contained"
+                  onClick={handleImport}
                   disabled={isProcessing || parsedData.data.length === 0}
-                  onClick={async () => {
-                    if (!parsedData?.data?.length) {
-                      return;
-                    }
-
-                    setIsProcessing(true);
-                    setStatus({ type: 'info', message: 'Menyimpan data ke database...' });
-
-                    const defaultGroup = defaultGroupName.trim();
-                    const rowsToImport = defaultGroup
-                      ? parsedData.data.map((row) => ({
-                          ...row,
-                          group_names: parseGroupNames(`${(row.group_names || []).join(',')},${defaultGroup}`),
-                        }))
-                      : parsedData.data;
-
-                    const result = await importCsvContactsAction(rowsToImport, parsedData.fileName);
-
-                    if (!result.success) {
-                      setStatus({ type: 'error', message: result.error || 'Import gagal' });
-                      setIsProcessing(false);
-                      return;
-                    }
-
-                    setStatus({ type: 'success', message: `Berhasil menyimpan ${result.inserted} data ke database` });
-                    setIsProcessing(false);
+                  sx={{
+                    minHeight: 56,
+                    borderRadius: 3,
+                    backgroundColor: '#1f6f5f',
+                    px: 3,
+                    textTransform: 'none',
+                    fontWeight: 700,
                   }}
                 >
-                  Import {parsedData.data.length} Tickets
+                  Simpan kontak dari CSV
                 </Button>
-              </Box>
-            </>
-          )}
-        </Box>
-      )}
+                <Button
+                  variant="outlined"
+                  onClick={handleReset}
+                  sx={{
+                    minHeight: 56,
+                    borderRadius: 3,
+                    px: 3,
+                    borderColor: '#1f6f5f',
+                    color: '#1f6f5f',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                  }}
+                >
+                  Pilih file lain
+                </Button>
+              </Stack>
+            </Stack>
+          </Paper>
+        ) : null}
+      </Stack>
     </Paper>
   );
 }

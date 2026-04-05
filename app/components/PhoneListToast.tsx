@@ -5,13 +5,14 @@ import { Alert, Snackbar } from '@mui/material';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 const TOAST_CONFIG: Record<string, { severity: 'success' | 'error'; message: string }> = {
-  updated: { severity: 'success', message: 'Data phone list berhasil diupdate.' },
+  created: { severity: 'success', message: 'Kontak baru berhasil disimpan.' },
+  updated: { severity: 'success', message: 'Data kontak berhasil diperbarui.' },
   grouped: { severity: 'success', message: 'Group berhasil diterapkan ke kontak terpilih.' },
-  blast_sent: { severity: 'success', message: 'Blast segment berhasil dikirim ke antrian.' },
+  blast_sent: { severity: 'success', message: 'Blast message berhasil masuk ke antrian.' },
   blast_partial: { severity: 'error', message: 'Sebagian blast gagal masuk ke antrian. Periksa hasil terbaru sebelum retry.' },
   blast_empty: { severity: 'error', message: 'Tidak ada kontak yang cocok dengan segment terpilih.' },
-  deleted: { severity: 'success', message: 'Data phone list berhasil dihapus.' },
-  deleted_bulk: { severity: 'success', message: 'Data phone list terpilih berhasil dihapus.' },
+  deleted: { severity: 'success', message: 'Kontak berhasil dihapus.' },
+  deleted_bulk: { severity: 'success', message: 'Kontak terpilih berhasil dihapus.' },
   error: { severity: 'error', message: 'Aksi gagal diproses. Silakan coba lagi.' },
 };
 
@@ -51,7 +52,7 @@ export default function PhoneListToast() {
   return (
     <Snackbar
       open={open}
-      autoHideDuration={1000}
+      autoHideDuration={4000}
       onClose={handleClose}
       anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
     >
