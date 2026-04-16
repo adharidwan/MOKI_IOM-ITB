@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import QRCode from 'qrcode';
 import {
   Alert,
   Box,
@@ -379,6 +380,7 @@ export default function WhatsappDashboard({
   const [events, setEvents] = useState(initialEvents);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showQr, setShowQr] = useState(false);
+  const [qrImage, setQrImage] = useState<{ code: string; src: string } | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [outboundFilter, setOutboundFilter] = useState<OutboundFilter>('all');
   const [detailTab, setDetailTab] = useState<DetailTab>('ringkasan');
@@ -473,6 +475,41 @@ export default function WhatsappDashboard({
       eventSource.close();
     };
   }, [detailTab, selectedDerivedStatus, selectedInstanceId]);
+
+  useEffect(() => {
+    const qrCode = selectedDetail?.runtime?.qr_code;
+
+    if (!qrCode) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const renderQrImage = async () => {
+      try {
+        const nextImageSrc = await QRCode.toDataURL(qrCode, {
+          errorCorrectionLevel: 'M',
+          margin: 2,
+          width: 320,
+        });
+
+        if (!cancelled) {
+          setQrImage({ code: qrCode, src: nextImageSrc });
+        }
+      } catch {
+        // Keep terminal output as the fallback if image generation fails.
+      }
+    };
+
+    void renderQrImage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDetail?.runtime?.qr_code]);
+
+  const qrImageSrc =
+    qrImage && qrImage.code === selectedDetail?.runtime?.qr_code ? qrImage.src : null;
 
   const sortedInstances = useMemo(
     () =>
@@ -1047,7 +1084,25 @@ export default function WhatsappDashboard({
 
                                   <Collapse in={showQr}>
                                     <Stack spacing={1.5} sx={{ pt: 1 }}>
-                                      {selectedDetail.runtime?.qr_terminal ? (
+                                      {qrImageSrc ? (
+                                        <Box
+                                          component="img"
+                                          alt={`QR login WhatsApp ${selectedDetail.instance.id}`}
+                                          src={qrImageSrc}
+                                          sx={{
+                                            width: '100%',
+                                            maxWidth: 320,
+                                            aspectRatio: '1 / 1',
+                                            mx: 'auto',
+                                            display: 'block',
+                                            borderRadius: 2,
+                                            border: '1px solid',
+                                            borderColor: 'divider',
+                                            backgroundColor: '#fff',
+                                            imageRendering: 'pixelated',
+                                          }}
+                                        />
+                                      ) : selectedDetail.runtime?.qr_terminal ? (
                                         <Box
                                           component="pre"
                                           sx={{
@@ -1057,7 +1112,11 @@ export default function WhatsappDashboard({
                                             backgroundColor: '#111',
                                             color: '#f4f4f4',
                                             fontSize: 7,
-                                            lineHeight: 0.8,
+                                            lineHeight: 1,
+                                            fontFamily:
+                                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                                            letterSpacing: 0,
+                                            whiteSpace: 'pre',
                                             maxHeight: 220,
                                           }}
                                         >
