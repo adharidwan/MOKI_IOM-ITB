@@ -81,7 +81,7 @@ function uniqueRecipients(recipients: RecipientInput[]): RecipientInput[] {
 function sourceLabel(source: RecipientSource | null): string {
   if (source === 'group') return 'Grup kontak';
   if (source === 'csv') return 'File CSV';
-  if (source === 'manual') return 'Input manual';
+  if (source === 'manual') return 'Input Satu per Satu';
   return '-';
 }
 
@@ -96,6 +96,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
   const [csvFileName, setCsvFileName] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [saveToGroup, setSaveToGroup] = useState(false);
+  const [saveGroupName, setSaveGroupName] = useState('');
   const [status, setStatus] = useState<
     { type: 'success' | 'error' | 'info' | 'warning'; message: string } | null
   >(null);
@@ -137,9 +139,13 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     (selectedSource === 'manual' && recipients.length > 0);
   const canContinueFromStepThree =
     message.trim().length > 0 && message.trim().length <= MAX_MESSAGE_LENGTH;
+  const shouldShowSaveToGroupOption = selectedSource === 'manual' || selectedSource === 'csv';
+  const requiresGroupName = shouldShowSaveToGroupOption && saveToGroup;
 
   const handleSourceChange = (source: RecipientSource) => {
     setSelectedSource(source);
+    setSaveToGroup(false);
+    setSaveGroupName('');
     setStatus(null);
     setCurrentStep(1);
   };
@@ -250,6 +256,11 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
       return;
     }
 
+    if (requiresGroupName && !saveGroupName.trim()) {
+      setStatus({ type: 'error', message: 'Isi nama group terlebih dahulu sebelum kirim blast.' });
+      return;
+    }
+
     setSubmitting(true);
     setConfirmOpen(false);
     setStatus({ type: 'info', message: 'Mengirim pesan ke antrian...' });
@@ -262,6 +273,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
         message,
         recipients: selectedSource === 'group' ? undefined : recipients,
         groupNames: selectedSource === 'group' ? selectedGroups : undefined,
+        saveToGroup: requiresGroupName,
+        groupName: requiresGroupName ? saveGroupName.trim() : undefined,
         sourceFile: selectedSource === 'csv' ? csvFileName || 'blast-csv' : undefined,
       }),
     });
@@ -282,14 +295,16 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     if ((result.failedCount || 0) > 0) {
       setStatus({
         type: 'warning',
-        message: `Pesan masuk ke antrian untuk ${result.acceptedCount || 0} penerima. ${
-          result.failedCount || 0
-        } penerima gagal dan perlu diperiksa.`,
+        message: `Blast queued untuk ${result.acceptedCount || 0} penerima. ${result.failedCount || 0} penerima gagal dan perlu diperiksa.${
+          requiresGroupName ? ` Kontak valid juga disimpan ke group ${saveGroupName.trim()}.` : ''
+        }`,
       });
     } else {
       setStatus({
         type: 'success',
-        message: `Pesan berhasil dikirim ke ${result.acceptedCount || recipients.length} penerima.`,
+        message: `Blast queued untuk ${result.acceptedCount || recipients.length} penerima.${
+          requiresGroupName ? ` Kontak valid disimpan ke group ${saveGroupName.trim()}.` : ''
+        }`,
       });
     }
 
@@ -307,6 +322,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     setCsvRecipients([]);
     setCsvFileName('');
     setMessage('');
+    setSaveToGroup(false);
+    setSaveGroupName('');
     setSubmitting(false);
     setStatus(null);
     setConfirmOpen(false);
@@ -414,7 +431,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                 },
                 {
                   value: 'manual' as const,
-                  title: 'Input manual',
+                  title: 'Input Satu per Satu',
                   helper: 'Masukkan nomor satu per satu dengan tombol tambah.',
                   icon: <PersonAddAltRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
                 },
@@ -986,9 +1003,52 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 800, color: '#163020' }}>Konfirmasi pengiriman</DialogTitle>
         <DialogContent>
-          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
-            Pesan akan dikirim ke {recipients.length} penerima. Pastikan isi pesan dan daftar penerima sudah benar.
-          </Typography>
+          <Stack spacing={2}>
+            <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+              Pesan akan dikirim ke {recipients.length} penerima. Pastikan isi pesan dan daftar penerima sudah benar.
+            </Typography>
+
+            {shouldShowSaveToGroupOption ? (
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  borderRadius: 3,
+                  backgroundColor: '#f7faf8',
+                  border: '1px solid rgba(31, 111, 95, 0.12)',
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Checkbox
+                      checked={saveToGroup}
+                      onChange={(event) => {
+                        setSaveToGroup(event.target.checked);
+                        if (!event.target.checked) {
+                          setSaveGroupName('');
+                        }
+                      }}
+                      sx={{ p: 0.5 }}
+                    />
+                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#163020' }}>
+                      Save as group
+                    </Typography>
+                  </Stack>
+
+                  {saveToGroup ? (
+                    <TextField
+                      label="Nama group"
+                      value={saveGroupName}
+                      onChange={(event) => setSaveGroupName(event.target.value)}
+                      placeholder="Contoh: SmokeProdA"
+                      fullWidth
+                      autoFocus
+                    />
+                  ) : null}
+                </Stack>
+              </Paper>
+            ) : null}
+          </Stack>
         </DialogContent>
         <DialogActions sx={{ p: 2.5 }}>
           <Button onClick={() => setConfirmOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
@@ -997,6 +1057,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           <Button
             variant="contained"
             onClick={handleSendBlast}
+            disabled={requiresGroupName && !saveGroupName.trim()}
             sx={{
               borderRadius: 999,
               backgroundColor: '#1f6f5f',
