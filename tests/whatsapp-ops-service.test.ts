@@ -10,6 +10,7 @@ import type {
   WhatsappInstanceEventRecord,
   WhatsappInstanceRecord,
   WhatsappInstanceRuntime,
+  WhatsappInstanceStaffSummary,
   WhatsappOutboundListItem,
 } from '../app/lib/whatsapp-notification-utils';
 
@@ -99,6 +100,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
       return {
         queued_ticket_replies: 2,
         queued_api_notifications: 3,
+        queued_blast_messages: 4,
         retrying_messages: 1,
         failed_messages: 1,
         sent_messages: 10,
@@ -109,6 +111,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
     return {
       queued_ticket_replies: 0,
       queued_api_notifications: 0,
+      queued_blast_messages: 0,
       retrying_messages: 0,
       failed_messages: 0,
       sent_messages: 0,
@@ -116,7 +119,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
     };
   }
 
-  async getInstanceStaffSummary(instanceId: string) {
+  async getInstanceStaffSummary(instanceId: string): Promise<WhatsappInstanceStaffSummary> {
     return {
       active_ticket_count: instanceId === 'default' ? 2 : 0,
       latest_ticket_id: instanceId === 'default' ? 'ticket-1' : null,
@@ -146,6 +149,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
     return {
       queued_ticket_replies: 2,
       queued_api_notifications: 3,
+      queued_blast_messages: 4,
     };
   }
 
@@ -176,6 +180,11 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
     ];
   }
 
+  async listOutboundByIds(ids: string[]): Promise<WhatsappOutboundListItem[]> {
+    const items = await this.listRecentOutbound(ids.length || 1);
+    return items.filter((item) => ids.includes(item.id));
+  }
+
   async getOutboundSummary() {
     return {
       queued: 1,
@@ -184,6 +193,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
       sent: 10,
       ticket_reply: 5,
       api_notification: 8,
+      blast: 4,
     };
   }
 }
@@ -239,6 +249,7 @@ describe('whatsapp ops service', () => {
       degraded_instances: 0,
       queued_ticket_replies: 2,
       queued_api_notifications: 3,
+      queued_blast_messages: 4,
       oldest_queued_at: '2026-04-03T08:01:00.000Z',
       failed_or_retrying_messages: 2,
     });
@@ -258,6 +269,7 @@ describe('whatsapp ops service', () => {
         sent: 10,
         ticket_reply: 5,
         api_notification: 8,
+        blast: 4,
       },
       items: [
         {

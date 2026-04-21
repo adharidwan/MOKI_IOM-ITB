@@ -21,7 +21,7 @@ vi.mock('../app/lib/whatsapp-notification-repository', () => ({
 }));
 
 type OutboundMessageRow = {
-  source_type: 'ticket_reply' | 'api_notification';
+  source_type: 'ticket_reply' | 'api_notification' | 'blast';
   delivery_status: 'queued' | 'retrying' | 'sent' | 'failed';
 };
 
@@ -112,6 +112,7 @@ describe('whatsapp ops repository', () => {
     await expect(repository.getGlobalQueueCounts()).resolves.toEqual({
       queued_ticket_replies: 2,
       queued_api_notifications: 2,
+      queued_blast_messages: 0,
     });
     expect(countQueuedOutboundMessagesBySource).not.toHaveBeenCalled();
   });
