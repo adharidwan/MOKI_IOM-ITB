@@ -155,6 +155,7 @@ export default function OutboundTrackerOverlay() {
   const [data, setData] = useState<OutboundTrackerResponse | null>(null);
   const [open, setOpen] = useState(false);
   const [selectedBatchId, setSelectedBatchId] = useState<string>('all');
+  const [batchListOpen, setBatchListOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>({ active: true, failed: true, done: true });
@@ -386,7 +387,7 @@ export default function OutboundTrackerOverlay() {
         position: 'fixed',
         right: { xs: 12, md: 20 },
         bottom: { xs: 12, md: 20 },
-        width: { xs: 'calc(100vw - 24px)', sm: 392 },
+        width: { xs: 'calc(100vw - 24px)', sm: 500 },
         maxWidth: 'calc(100vw - 24px)',
         zIndex: 1400,
       }}
@@ -417,51 +418,58 @@ export default function OutboundTrackerOverlay() {
 
             {hasTrackedItems ? (
               <Stack spacing={1}>
-                <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
-                  Batch
-                </Typography>
-                <Stack spacing={1} sx={{ maxHeight: 200, overflowY: 'auto', pr: 0.5 }}>
-                  <Paper
-                    elevation={0}
-                    sx={{
-                      p: 1.25,
-                      borderRadius: 3,
-                      border: selectedBatchId === 'all' ? '1px solid #003793' : '1px solid #e2e8f0',
-                      backgroundColor: selectedBatchId === 'all' ? '#eff6ff' : '#ffffff',
-                      cursor: 'pointer',
-                    }}
-                    onClick={() => setSelectedBatchId('all')}
-                  >
-                    <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>Semua batch</Typography>
-                  </Paper>
-                  {batchSummaries.map((batch) => (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                    Batch
+                  </Typography>
+                  <IconButton size="small" onClick={() => setBatchListOpen((current) => !current)} sx={{ ml: 'auto' }}>
+                    {batchListOpen ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
+                  </IconButton>
+                </Stack>
+                {batchListOpen ? (
+                  <Stack spacing={1} sx={{ maxHeight: 200, overflowY: 'auto', pr: 0.5 }}>
                     <Paper
-                      key={batch.id}
                       elevation={0}
                       sx={{
                         p: 1.25,
                         borderRadius: 3,
-                        border: selectedBatchId === batch.id ? '1px solid #003793' : '1px solid #e2e8f0',
-                        backgroundColor: selectedBatchId === batch.id ? '#eff6ff' : '#ffffff',
+                        border: selectedBatchId === 'all' ? '1px solid #003793' : '1px solid #e2e8f0',
+                        backgroundColor: selectedBatchId === 'all' ? '#eff6ff' : '#ffffff',
                         cursor: 'pointer',
                       }}
-                      onClick={() => setSelectedBatchId(batch.id)}
+                      onClick={() => setSelectedBatchId('all')}
                     >
-                      <Stack spacing={0.75}>
-                        <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                          <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>
-                            {batch.label}
-                          </Typography>
-                          <Chip
-                            label={SOURCE_COPY[batch.source_type].label}
-                            size="small"
-                            sx={{ backgroundColor: SOURCE_COPY[batch.source_type].tone, color: SOURCE_COPY[batch.source_type].text, fontWeight: 700 }}
-                          />
-                        </Stack>
-                      </Stack>
+                      <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>Semua batch</Typography>
                     </Paper>
-                  ))}
-                </Stack>
+                    {batchSummaries.map((batch) => (
+                      <Paper
+                        key={batch.id}
+                        elevation={0}
+                        sx={{
+                          p: 1.25,
+                          borderRadius: 3,
+                          border: selectedBatchId === batch.id ? '1px solid #003793' : '1px solid #e2e8f0',
+                          backgroundColor: selectedBatchId === batch.id ? '#eff6ff' : '#ffffff',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setSelectedBatchId(batch.id)}
+                      >
+                        <Stack spacing={0.75}>
+                          <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
+                            <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>
+                              {batch.label}
+                            </Typography>
+                            <Chip
+                              label={SOURCE_COPY[batch.source_type].label}
+                              size="small"
+                              sx={{ backgroundColor: SOURCE_COPY[batch.source_type].tone, color: SOURCE_COPY[batch.source_type].text, fontWeight: 700 }}
+                            />
+                          </Stack>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                ) : null}
               </Stack>
             ) : null}
 
@@ -477,7 +485,7 @@ export default function OutboundTrackerOverlay() {
                     label={filterValue === 'all' ? 'All' : STATUS_COPY[filterValue].label}
                     onClick={() => setStatusFilter(filterValue)}
                     variant={statusFilter === filterValue ? 'filled' : 'outlined'}
-                    sx={statusFilter === filterValue ? { backgroundColor: '#003793', color: '#ffffff', fontWeight: 700 } : undefined}
+                    sx={statusFilter === filterValue ? { backgroundColor: '#dbeafe', color: '#1d4ed8', fontWeight: 700 } : undefined}
                   />
                 ))}
               </Stack>
@@ -492,7 +500,7 @@ export default function OutboundTrackerOverlay() {
                   <Chip
                     key={filterValue}
                     clickable
-                    label={filterValue === 'all' ? 'All sources' : SOURCE_COPY[filterValue].filterLabel}
+                    label={filterValue === 'all' ? 'All' : SOURCE_COPY[filterValue].filterLabel}
                     onClick={() => setSourceFilter(filterValue)}
                     variant={sourceFilter === filterValue ? 'filled' : 'outlined'}
                     sx={sourceFilter === filterValue ? { backgroundColor: '#dbeafe', color: '#1d4ed8', fontWeight: 700 } : undefined}
@@ -518,11 +526,9 @@ export default function OutboundTrackerOverlay() {
                     {sectionOpen.active ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
-                {!activeItems.length ? (
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>Tidak ada item aktif untuk filter ini.</Typography>
-                ) : sectionOpen.active ? (
-                  activeItems.map((item) => <TrackerRow key={item.id} item={item} />)
-                ) : null}
+
+                {!activeItems.length && sectionOpen.active ? 
+                  activeItems.map((item) => <TrackerRow key={item.id} item={item} />) : null}
 
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ pt: 0.5 }}>
                   <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
@@ -537,11 +543,9 @@ export default function OutboundTrackerOverlay() {
                     {sectionOpen.failed ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
-                {!failedItems.length ? (
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>Tidak ada item gagal untuk filter ini.</Typography>
-                ) : sectionOpen.failed ? (
-                  failedItems.map((item) => <TrackerRow key={item.id} item={item} />)
-                ) : null}
+                {!failedItems.length && sectionOpen.failed ? 
+                  failedItems.map((item) => <TrackerRow key={item.id} item={item} />) : null
+                }
 
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ pt: 0.5 }}>
                   <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
@@ -556,17 +560,14 @@ export default function OutboundTrackerOverlay() {
                     {sectionOpen.done ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
-                {!doneItems.length ? (
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>Belum ada item selesai untuk filter ini.</Typography>
-                ) : sectionOpen.done ? (
-                  doneItems.map((item) => <TrackerRow key={item.id} item={item} />)
-                ) : null}
+                {!doneItems.length && sectionOpen.done ? 
+                  doneItems.map((item) => <TrackerRow key={item.id} item={item} />) : null}
               </Stack>
             ) : (
               <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
                 <Stack spacing={0.75}>
                   <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }}>
-                    Belum ada pengiriman pada sesi ini
+                    Belum ada pengiriman
                   </Typography>
                 </Stack>
               </Paper>
