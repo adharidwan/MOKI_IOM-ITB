@@ -192,6 +192,7 @@ describe('contact group blast', () => {
     });
 
     expect(result).toEqual({
+      batchId: expect.any(String),
       totalRecipients: 2,
       acceptedCount: 2,
       queuedCount: 2,
@@ -308,6 +309,7 @@ describe('contact group blast', () => {
 
     expect(first.acceptedCount).toBe(1);
     expect(second).toEqual({
+      batchId: expect.any(String),
       totalRecipients: 1,
       acceptedCount: 1,
       queuedCount: 0,
