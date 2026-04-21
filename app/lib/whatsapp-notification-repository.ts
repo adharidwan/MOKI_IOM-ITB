@@ -73,6 +73,7 @@ export interface CreatePersonalizedBlastOutboundMessagesInput {
 }
 
 export interface BlastDispatchResult {
+  batchId: string;
   totalRecipients: number;
   acceptedCount: number;
   queuedCount: number;
@@ -312,6 +313,7 @@ async function dispatchPersonalizedBlastMessages(
 
   if (!normalizedRecipients.length) {
     return {
+      batchId: requestId,
       totalRecipients: 0,
       acceptedCount: 0,
       queuedCount: 0,
@@ -361,6 +363,7 @@ async function dispatchPersonalizedBlastMessages(
   }
 
   return {
+    batchId: requestId,
     totalRecipients: normalizedRecipients.length,
     acceptedCount: queuedCount + alreadyAcceptedCount,
     queuedCount,
@@ -489,6 +492,7 @@ export async function createGroupBlastOutboundMessages(
 
   if (!targetGroups.length) {
     return {
+      batchId: 'empty',
       totalRecipients: 0,
       acceptedCount: 0,
       queuedCount: 0,

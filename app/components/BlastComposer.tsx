@@ -302,6 +302,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
 
     const result = (await response.json()) as {
       error?: string;
+      batchId?: string;
       acceptedCount?: number;
       failedCount?: number;
       totalRecipients?: number;
@@ -330,11 +331,26 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
       });
     }
 
-    if (result.trackedMessageIds?.length) {
+    if (result.trackedMessageIds?.length && result.batchId) {
+      const batchLabel =
+        selectedSource === 'group'
+          ? 'Blast grup'
+          : selectedSource === 'csv'
+            ? 'Blast CSV'
+            : 'Blast manual';
+
       window.dispatchEvent(
         new CustomEvent(TRACKER_REGISTER_EVENT, {
           detail: {
-            ids: result.trackedMessageIds,
+            batch: {
+              id: result.batchId,
+              label: batchLabel,
+              source_type: 'blast',
+              created_at: new Date().toISOString(),
+              tracked_ids: result.trackedMessageIds,
+              total_count: result.totalRecipients || result.trackedMessageIds.length,
+              resolved_at: null,
+            },
           },
         }),
       );
