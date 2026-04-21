@@ -65,12 +65,20 @@ export interface CreateDirectBlastOutboundMessagesInput {
   content: string;
 }
 
+export interface CreatePersonalizedBlastOutboundMessagesInput {
+  recipients: Array<{
+    recipientPhoneNumber: string;
+    content: string;
+  }>;
+}
+
 export interface BlastDispatchResult {
   totalRecipients: number;
   acceptedCount: number;
   queuedCount: number;
   alreadyAcceptedCount: number;
   failedCount: number;
+  trackedMessageIds: string[];
 }
 
 function normalizeList(values: string[] | null | undefined): string[] {
@@ -114,6 +122,26 @@ function buildBlastRequestId(content: string, recipientKeys: string[]): string {
         content: content.trim(),
         recipients: normalizeList(recipientKeys).sort((left, right) => left.localeCompare(right)),
       }),
+    )
+    .digest('hex')
+    .slice(0, 24);
+}
+
+function buildPersonalizedBlastRequestId(
+  recipients: Array<{ recipientPhoneNumber: string; content: string }>,
+): string {
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify(
+        recipients
+          .map((recipient) => ({
+            recipientPhoneNumber: String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim(),
+            content: String(recipient.content || '').trim(),
+          }))
+          .filter((recipient) => recipient.recipientPhoneNumber && recipient.content)
+          .sort((left, right) => left.recipientPhoneNumber.localeCompare(right.recipientPhoneNumber)),
+      ),
     )
     .digest('hex')
     .slice(0, 24);
@@ -251,30 +279,62 @@ async function dispatchBlastMessages(
   content: string,
   requestId: string,
 ): Promise<BlastDispatchResult> {
-  const supabase = getSupabaseAdminClient();
-  const normalizedPhoneNumbers = normalizePhoneNumbers(recipientPhoneNumbers);
+  return dispatchPersonalizedBlastMessages(
+    normalizePhoneNumbers(recipientPhoneNumbers).map((recipientPhoneNumber) => ({
+      recipientPhoneNumber,
+      content,
+    })),
+    requestId,
+  );
+}
 
-  if (!normalizedPhoneNumbers.length) {
+async function dispatchPersonalizedBlastMessages(
+  recipients: Array<{ recipientPhoneNumber: string; content: string }>,
+  requestId: string,
+): Promise<BlastDispatchResult> {
+  const supabase = getSupabaseAdminClient();
+  const normalizedRecipients = Array.from(
+    recipients.reduce((deduped, recipient) => {
+      const normalizedPhoneNumber = String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim();
+      const normalizedContent = String(recipient.content || '').trim();
+
+      if (!normalizedPhoneNumber || !normalizedContent) {
+        return deduped;
+      }
+
+      deduped.set(normalizedPhoneNumber, {
+        recipientPhoneNumber: normalizedPhoneNumber,
+        content: normalizedContent,
+      });
+      return deduped;
+    }, new Map<string, { recipientPhoneNumber: string; content: string }>()),
+  ).map(([, value]) => value);
+
+  if (!normalizedRecipients.length) {
     return {
       totalRecipients: 0,
       acceptedCount: 0,
       queuedCount: 0,
       alreadyAcceptedCount: 0,
       failedCount: 0,
+      trackedMessageIds: [],
     };
   }
 
   let queuedCount = 0;
   let alreadyAcceptedCount = 0;
   let failedCount = 0;
+  const trackedMessageIds: string[] = [];
 
-  for (const recipientPhoneNumber of normalizedPhoneNumbers) {
+  for (const recipient of normalizedRecipients) {
     const { outboundMessage, shouldEnqueue, alreadyAccepted } =
       await createOrReuseBlastOutboundMessage(supabase, {
         requestId,
-        recipientPhoneNumber,
-        content,
+        recipientPhoneNumber: recipient.recipientPhoneNumber,
+        content: recipient.content,
       });
+
+    trackedMessageIds.push(outboundMessage.id);
 
     if (alreadyAccepted) {
       alreadyAcceptedCount += 1;
@@ -301,11 +361,12 @@ async function dispatchBlastMessages(
   }
 
   return {
-    totalRecipients: normalizedPhoneNumbers.length,
+    totalRecipients: normalizedRecipients.length,
     acceptedCount: queuedCount + alreadyAcceptedCount,
     queuedCount,
     alreadyAcceptedCount,
     failedCount,
+    trackedMessageIds,
   };
 }
 
@@ -433,6 +494,7 @@ export async function createGroupBlastOutboundMessages(
       queuedCount: 0,
       alreadyAcceptedCount: 0,
       failedCount: 0,
+      trackedMessageIds: [],
     };
   }
 
@@ -464,6 +526,22 @@ export async function createDirectBlastOutboundMessages(
     normalizedPhoneNumbers,
     input.content,
     buildBlastRequestId(input.content, normalizedPhoneNumbers),
+  );
+}
+
+export async function createPersonalizedBlastOutboundMessages(
+  input: CreatePersonalizedBlastOutboundMessagesInput,
+): Promise<BlastDispatchResult> {
+  const normalizedRecipients = input.recipients
+    .map((recipient) => ({
+      recipientPhoneNumber: String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim(),
+      content: String(recipient.content || '').trim(),
+    }))
+    .filter((recipient) => recipient.recipientPhoneNumber && recipient.content);
+
+  return dispatchPersonalizedBlastMessages(
+    normalizedRecipients,
+    buildPersonalizedBlastRequestId(normalizedRecipients),
   );
 }
 

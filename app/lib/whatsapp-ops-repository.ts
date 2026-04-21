@@ -23,7 +23,7 @@ async function countOutboundMessages(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   filters: {
     whatsappInstanceId?: string;
-    sourceType?: 'api_notification' | 'ticket_reply';
+    sourceType?: 'api_notification' | 'ticket_reply' | 'blast';
     deliveryStatus?: OutboundMessageStatus;
     deliveryStatuses?: OutboundMessageStatus[];
   },
@@ -105,6 +105,7 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
       const [
         queuedTicketReplies,
         queuedApiNotifications,
+        queuedBlastMessages,
         retryingMessages,
         failedMessages,
         sentMessages,
@@ -118,6 +119,11 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
         countOutboundMessages(supabase, {
           whatsappInstanceId: instanceId,
           sourceType: 'api_notification',
+          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
+        }),
+        countOutboundMessages(supabase, {
+          whatsappInstanceId: instanceId,
+          sourceType: 'blast',
           deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
         }),
         countOutboundMessages(supabase, {
@@ -138,6 +144,7 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
       return {
         queued_ticket_replies: queuedTicketReplies,
         queued_api_notifications: queuedApiNotifications,
+        queued_blast_messages: queuedBlastMessages,
         retrying_messages: retryingMessages,
         failed_messages: failedMessages,
         sent_messages: sentMessages,
@@ -224,7 +231,7 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
     },
 
     async getGlobalQueueCounts() {
-      const [queuedTicketReplies, queuedApiNotifications] = await Promise.all([
+      const [queuedTicketReplies, queuedApiNotifications, queuedBlastMessages] = await Promise.all([
         countOutboundMessages(supabase, {
           sourceType: 'ticket_reply',
           deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
@@ -233,11 +240,16 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
           sourceType: 'api_notification',
           deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
         }),
+        countOutboundMessages(supabase, {
+          sourceType: 'blast',
+          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
+        }),
       ]);
 
       return {
         queued_ticket_replies: queuedTicketReplies,
         queued_api_notifications: queuedApiNotifications,
+        queued_blast_messages: queuedBlastMessages,
       };
     },
 
@@ -285,14 +297,52 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
       }));
     },
 
+    async listOutboundByIds(ids: string[]): Promise<WhatsappOutboundListItem[]> {
+      const normalizedIds = Array.from(new Set(ids.map((id) => String(id || '').trim()).filter(Boolean)));
+
+      if (!normalizedIds.length) {
+        return [];
+      }
+
+      const [{ data, error }, instances] = await Promise.all([
+        supabase
+          .from('outbound_messages')
+          .select(
+            'id, whatsapp_instance_id, ticket_id, source_type, delivery_status, recipient_phone_number, client_reference, created_at, delivered_at, last_delivery_error',
+          )
+          .in('id', normalizedIds)
+          .order('created_at', { ascending: false }),
+        supabase.from('whatsapp_instances').select('id, label'),
+      ]);
+
+      if (error) {
+        throw new Error(`Failed to load tracked outbound messages: ${error.message}`);
+      }
+
+      if (instances.error) {
+        throw new Error(`Failed to load WhatsApp instance labels: ${instances.error.message}`);
+      }
+
+      const labelById = new Map<string, string>();
+      (instances.data || []).forEach((instance) => {
+        labelById.set(instance.id as string, instance.label as string);
+      });
+
+      return ((data as Omit<WhatsappOutboundListItem, 'instance_label'>[]) || []).map((item) => ({
+        ...item,
+        instance_label: labelById.get(item.whatsapp_instance_id) || null,
+      }));
+    },
+
     async getOutboundSummary(): Promise<WhatsappOutboundSummary> {
-      const [queued, retrying, failed, sent, ticketReply, apiNotification] = await Promise.all([
+      const [queued, retrying, failed, sent, ticketReply, apiNotification, blast] = await Promise.all([
         countOutboundMessages(supabase, { deliveryStatus: 'queued' }),
         countOutboundMessages(supabase, { deliveryStatus: 'retrying' }),
         countOutboundMessages(supabase, { deliveryStatus: 'failed' }),
         countOutboundMessages(supabase, { deliveryStatus: 'sent' }),
         countOutboundMessages(supabase, { sourceType: 'ticket_reply' }),
         countOutboundMessages(supabase, { sourceType: 'api_notification' }),
+        countOutboundMessages(supabase, { sourceType: 'blast' }),
       ]);
 
       return {
@@ -302,6 +352,7 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
         sent,
         ticket_reply: ticketReply,
         api_notification: apiNotification,
+        blast,
       };
     },
   };
