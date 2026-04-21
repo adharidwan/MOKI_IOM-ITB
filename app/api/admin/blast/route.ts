@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
 
+import { renderBlastMessageTemplate } from '@/app/lib/blast-variables';
 import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
 import {
   createDirectBlastOutboundMessages,
   createGroupBlastOutboundMessages,
+  createPersonalizedBlastOutboundMessages,
 } from '@/app/lib/whatsapp-notification-repository';
 import { normalizePhoneNumber } from '@/app/lib/whatsapp-notification-utils';
 
@@ -12,6 +14,7 @@ interface BlastRecipientInput {
   nama?: string;
   jenis_kelamin?: string;
   jabatan?: string;
+  group_names?: string[];
 }
 
 interface BlastRequestBody {
@@ -48,13 +51,16 @@ function normalizeRecipients(recipients: BlastRecipientInput[]): CsvContactInput
     const name = String(recipient.nama || '').trim() || `Kontak ${phoneNumber}`;
     const gender = String(recipient.jenis_kelamin || '').trim() || 'Tidak diketahui';
     const title = String(recipient.jabatan || '').trim() || undefined;
+    const groupNames = normalizeGroupNames(
+      Array.isArray(recipient.group_names) ? recipient.group_names : [],
+    );
 
     dedupedByPhone.set(phoneNumber, {
       no_telp: phoneNumber,
       nama: name,
       jenis_kelamin: gender,
       jabatan: title,
-      group_names: [],
+      group_names: groupNames,
     });
   });
 
@@ -79,6 +85,39 @@ export async function POST(request: Request) {
     if (source === 'group') {
       if (!groupNames.length) {
         return NextResponse.json({ error: 'Pilih minimal satu grup penerima.' }, { status: 400 });
+      }
+
+      if (recipientRows.length > 0) {
+        const blastResult = await createPersonalizedBlastOutboundMessages({
+          recipients: recipientRows.map((recipient) => ({
+            recipientPhoneNumber: recipient.no_telp,
+            content: renderBlastMessageTemplate(message, recipient),
+          })),
+        });
+
+        if (blastResult.totalRecipients === 0) {
+          return NextResponse.json({ error: 'Grup terpilih belum memiliki kontak.' }, { status: 400 });
+        }
+
+        if (blastResult.acceptedCount === 0) {
+          return NextResponse.json(
+            {
+              error: 'Semua pesan blast gagal masuk ke antrian.',
+              ...blastResult,
+            },
+            { status: 500 },
+          );
+        }
+
+        return NextResponse.json(
+          {
+            success: true,
+            source,
+            personalized: true,
+            ...blastResult,
+          },
+          { status: blastResult.failedCount > 0 ? 207 : 200 },
+        );
       }
 
       const blastResult = await createGroupBlastOutboundMessages({
@@ -126,10 +165,17 @@ export async function POST(request: Request) {
       });
     }
 
-    const blastResult = await createDirectBlastOutboundMessages({
-      recipientPhoneNumbers: recipientRows.map((row) => row.no_telp),
-      content: message,
-    });
+    const blastResult = message.includes('{{')
+      ? await createPersonalizedBlastOutboundMessages({
+          recipients: recipientRows.map((recipient) => ({
+            recipientPhoneNumber: recipient.no_telp,
+            content: renderBlastMessageTemplate(message, recipient),
+          })),
+        })
+      : await createDirectBlastOutboundMessages({
+          recipientPhoneNumbers: recipientRows.map((row) => row.no_telp),
+          content: message,
+        });
 
     if (blastResult.acceptedCount === 0) {
       return NextResponse.json(

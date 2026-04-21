@@ -24,7 +24,10 @@ import GroupRoundedIcon from '@mui/icons-material/GroupRounded';
 import PersonAddAltRoundedIcon from '@mui/icons-material/PersonAddAltRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 
+import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
 import type { CsvContact } from '../lib/types';
+
+const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
 
 type RecipientSource = 'group' | 'csv' | 'manual';
 
@@ -36,6 +39,7 @@ interface BlastComposerProps {
 interface RecipientInput {
   no_telp: string;
   nama?: string;
+  group_names?: string[];
 }
 
 interface ParsedCsvRow {
@@ -72,6 +76,13 @@ function uniqueRecipients(recipients: RecipientInput[]): RecipientInput[] {
     deduped.set(normalizedPhone, {
       no_telp: normalizedPhone,
       nama: String(recipient.nama || '').trim() || undefined,
+      group_names: Array.from(
+        new Set(
+          (recipient.group_names || [])
+            .map((groupName) => String(groupName || '').trim())
+            .filter((groupName) => groupName.length > 0),
+        ),
+      ),
     });
   });
 
@@ -118,6 +129,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           .map((contact) => ({
             no_telp: contact.no_telp,
             nama: contact.nama,
+            group_names: contact.group_names.filter((groupName) => selectedGroups.includes(groupName)),
           })),
       );
     }
@@ -141,6 +153,11 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     message.trim().length > 0 && message.trim().length <= MAX_MESSAGE_LENGTH;
   const shouldShowSaveToGroupOption = selectedSource === 'manual' || selectedSource === 'csv';
   const requiresGroupName = shouldShowSaveToGroupOption && saveToGroup;
+  const previewRecipients = recipients.slice(0, 3);
+  const previewMessages = previewRecipients.map((recipient) => ({
+    recipient,
+    content: renderBlastMessageTemplate(message.trim(), recipient),
+  }));
 
   const handleSourceChange = (source: RecipientSource) => {
     setSelectedSource(source);
@@ -184,6 +201,10 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
 
   const handleRemoveManualRecipient = (phoneNumber: string) => {
     setManualRecipients((previous) => previous.filter((recipient) => recipient.no_telp !== phoneNumber));
+  };
+
+  const handleInsertVariable = (token: string) => {
+    setMessage((previous) => `${previous}${previous.endsWith(' ') || previous.length === 0 ? '' : ' '}${token}`);
   };
 
   const handleCsvFile = (file: File) => {
@@ -271,7 +292,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
       body: JSON.stringify({
         source: selectedSource,
         message,
-        recipients: selectedSource === 'group' ? undefined : recipients,
+        recipients,
         groupNames: selectedSource === 'group' ? selectedGroups : undefined,
         saveToGroup: requiresGroupName,
         groupName: requiresGroupName ? saveGroupName.trim() : undefined,
@@ -284,6 +305,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
       acceptedCount?: number;
       failedCount?: number;
       totalRecipients?: number;
+      trackedMessageIds?: string[];
     };
 
     if (!response.ok) {
@@ -306,6 +328,16 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           requiresGroupName ? ` Kontak valid disimpan ke group ${saveGroupName.trim()}.` : ''
         }`,
       });
+    }
+
+    if (result.trackedMessageIds?.length) {
+      window.dispatchEvent(
+        new CustomEvent(TRACKER_REGISTER_EVENT, {
+          detail: {
+            ids: result.trackedMessageIds,
+          },
+        }),
+      );
     }
 
     setCurrentStep(4);
@@ -849,6 +881,43 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               fullWidth
             />
 
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2,
+                borderRadius: 3,
+                backgroundColor: '#f7faf8',
+                border: '1px solid rgba(31, 111, 95, 0.12)',
+              }}
+            >
+              <Stack spacing={1.25}>
+                <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                  Variabel pesan
+                </Typography>
+                <Typography sx={{ fontSize: '0.96rem', color: '#50665d' }}>
+                  Gunakan variabel untuk membuat isi pesan lebih adaptif per penerima.
+                </Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  {BLAST_VARIABLES.map((variable) => (
+                    <Chip
+                      key={variable.token}
+                      clickable
+                      label={variable.token}
+                      onClick={() => handleInsertVariable(variable.token)}
+                      sx={{
+                        backgroundColor: '#e6eefc',
+                        color: '#1d4ed8',
+                        fontWeight: 700,
+                      }}
+                    />
+                  ))}
+                </Stack>
+                <Typography sx={{ fontSize: '0.86rem', color: '#64748b' }}>
+                  {'Variabel tersedia: {{name}}, {{phone_number}}, {{group_name}}.'}
+                </Typography>
+              </Stack>
+            </Paper>
+
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
               <Button
                 variant="outlined"
@@ -925,6 +994,58 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                 </Typography>
               </Stack>
             </Paper>
+
+            {previewMessages.length > 0 ? (
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2.5,
+                  borderRadius: 3,
+                  backgroundColor: '#fffdf8',
+                  border: '1px solid rgba(31, 111, 95, 0.12)',
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography sx={{ fontSize: '1.05rem', fontWeight: 800, color: '#163020' }}>
+                    Preview variabel
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.96rem', color: '#50665d' }}>
+                    Contoh hasil render untuk beberapa penerima pertama.
+                  </Typography>
+                  {previewMessages.map(({ recipient, content }) => (
+                    <Paper
+                      key={`preview-${recipient.no_telp}`}
+                      elevation={0}
+                      sx={{
+                        p: 2,
+                        borderRadius: 3,
+                        backgroundColor: '#ffffff',
+                        border: '1px solid rgba(31, 111, 95, 0.1)',
+                      }}
+                    >
+                      <Stack spacing={0.75}>
+                        <Typography sx={{ fontSize: '0.96rem', fontWeight: 800, color: '#163020' }}>
+                          {recipient.nama || 'Tanpa nama'} · {recipient.no_telp}
+                        </Typography>
+                        {recipient.group_names?.length ? (
+                          <Typography sx={{ fontSize: '0.84rem', color: '#50665d' }}>
+                            Grup: {recipient.group_names.join(', ')}
+                          </Typography>
+                        ) : null}
+                        <Typography sx={{ fontSize: '0.94rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: '#163020' }}>
+                          {content}
+                        </Typography>
+                      </Stack>
+                    </Paper>
+                  ))}
+                  {recipients.length > previewMessages.length ? (
+                    <Typography sx={{ fontSize: '0.84rem', color: '#64748b' }}>
+                      Preview dibatasi ke {previewMessages.length} penerima pertama dari total {recipients.length}.
+                    </Typography>
+                  ) : null}
+                </Stack>
+              </Paper>
+            ) : null}
 
             {status?.type === 'success' ? (
               <Paper
