@@ -3,6 +3,7 @@ import { Button, Stack } from '@mui/material';
 
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import GroupDirectory from '../components/GroupDirectory';
+import PhoneListToast from '../components/PhoneListToast';
 import { getPaginatedContactGroups, getPaginatedGroupMembers } from '../lib/group-directory-server';
 import { adminPalette } from '../lib/adminPalette';
 
@@ -39,9 +40,9 @@ export default async function GroupPage({
   return (
     <AdminFeatureShell
       currentPath="/group"
-      badge="Direktori grup"
-      title="Tinjau grup penerima sebelum dipakai untuk blast"
-      description="Lihat grup yang tersedia, cek siapa saja anggotanya, lalu lanjut ke blast dengan daftar yang lebih mudah dipahami."
+      badge="Groups"
+      title="Kelola grup penerima"
+      description="Pantau grup dan anggota dalam satu dashboard agar segmentasi selalu siap dipakai untuk blast."
       actions={
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
           <Link href="/contacts" style={{ textDecoration: 'none' }}>
@@ -61,7 +62,7 @@ export default async function GroupPage({
                 },
               }}
             >
-              Kelola kontak
+              Buka direktori kontak
             </Button>
           </Link>
           <Link href="/blastmessage" style={{ textDecoration: 'none' }}>
@@ -80,12 +81,14 @@ export default async function GroupPage({
                 },
               }}
             >
-              Buka blast message
+              Buka blast
             </Button>
           </Link>
         </Stack>
       }
     >
+      <PhoneListToast />
+
       <GroupDirectory
         groups={groups}
         selectedGroupName={selectedGroupName}
