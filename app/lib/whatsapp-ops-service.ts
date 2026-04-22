@@ -24,10 +24,12 @@ export interface WhatsappOpsRepository {
   getGlobalQueueCounts(): Promise<{
     queued_ticket_replies: number;
     queued_api_notifications: number;
+    queued_blast_messages: number;
   }>;
   getGlobalFailedRetryingCount(): Promise<number>;
   getGlobalOldestQueuedAt(): Promise<string | null>;
   listRecentOutbound(limit: number): Promise<WhatsappOutboundListItem[]>;
+  listOutboundByIds(ids: string[]): Promise<WhatsappOutboundListItem[]>;
   getOutboundSummary(): Promise<WhatsappOutboundSummary>;
 }
 
@@ -82,6 +84,7 @@ export function buildWhatsappDashboardSummary(
   globalQueueCounts: {
     queued_ticket_replies: number;
     queued_api_notifications: number;
+    queued_blast_messages: number;
   },
   oldestQueuedAt: string | null,
   failedRetryingCount: number,
@@ -95,6 +98,7 @@ export function buildWhatsappDashboardSummary(
     ).length,
     queued_ticket_replies: globalQueueCounts.queued_ticket_replies,
     queued_api_notifications: globalQueueCounts.queued_api_notifications,
+    queued_blast_messages: globalQueueCounts.queued_blast_messages,
     oldest_queued_at: oldestQueuedAt,
     failed_or_retrying_messages: failedRetryingCount,
   };
@@ -196,10 +200,11 @@ export async function handleGetWhatsappInstanceEventsRequest(
 
 export async function handleGetWhatsappOutboundRequest(
   repository: WhatsappOpsRepository,
+  limit = 25,
 ): Promise<Response> {
   const [summary, items] = await Promise.all([
     repository.getOutboundSummary(),
-    repository.listRecentOutbound(25),
+    repository.listRecentOutbound(limit),
   ]);
 
   return Response.json({

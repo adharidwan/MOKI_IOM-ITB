@@ -1,12 +1,18 @@
-"use client"
+'use client';
 
 import Link from 'next/link';
-import { Box, Button, Chip, Container, Paper, Stack, Typography } from '@mui/material';
+import { Box, Button, Stack, Typography } from '@mui/material';
+import Groups2RoundedIcon from '@mui/icons-material/Groups2Rounded';
+import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded';
+import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded';
+import SendRoundedIcon from '@mui/icons-material/SendRounded';
+
+import { adminPalette } from '../lib/adminPalette';
 
 interface AdminFeatureShellProps {
   title: string;
   description: string;
-  currentPath: '/contacts' | '/blastmessage';
+  currentPath: '/contacts' | '/group' | '/blastmessage';
   badge?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
@@ -15,13 +21,18 @@ interface AdminFeatureShellProps {
 const NAV_ITEMS = [
   {
     href: '/contacts' as const,
-    label: 'Kontak & Grup',
-    helper: 'Tambah, cari, dan rapikan daftar penerima.',
+    label: 'Contacts',
+    icon: <PeopleAltRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: '/group' as const,
+    label: 'Groups',
+    icon: <Groups2RoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: '/blastmessage' as const,
-    label: 'Blast Message',
-    helper: 'Pilih penerima, tulis pesan, lalu kirim.',
+    label: 'Blast',
+    icon: <SendRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
 
@@ -34,141 +45,211 @@ export default function AdminFeatureShell({
   children,
 }: AdminFeatureShellProps) {
   return (
-    <Box
-      sx={{
-        minHeight: '100vh',
-        py: { xs: 3, md: 5 },
-        background:
-          'linear-gradient(180deg, #f8f4e8 0%, #fdfcf8 28%, #eef6f5 100%)',
-      }}
-    >
-      <Container maxWidth="lg">
-        <Stack spacing={3}>
-          <Paper
-            elevation={0}
+    <Box sx={{ minHeight: '100vh', backgroundColor: adminPalette.canvas }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: { xs: '1fr', lg: '80px minmax(0, 1fr)' },
+          gridTemplateRows: { xs: '60px auto minmax(0, 1fr)', lg: '60px minmax(0, 1fr)' },
+          minHeight: '100vh',
+        }}
+      >
+        <Box
+          component="aside"
+          sx={{
+            display: { xs: 'none', lg: 'flex' },
+            position: 'sticky',
+            top: 0,
+            gridColumn: '1 / 2',
+            gridRow: '1 / 3',
+            minHeight: '100vh',
+            flexDirection: 'column',
+            alignItems: 'center',
+            backgroundColor: adminPalette.sidebarRail,
+            borderRight: '1px solid rgba(4, 1, 1, 0.08)',
+          }}
+        >
+          <Box
             sx={{
-              p: { xs: 3, md: 4 },
-              borderRadius: 4,
-              border: '1px solid rgba(26, 71, 42, 0.12)',
-              backgroundColor: 'rgba(255, 255, 255, 0.9)',
+              width: '100%',
+              height: 60,
+              px: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: adminPalette.sidebarRailDarker,
+              borderBottom: '1px solid rgba(255,255,255,0.08)',
             }}
           >
-            <Stack spacing={3}>
-              <Stack
-                direction={{ xs: 'column', md: 'row' }}
-                spacing={2}
-                justifyContent="space-between"
-                alignItems={{ xs: 'flex-start', md: 'center' }}
-              >
-                <Stack spacing={1.5} sx={{ maxWidth: 760 }}>
-                  {badge ? (
-                    <Chip
-                      label={badge}
+            <Typography
+              sx={{
+                fontSize: '0.8rem',
+                fontWeight: 800,
+                letterSpacing: '0.12em',
+                color: '#ffffff',
+                textAlign: 'center',
+              }}
+            >
+              LOGO
+            </Typography>
+          </Box>
+
+          <Stack spacing={0} sx={{ width: '100%', py: 1 }}>
+            {NAV_ITEMS.map((item) => {
+              const active = item.href === currentPath;
+
+              return (
+                <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
+                  <Box
+                    sx={{
+                      px: 0.5,
+                      py: 1.05,
+                      backgroundColor: active ? adminPalette.sidebarActive : 'transparent',
+                      color: active ? adminPalette.textPrimary : adminPalette.sidebarRailText,
+                      textAlign: 'center',
+                      transition: 'background-color 120ms ease, color 120ms ease',
+                      '&:hover': {
+                        backgroundColor: active ? adminPalette.sidebarActive : 'rgba(255,255,255,0.08)',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        fontSize: 20,
+                      },
+                    }}
+                  >
+                    <Box sx={{ display: 'grid', placeItems: 'center' }}>{item.icon}</Box>
+                    <Typography
                       sx={{
-                        alignSelf: 'flex-start',
-                        backgroundColor: '#e4f2d2',
-                        color: '#1f4d2e',
-                        fontSize: '0.95rem',
+                        mt: 0.55,
+                        fontSize: '0.62rem',
+                        lineHeight: 1.15,
                         fontWeight: 700,
-                        px: 1,
+                        color: 'inherit',
                       }}
-                    />
-                  ) : null}
-                  <Typography
-                    component="h1"
-                    sx={{
-                      fontSize: { xs: '2rem', md: '2.8rem' },
-                      lineHeight: 1.15,
-                      fontWeight: 800,
-                      color: '#163020',
-                    }}
-                  >
-                    {title}
-                  </Typography>
-                  <Typography
-                    sx={{
-                      fontSize: { xs: '1.05rem', md: '1.15rem' },
-                      lineHeight: 1.7,
-                      color: '#355046',
-                      maxWidth: 680,
-                    }}
-                  >
-                    {description}
-                  </Typography>
-                </Stack>
+                    >
+                      {item.label}
+                    </Typography>
+                  </Box>
+                </Link>
+              );
+            })}
+          </Stack>
+        </Box>
 
-                {actions ? <Box>{actions}</Box> : null}
-              </Stack>
+        <Box
+          component="header"
+          sx={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 10,
+            gridColumn: { xs: '1 / 2', lg: '2 / 4' },
+            gridRow: '1 / 2',
+            height: 60,
+            px: { xs: 2, md: 3 },
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            backgroundColor: adminPalette.topNav,
+            color: '#ffffff',
+            borderBottom: `1px solid ${adminPalette.brand}`,
+          }}
+        >
+          <Stack direction="row" spacing={1.2} alignItems="center">
+            <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, letterSpacing: '-0.01em' }}>OKI IOM</Typography>
+          </Stack>
 
-              <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              px: 1.25,
+              py: 0.75,
+              borderRadius: 999,
+              border: '1px solid rgba(255,255,255,0.18)',
+              backgroundColor: 'rgba(255,255,255,0.14)',
+            }}
+          >
+            <NotificationsNoneRoundedIcon sx={{ fontSize: 18 }} />
+            <Typography sx={{ display: { xs: 'none', sm: 'block' }, fontSize: '0.82rem', fontWeight: 600, color: 'inherit' }}>
+              Notifications
+            </Typography>
+          </Box>
+        </Box>
+
+        <Stack sx={{ minWidth: 0, minHeight: 0, gridColumn: { xs: '1 / 2', lg: '2 / 3' }, gridRow: { xs: '3 / 4', lg: '2 / 3' } }}>
+
+          <Box
+            sx={{
+              display: { xs: 'block', lg: 'none' },
+              gridRow: '2 / 3',
+              backgroundColor: adminPalette.surfaceSoft,
+              borderBottom: `1px solid ${adminPalette.border}`,
+            }}
+          >
+            <Stack spacing={1.5} sx={{ px: 2, py: 2 }}>
+              <Box>
+                <Typography
+                  sx={{
+                    fontSize: '0.64rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.14em',
+                    textTransform: 'uppercase',
+                    color: adminPalette.textMuted,
+                  }}
+                >
+                  {badge || 'Workspace'}
+                </Typography>
+                <Typography
+                  component="h1"
+                  sx={{ mt: 0.7, fontSize: '1.3rem', fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}
+                >
+                  {title}
+                </Typography>
+                <Typography sx={{ mt: 0.85, fontSize: '0.88rem', lineHeight: 1.55, color: adminPalette.textSecondary }}>
+                  {description}
+                </Typography>
+              </Box>
+
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 {NAV_ITEMS.map((item) => {
                   const active = item.href === currentPath;
 
                   return (
-                    <Paper
-                      key={item.href}
-                      elevation={0}
-                      sx={{
-                        flex: 1,
-                        p: 2.5,
-                        borderRadius: 3,
-                        border: active
-                          ? '2px solid #1f6f5f'
-                          : '1px solid rgba(31, 111, 95, 0.18)',
-                        backgroundColor: active ? '#f2fbf8' : '#fffdf8',
-                      }}
-                    >
-                      <Stack spacing={1.5}>
-                        <Typography
-                          sx={{
-                            fontSize: '1.15rem',
-                            fontWeight: 800,
-                            color: '#123629',
-                          }}
-                        >
-                          {item.label}
-                        </Typography>
-                        <Typography
-                          sx={{
-                            fontSize: '1rem',
-                            lineHeight: 1.6,
-                            color: '#4d665d',
-                          }}
-                        >
-                          {item.helper}
-                        </Typography>
-                        <Link href={item.href} style={{ textDecoration: 'none' }}>
-                          <Button
-                            variant={active ? 'contained' : 'outlined'}
-                            size="large"
-                            sx={{
-                              alignSelf: 'flex-start',
-                              minWidth: 180,
-                              borderRadius: 999,
-                              px: 3,
-                              py: 1.1,
-                              fontSize: '1rem',
-                              fontWeight: 700,
-                              textTransform: 'none',
-                              backgroundColor: active ? '#1f6f5f' : undefined,
-                              borderColor: '#1f6f5f',
-                              color: active ? '#ffffff' : '#1f6f5f',
-                            }}
-                          >
-                            {active ? 'Halaman aktif' : 'Buka halaman'}
-                          </Button>
-                        </Link>
-                      </Stack>
-                    </Paper>
+                    <Link key={item.href} href={item.href} style={{ textDecoration: 'none' }}>
+                      <Button
+                        variant={active ? 'contained' : 'outlined'}
+                        size="small"
+                        sx={{
+                          minHeight: 32,
+                          minWidth: 0,
+                          borderRadius: 1.5,
+                          textTransform: 'none',
+                          fontWeight: 700,
+                          boxShadow: 'none',
+                          borderColor: adminPalette.borderStrong,
+                          color: active ? '#ffffff' : adminPalette.textSecondary,
+                          backgroundColor: active ? adminPalette.brand : adminPalette.surface,
+                          '&:hover': {
+                            boxShadow: 'none',
+                            backgroundColor: active ? adminPalette.brandDark : adminPalette.brandSoft,
+                            borderColor: active ? adminPalette.brandDark : adminPalette.brandSoftStrong,
+                          },
+                        }}
+                      >
+                        {item.label}
+                      </Button>
+                    </Link>
                   );
                 })}
               </Stack>
-            </Stack>
-          </Paper>
 
-          {children}
+              {actions ? <Box>{actions}</Box> : null}
+            </Stack>
+          </Box>
+
+          <Box sx={{ minWidth: 0, px: { xs: 2, md: 3 }, py: { xs: 2, md: 3 } }}>{children}</Box>
         </Stack>
-      </Container>
+      </Box>
     </Box>
   );
 }

@@ -19,6 +19,18 @@ vi.mock('../app/lib/supabase-server', () => ({
   getSupabaseAdminClient: vi.fn(() => fakeSupabase),
 }));
 
+vi.mock('../app/lib/whatsapp-notification-utils', () => ({
+  API_NOTIFICATION_PRIORITY: 100,
+  BLAST_PRIORITY: 50,
+  DEFAULT_WHATSAPP_INSTANCE_ID: 'default',
+  DEFAULT_WHATSAPP_INSTANCE_LABEL: 'Primary WhatsApp',
+  DEFAULT_DISPATCH_SETTINGS_ID: 'default',
+  DEFAULT_GLOBAL_MESSAGES_PER_MINUTE: 24,
+  TICKET_REPLY_PRIORITY: 10,
+  buildApiNotificationSourceId: (clientId: string, idempotencyKey: string) =>
+    `api:${clientId}:${idempotencyKey}`,
+}));
+
 beforeEach(() => {
   insertedOutboundMessages.length = 0;
   storedOutboundMessages.clear();
@@ -180,11 +192,13 @@ describe('contact group blast', () => {
     });
 
     expect(result).toEqual({
+      batchId: expect.any(String),
       totalRecipients: 2,
       acceptedCount: 2,
       queuedCount: 2,
       alreadyAcceptedCount: 0,
       failedCount: 0,
+      trackedMessageIds: expect.any(Array),
     });
     expect(insertedOutboundMessages).toHaveLength(2);
     expect(insertedOutboundMessages.map((message) => message.recipient_phone_number)).toEqual([
@@ -295,11 +309,13 @@ describe('contact group blast', () => {
 
     expect(first.acceptedCount).toBe(1);
     expect(second).toEqual({
+      batchId: expect.any(String),
       totalRecipients: 1,
       acceptedCount: 1,
       queuedCount: 0,
       alreadyAcceptedCount: 1,
       failedCount: 0,
+      trackedMessageIds: expect.any(Array),
     });
     expect(insertedOutboundMessages).toHaveLength(1);
   });

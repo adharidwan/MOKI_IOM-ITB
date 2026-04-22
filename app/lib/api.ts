@@ -31,6 +31,26 @@ export interface CsvContactGroupSyncInput {
   sourceFile?: string;
 }
 
+export interface PaginatedCsvContactsParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  groupName?: string;
+}
+
+export interface PaginatedCsvContactsResponse {
+  items: CsvContact[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface CsvContactsOverview {
+  totalContacts: number;
+  ungroupedContacts: number;
+}
+
 function normalizeGroupNames(values: string[] | null | undefined): string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
@@ -347,6 +367,75 @@ export async function getCsvContacts(): Promise<CsvContact[]> {
   }
 
   return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
+}
+
+export async function getPaginatedCsvContacts({
+  page = 1,
+  pageSize = 20,
+  search = '',
+  groupName,
+}: PaginatedCsvContactsParams): Promise<PaginatedCsvContactsResponse> {
+  const safePage = Math.max(1, Math.floor(page));
+  const safePageSize = Math.min(100, Math.max(10, Math.floor(pageSize)));
+  const from = (safePage - 1) * safePageSize;
+  const to = from + safePageSize - 1;
+  const normalizedSearch = search.trim();
+  const normalizedGroupName = String(groupName || '').trim();
+  const supabase = getSupabaseAdminClient();
+
+  let query = supabase
+    .from('csv_contacts')
+    .select('*', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(from, to);
+
+  if (normalizedSearch) {
+    query = query.or(
+      `no_telp.ilike.%${normalizedSearch}%,nama.ilike.%${normalizedSearch}%,jabatan.ilike.%${normalizedSearch}%`,
+    );
+  }
+
+  if (normalizedGroupName) {
+    query = query.contains('group_names', [normalizedGroupName]);
+  }
+
+  const { data, error, count } = await query;
+
+  if (error) {
+    throw new Error(`Failed to fetch paginated contacts: ${error.message}`);
+  }
+
+  const total = count || 0;
+
+  return {
+    items: (data || []).map((record) => toCsvContact(record as Record<string, unknown>)),
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+  };
+}
+
+export async function getCsvContactsOverview(): Promise<CsvContactsOverview> {
+  const supabase = getSupabaseAdminClient();
+  const [{ count: totalContacts, error: totalError }, { count: ungroupedContacts, error: ungroupedError }] =
+    await Promise.all([
+      supabase.from('csv_contacts').select('id', { count: 'exact', head: true }),
+      supabase.from('csv_contacts').select('id', { count: 'exact', head: true }).eq('group_names', '{}'),
+    ]);
+
+  if (totalError) {
+    throw new Error(`Failed to count contacts: ${totalError.message}`);
+  }
+
+  if (ungroupedError) {
+    throw new Error(`Failed to count ungrouped contacts: ${ungroupedError.message}`);
+  }
+
+  return {
+    totalContacts: totalContacts || 0,
+    ungroupedContacts: ungroupedContacts || 0,
+  };
 }
 
 export async function createCsvContact(row: CsvContactInput): Promise<CsvContact> {

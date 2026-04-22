@@ -23,6 +23,12 @@ The schema currently has three logical areas:
 2. WhatsApp contact and outbound delivery data
 3. API client and dispatch-control data
 
+Related SQL helper functions now used by the app for scalable group browsing:
+
+- `public.add_csv_contact_groups(p_contact_ids uuid[], p_group_names text[])`
+- `public.list_csv_contact_groups(p_search text, p_page integer, p_page_size integer)`
+- `public.list_csv_contact_group_members(p_group_name text, p_search text, p_page integer, p_page_size integer)`
+
 Main tables:
 
 - `tickets`
@@ -267,6 +273,12 @@ Operational notes:
 - The bot does not poll this table for due work anymore.
 - Redis stores public API idempotency state for 24 hours, accepted-request timestamps for rate limiting, and pending counters by client/source.
 - Ticket UI still reads mirrored delivery state from `replies`.
+
+Admin UI notes:
+
+- `/contacts` uses server-side pagination and filtering over `csv_contacts`.
+- `/group` uses database-side helper functions to paginate group summaries and group members without loading the full contact dataset into the browser.
+- `/blastmessage` uses paginated server queries for contact-list and group-list recipient selection.
 
 ### `bot_dispatch_settings`
 

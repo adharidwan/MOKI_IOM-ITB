@@ -16,6 +16,7 @@ import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
 
 import { importCsvContactsAction } from '../csv/actions';
+import { adminPalette } from '../lib/adminPalette';
 
 interface CSVRow {
   no_telp: string;
@@ -174,18 +175,18 @@ export default function CSVDropZone() {
     <Paper
       elevation={0}
       sx={{
-        p: { xs: 2.5, md: 3.5 },
+        p: { xs: 2, md: 2.5 },
         borderRadius: 3,
-        border: '1px solid rgba(31, 111, 95, 0.14)',
-        backgroundColor: '#ffffff',
+        border: `1px solid ${adminPalette.border}`,
+        backgroundColor: adminPalette.surface,
       }}
     >
       <Stack spacing={2.5}>
         <Stack spacing={1}>
-          <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+          <Typography sx={{ fontSize: '1.2rem', fontWeight: 700, color: adminPalette.textPrimary }}>
             Tambah kontak dari file CSV
           </Typography>
-          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+          <Typography sx={{ fontSize: '0.92rem', lineHeight: 1.65, color: adminPalette.textSecondary }}>
             Upload file CSV dengan kolom: <strong>nomor</strong>, <strong>nama</strong> (opsional).
             Jika nama kosong, sistem akan tetap menyimpan nomor teleponnya.
           </Typography>
@@ -197,31 +198,33 @@ export default function CSVDropZone() {
           onClick={open}
           sx={{
             borderRadius: 3,
-            border: isDragActive ? '2px solid #1f6f5f' : '2px dashed rgba(31, 111, 95, 0.3)',
-            backgroundColor: isDragActive ? '#f2fbf8' : '#f9fcfb',
-            p: { xs: 3, md: 4 },
+            border: isDragActive ? `1px solid ${adminPalette.brand}` : `1px dashed ${adminPalette.borderStrong}`,
+            backgroundColor: isDragActive ? adminPalette.brandSoft : adminPalette.surfaceSoft,
+            p: { xs: 3, md: 3.5 },
             textAlign: 'center',
             cursor: 'pointer',
           }}
         >
           <input key={inputKey} {...getInputProps({ accept: '.csv,text/csv' })} />
           {isDragActive ? (
-            <CloudUploadRoundedIcon sx={{ fontSize: 58, color: '#1f6f5f' }} />
+            <CloudUploadRoundedIcon sx={{ fontSize: 46, color: adminPalette.brand }} />
           ) : (
-            <DescriptionRoundedIcon sx={{ fontSize: 58, color: '#1f6f5f' }} />
+            <DescriptionRoundedIcon sx={{ fontSize: 46, color: adminPalette.textMuted }} />
           )}
-          <Typography sx={{ mt: 1.5, fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
+          <Typography sx={{ mt: 1.25, fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>
             {isDragActive ? 'Lepaskan file di sini' : 'Klik atau tarik file CSV ke area ini'}
           </Typography>
-          <Typography sx={{ mt: 1, fontSize: '1rem', color: '#567066' }}>
+          <Typography sx={{ mt: 0.9, fontSize: '0.88rem', color: adminPalette.textMuted }}>
             Contoh isi file: `nomor,nama`
           </Typography>
         </Paper>
 
-        {isProcessing ? <LinearProgress sx={{ borderRadius: 999 }} /> : null}
+        {isProcessing ? (
+          <LinearProgress sx={{ borderRadius: 999, '& .MuiLinearProgress-bar': { backgroundColor: adminPalette.brand } }} />
+        ) : null}
 
         {status ? (
-          <Alert severity={status.type} sx={{ borderRadius: 3, '& .MuiAlert-message': { fontSize: '1rem' } }}>
+          <Alert severity={status.type} sx={{ borderRadius: 2.5, '& .MuiAlert-message': { fontSize: '0.92rem' } }}>
             {status.message}
           </Alert>
         ) : null}
@@ -230,17 +233,17 @@ export default function CSVDropZone() {
           <Paper
             elevation={0}
             sx={{
-              p: 2.5,
+              p: 2,
               borderRadius: 3,
-              border: '1px solid rgba(31, 111, 95, 0.12)',
-              backgroundColor: '#fcfdfb',
+              border: `1px solid ${adminPalette.border}`,
+              backgroundColor: adminPalette.surface,
             }}
           >
             <Stack spacing={2}>
-              <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+              <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                 Ringkasan file: {parsedData.fileName}
               </Typography>
-              <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+              <Typography sx={{ fontSize: '0.9rem', color: adminPalette.textSecondary }}>
                 {parsedData.data.length} kontak siap dipakai.
               </Typography>
 
@@ -256,19 +259,19 @@ export default function CSVDropZone() {
                   <Box
                     key={`${row.no_telp}-${index}`}
                     sx={{
-                      px: 2,
-                      py: 1.5,
+                      px: 1.5,
+                      py: 1.15,
                       borderRadius: 2,
-                      backgroundColor: '#f4f8f6',
+                      backgroundColor: adminPalette.surfaceSoft,
                       display: 'grid',
                       gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr' },
                       gap: 1,
                     }}
                   >
-                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#163020' }}>
+                    <Typography sx={{ fontSize: '0.92rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                       {row.no_telp}
                     </Typography>
-                    <Typography sx={{ fontSize: '1rem', color: '#4d635b' }}>{row.nama}</Typography>
+                    <Typography sx={{ fontSize: '0.9rem', color: adminPalette.textSecondary }}>{row.nama}</Typography>
                   </Box>
                 ))}
               </Stack>
@@ -279,12 +282,17 @@ export default function CSVDropZone() {
                   onClick={handleImport}
                   disabled={isProcessing || parsedData.data.length === 0}
                   sx={{
-                    minHeight: 56,
-                    borderRadius: 3,
-                    backgroundColor: '#1f6f5f',
+                    minHeight: 46,
+                    borderRadius: 2.5,
+                    backgroundColor: adminPalette.brand,
                     px: 3,
                     textTransform: 'none',
                     fontWeight: 700,
+                    boxShadow: 'none',
+                    '&:hover': {
+                      backgroundColor: adminPalette.brandDark,
+                      boxShadow: 'none',
+                    },
                   }}
                 >
                   Simpan kontak dari CSV
@@ -293,13 +301,17 @@ export default function CSVDropZone() {
                   variant="outlined"
                   onClick={handleReset}
                   sx={{
-                    minHeight: 56,
-                    borderRadius: 3,
+                    minHeight: 46,
+                    borderRadius: 2.5,
                     px: 3,
-                    borderColor: '#1f6f5f',
-                    color: '#1f6f5f',
+                    borderColor: adminPalette.borderStrong,
+                    color: adminPalette.textSecondary,
                     textTransform: 'none',
                     fontWeight: 700,
+                    '&:hover': {
+                      borderColor: adminPalette.brandSoftStrong,
+                      backgroundColor: adminPalette.brandSoft,
+                    },
                   }}
                 >
                   Pilih file lain

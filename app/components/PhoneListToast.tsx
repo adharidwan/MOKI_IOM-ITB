@@ -8,6 +8,8 @@ const TOAST_CONFIG: Record<string, { severity: 'success' | 'error'; message: str
   created: { severity: 'success', message: 'Kontak baru berhasil disimpan.' },
   updated: { severity: 'success', message: 'Data kontak berhasil diperbarui.' },
   grouped: { severity: 'success', message: 'Group berhasil diterapkan ke kontak terpilih.' },
+  group_created: { severity: 'success', message: 'Grup baru berhasil dibuat dan anggota pertama sudah tersimpan.' },
+  member_created: { severity: 'success', message: 'Anggota baru berhasil ditambahkan ke grup.' },
   blast_sent: { severity: 'success', message: 'Blast message berhasil masuk ke antrian.' },
   blast_partial: { severity: 'error', message: 'Sebagian blast gagal masuk ke antrian. Periksa hasil terbaru sebelum retry.' },
   blast_empty: { severity: 'error', message: 'Tidak ada kontak yang cocok dengan segment terpilih.' },
