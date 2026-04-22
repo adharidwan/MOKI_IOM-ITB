@@ -2,7 +2,11 @@
 
 import { revalidatePath } from 'next/cache';
 
-import { upsertContentRecording, type ContentRecordingInput } from '../lib/api';
+import {
+  deleteContentRecording,
+  upsertContentRecording,
+  type ContentRecordingInput,
+} from '../lib/api';
 import { scrapeContentFromLink } from '../lib/scrape-content-link';
 import type { ContentRecording, ContentRecordingPlatform } from '../lib/types';
 
@@ -26,6 +30,11 @@ export interface ScrapeContentRecordingResult {
 export interface SaveContentRecordingResult {
   success: boolean;
   record?: ContentRecording;
+  error?: string;
+}
+
+export interface DeleteContentRecordingResult {
+  success: boolean;
   error?: string;
 }
 
@@ -124,6 +133,27 @@ export async function saveContentRecordingAction(
         error instanceof Error
           ? error.message
           : 'Gagal menyimpan content recording.',
+    };
+  }
+}
+
+export async function deleteContentRecordingAction(
+  id: string,
+): Promise<DeleteContentRecordingResult> {
+  try {
+    await deleteContentRecording(id);
+    revalidatePath('/content-record');
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Gagal menghapus content recording.',
     };
   }
 }

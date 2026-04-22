@@ -1,7 +1,7 @@
 'use client';
 
 import type { ClipboardEvent } from 'react';
-import { useState, useTransition } from 'react';
+import { useDeferredValue, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
   Alert,
@@ -19,12 +19,15 @@ import {
   Typography,
 } from '@mui/material';
 import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
 
 import type { ContentRecording } from '../lib/types';
 import type { ContentRecordingFormState } from './actions';
 import {
+  deleteContentRecordingAction,
   scrapeContentRecordingAction,
   saveContentRecordingAction,
 } from './actions';
@@ -82,16 +85,34 @@ export default function ContentRecordingWorkspace({
   const [flash, setFlash] = useState<FlashState>(
     initialLoadError ? { severity: 'warning', message: initialLoadError } : null,
   );
+  const [searchTerm, setSearchTerm] = useState('');
   const [lastScrapedLink, setLastScrapedLink] = useState('');
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
+  const [isDeleting, startDeleteTransition] = useTransition();
 
-  const isBusy = isScraping || isSaving;
+  const isBusy = isScraping || isSaving || isDeleting;
   const totalRecordings = recordings.length;
+  const deferredSearchTerm = useDeferredValue(searchTerm);
+  const normalizedSearchTerm = deferredSearchTerm.trim().toLowerCase();
   const sortedRecordings = [...recordings].sort((left, right) => {
     const leftValue = `${left.upload_date}-${left.created_at}`;
     const rightValue = `${right.upload_date}-${right.created_at}`;
     return rightValue.localeCompare(leftValue);
+  });
+  const filteredRecordings = sortedRecordings.filter((record) => {
+    if (!normalizedSearchTerm) {
+      return true;
+    }
+
+    const haystacks = [
+      record.title,
+      record.platform,
+      record.link,
+      record.upload_date,
+    ];
+
+    return haystacks.some((value) => value.toLowerCase().includes(normalizedSearchTerm));
   });
 
   function setField<K extends keyof ContentRecordingFormState>(
@@ -187,6 +208,28 @@ export default function ContentRecordingWorkspace({
       setFlash({
         severity: 'success',
         message: 'Content recording berhasil disimpan ke database.',
+      });
+    });
+  }
+
+  function handleDelete(record: ContentRecording) {
+    setFlash(null);
+
+    startDeleteTransition(async () => {
+      const result = await deleteContentRecordingAction(record.id);
+
+      if (!result.success) {
+        setFlash({
+          severity: 'error',
+          message: result.error || 'Gagal menghapus content recording.',
+        });
+        return;
+      }
+
+      setRecordings((current) => current.filter((item) => item.id !== record.id));
+      setFlash({
+        severity: 'success',
+        message: `Content recording "${record.title}" berhasil dihapus.`,
       });
     });
   }
@@ -441,27 +484,50 @@ export default function ContentRecordingWorkspace({
         }}
       >
         <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, borderBottom: '1px solid rgba(22, 48, 32, 0.08)' }}>
-          <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
-            Recording Tersimpan
-          </Typography>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={1.5}
+            justifyContent="space-between"
+            alignItems={{ xs: 'stretch', md: 'center' }}
+          >
+            <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
+              Recording Tersimpan
+            </Typography>
+            <TextField
+              size="small"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Cari title, platform, tanggal, atau link"
+              sx={{ width: { xs: '100%', md: 360 } }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchRoundedIcon sx={{ color: '#1f6f5f' }} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Stack>
         </Box>
 
         <Stack spacing={0} divider={<Divider flexItem />}>
-          {sortedRecordings.length === 0 ? (
+          {filteredRecordings.length === 0 ? (
             <Box sx={{ px: 3, py: 5, textAlign: 'center' }}>
               <Typography sx={{ color: '#50665d' }}>
-                Belum ada content recording yang tersimpan.
+                {normalizedSearchTerm
+                  ? 'Tidak ada content recording yang cocok dengan pencarian.'
+                  : 'Belum ada content recording yang tersimpan.'}
               </Typography>
             </Box>
           ) : (
-            sortedRecordings.map((record) => (
+            filteredRecordings.map((record) => (
               <Box
                 key={record.id}
                 sx={{
                   px: { xs: 2, md: 3 },
                   py: 2.25,
                   display: 'grid',
-                  gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) auto auto' },
+                  gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) auto auto auto' },
                   gap: 1.5,
                   alignItems: { lg: 'center' },
                 }}
@@ -499,6 +565,23 @@ export default function ContentRecordingWorkspace({
                 <Typography sx={{ color: '#50665d', fontWeight: 600 }}>
                   {formatDateLabel(record.upload_date)}
                 </Typography>
+
+                <Button
+                  variant="outlined"
+                  color="error"
+                  startIcon={<DeleteOutlineRoundedIcon />}
+                  disabled={isDeleting}
+                  onClick={() => handleDelete(record)}
+                  sx={{
+                    justifySelf: { lg: 'end' },
+                    width: 'fit-content',
+                    borderRadius: 999,
+                    textTransform: 'none',
+                    fontWeight: 700,
+                  }}
+                >
+                  Hapus
+                </Button>
               </Box>
             ))
           )}

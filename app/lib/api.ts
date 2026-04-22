@@ -627,3 +627,20 @@ export async function upsertContentRecording(
 
   return toContentRecording(data as Record<string, unknown>);
 }
+
+export async function deleteContentRecording(id: string): Promise<void> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) {
+    throw new Error('Content recording id is required.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from('content_recordings')
+    .delete()
+    .eq('id', normalizedId);
+
+  if (error) {
+    throw new Error(`Failed to delete content recording: ${error.message}`);
+  }
+}
