@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import OutboundTrackerOverlay from "./components/OutboundTrackerOverlay";
 import ThemeRegistry from "./components/ThemeRegistry";
 import "./globals.css";
 
@@ -28,7 +29,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeRegistry>{children}</ThemeRegistry>
+        <ThemeRegistry>
+          {children}
+          <OutboundTrackerOverlay />
+        </ThemeRegistry>
       </body>
     </html>
   );

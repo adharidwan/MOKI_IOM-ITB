@@ -135,6 +135,7 @@ export interface WhatsappInstanceRuntime {
 export interface WhatsappInstanceQueueSummary {
   queued_ticket_replies: number;
   queued_api_notifications: number;
+  queued_blast_messages: number;
   retrying_messages: number;
   failed_messages: number;
   sent_messages: number;
@@ -167,6 +168,7 @@ export interface WhatsappDashboardSummary {
   degraded_instances: number;
   queued_ticket_replies: number;
   queued_api_notifications: number;
+  queued_blast_messages: number;
   oldest_queued_at: string | null;
   failed_or_retrying_messages: number;
 }
@@ -183,6 +185,31 @@ export interface WhatsappOutboundSummary {
   sent: number;
   ticket_reply: number;
   api_notification: number;
+  blast: number;
+}
+
+export interface OutboundTrackerSummary {
+  queued: number;
+  retrying: number;
+  failed: number;
+  sent: number;
+  active: number;
+  total: number;
+  ticket_reply: number;
+  api_notification: number;
+  blast: number;
+  queued_ticket_replies: number;
+  queued_api_notifications: number;
+  queued_blast_messages: number;
+  effective_min_gap_ms: number;
+  api_notifications_paused: boolean;
+  estimated_completion_seconds: number | null;
+  updated_at: string;
+}
+
+export interface OutboundTrackerResponse {
+  summary: OutboundTrackerSummary;
+  items: WhatsappOutboundListItem[];
 }
 
 export interface WhatsappOutboundListItem {

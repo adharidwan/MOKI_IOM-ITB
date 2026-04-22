@@ -8,6 +8,10 @@ This document captures the important architecture decisions and the current oper
   - ticket dashboard
   - server-side ticket actions
   - public notification API at `POST /api/v1/messages/whatsapp`
+  - session-scoped outbound tracker overlay for operator-visible delivery progress
+  - contact management at `/contacts`
+  - group directory at `/group`
+  - paginated blast recipient selection at `/blastmessage`
 - `scripts/whatsapp-bot.js` is the only component that talks directly to WhatsApp Web.
 - Supabase remains the source of truth for business data and the outbound delivery ledger.
 - Redis + BullMQ is the operational outbound queue and idempotency/quota state backend.
@@ -37,6 +41,7 @@ Important:
    - higher priority than notification traffic
 4. The app enqueues a BullMQ job with the same source metadata.
 5. The bot worker consumes the BullMQ job, sends the WhatsApp message, then mirrors delivery state back onto the linked `replies` row.
+6. Operators can monitor the resulting outbound rows from the session-scoped tracker overlay without leaving the current page.
 
 Important:
 - `replies` is still the ticket conversation record.
@@ -55,6 +60,7 @@ Important:
    - lower priority than ticket replies
 5. The app reserves the caller's idempotency key in Redis for 24 hours and enqueues a BullMQ job.
 6. The bot worker resolves the WhatsApp recipient chat ID, sends the message, then updates delivery status in the ledger row.
+7. Operators can see these outbound rows in the same session-scoped tracker overlay alongside other tracked outbound traffic from the current browser session.
 
 Important:
 - Public API sends are asynchronous.
@@ -72,6 +78,7 @@ The system now has one outbound Redis-backed queue:
 2. `outbound_messages`
    - no longer polled by the bot
    - stores lightweight accepted/sent/failed ledger data and delivery metadata
+   - provides status lookup data for items currently tracked in the operator-facing overlay
 
 Related tables:
 - `replies` remains ticket history and UI-facing reply state
@@ -84,6 +91,17 @@ Redis also stores:
 - pending outbound counters by client and source type
 
 The bot runs a BullMQ worker with concurrency `1` and uses `bot_dispatch_settings` to decide whether a job can send now or should be delayed in-place.
+
+The Next.js app also exposes tracker endpoints for the session-scoped outbound overlay:
+
+- `GET /api/admin/outbound-tracker`
+- `GET /api/admin/outbound-tracker/stream`
+
+These endpoints surface tracked outbound rows and summary counts for all supported source types:
+
+- `ticket_reply`
+- `api_notification`
+- `blast`
 
 ## Current Constraints And Gaps
 
@@ -117,6 +135,13 @@ The repo does not currently expose:
 
 Result:
 - real production volume is unknown from the application itself
+
+Important nuance:
+
+- The app now has a user-facing session-scoped outbound tracker overlay and SSE-backed live status feed for current tracked message activity.
+- The overlay stores tracked outbound batches in browser `sessionStorage`, so it can survive page refresh within the same browser session.
+- The overlay is still intentionally non-persistent at the product level: it disappears when the browser session ends and old terminal batches are auto-pruned.
+- This improves operator UX substantially, but it is not a full observability or metrics system yet.
 
 ### 4. Single Worker WhatsApp Session
 
@@ -204,6 +229,11 @@ When continuing work in this area, preserve these assumptions unless product req
 - The bot worker is the only WhatsApp-sending component.
 - BullMQ is the single outbound operational queue.
 - `outbound_messages` is a delivery ledger, not the due-work queue.
+- The session-scoped outbound tracker overlay stores batch membership in browser `sessionStorage` and only reads delivery state for tracked message IDs from `outbound_messages`.
+- Resolved batches are automatically removed after a short TTL so failed or completed items do not accumulate indefinitely in the overlay.
+- Contact and group administration are intentionally split: `/contacts` focuses on contact records, while `/group` focuses on browsing group composition before blast selection.
+- `/contacts` and `/group` now use server-side pagination and filtering.
+- `/blastmessage` no longer needs the full contact dataset on initial render; recipient selection is backed by paginated server queries for contacts and groups.
 - Ticket replies have higher dispatch priority than API notifications.
 - Application-level public API quotas exist.
 - The dispatch-control API currently has no real auth and should be treated as temporary.

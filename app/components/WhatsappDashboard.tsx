@@ -109,6 +109,12 @@ const OUTBOUND_FILTER_COPY: Record<
   sent: { label: 'Berhasil', color: 'success' },
 };
 
+const OUTBOUND_SOURCE_COPY = {
+  ticket_reply: { label: 'Balasan tiket', chipLabel: 'Tiket' },
+  api_notification: { label: 'External API', chipLabel: 'External' },
+  blast: { label: 'Blast', chipLabel: 'Blast' },
+} as const;
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return '-';
@@ -162,6 +168,7 @@ function getPendingMessageCount(instance: WhatsappInstanceSummary): number {
   return (
     instance.queue.queued_ticket_replies +
     instance.queue.queued_api_notifications +
+    instance.queue.queued_blast_messages +
     instance.queue.retrying_messages
   );
 }
@@ -547,6 +554,7 @@ export default function WhatsappDashboard({
   const totalPendingMessages =
     overview.summary.queued_ticket_replies +
     overview.summary.queued_api_notifications +
+    overview.summary.queued_blast_messages +
     outbound.summary.retrying;
 
   const activePanelUpdatedAt = useMemo(() => {
@@ -1035,7 +1043,7 @@ export default function WhatsappDashboard({
                                   </Typography>
                                   <Typography variant="body2">
                                     Pesan tertunda:{' '}
-                                    <strong>{selectedDetail.queue.queued_ticket_replies + selectedDetail.queue.queued_api_notifications}</strong>
+                                    <strong>{selectedDetail.queue.queued_ticket_replies + selectedDetail.queue.queued_api_notifications + selectedDetail.queue.queued_blast_messages}</strong>
                                   </Typography>
                                   <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                                     <Button
@@ -1227,7 +1235,7 @@ export default function WhatsappDashboard({
                               <Stack spacing={1.5}>
                                 <Typography variant="h6">Status Pengiriman</Typography>
                                 <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                  <Chip label={`Tertunda ${selectedDetail.queue.queued_ticket_replies + selectedDetail.queue.queued_api_notifications}`} size="small" color="warning" />
+                                  <Chip label={`Tertunda ${selectedDetail.queue.queued_ticket_replies + selectedDetail.queue.queued_api_notifications + selectedDetail.queue.queued_blast_messages}`} size="small" color="warning" />
                                   <Chip label={`Coba Lagi ${selectedDetail.queue.retrying_messages}`} size="small" color="warning" variant="outlined" />
                                   <Chip label={`Gagal ${selectedDetail.queue.failed_messages}`} size="small" color="error" />
                                   <Chip label={`Berhasil ${selectedDetail.queue.sent_messages}`} size="small" color="success" />
@@ -1237,6 +1245,9 @@ export default function WhatsappDashboard({
                                 </Typography>
                                 <Typography variant="body2">
                                   Notifikasi API tertunda: <strong>{selectedDetail.queue.queued_api_notifications}</strong>
+                                </Typography>
+                                <Typography variant="body2">
+                                  Blast tertunda: <strong>{selectedDetail.queue.queued_blast_messages}</strong>
                                 </Typography>
                                 <Typography variant="body2">
                                   Antrean terlama: <strong>{formatAgeWithNow(selectedDetail.queue.oldest_queued_at, activePanelNowMs)}</strong>
@@ -1288,7 +1299,9 @@ export default function WhatsappDashboard({
                                         <TableRow key={item.id} hover>
                                           <TableCell>{OUTBOUND_FILTER_COPY[item.delivery_status].label}</TableCell>
                                           <TableCell>{item.recipient_phone_number}</TableCell>
-                                          <TableCell>{item.source_type === 'ticket_reply' ? 'Balasan Tiket' : item.source_type === 'api_notification' ? 'Notifikasi API' : 'Blast'}</TableCell>
+                                          <TableCell>
+                                            <Chip label={OUTBOUND_SOURCE_COPY[item.source_type].chipLabel} size="small" variant="outlined" />
+                                          </TableCell>
                                           <TableCell>{item.client_reference || '-'}</TableCell>
                                           <TableCell>
                                             {item.ticket_id ? <Link href={`/ticket/${item.ticket_id}`}>{item.ticket_id}</Link> : '-'}

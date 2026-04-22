@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import Papa from 'papaparse';
 import {
   Alert,
@@ -24,18 +25,39 @@ import GroupRoundedIcon from '@mui/icons-material/GroupRounded';
 import PersonAddAltRoundedIcon from '@mui/icons-material/PersonAddAltRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 
+import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
+import { adminPalette } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 
-type RecipientSource = 'group' | 'csv' | 'manual';
+const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
+
+type RecipientSource = 'contact' | 'group' | 'csv' | 'manual';
 
 interface BlastComposerProps {
-  contacts: CsvContact[];
-  availableGroups: string[];
+  initialContacts: {
+    items: CsvContact[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  };
+  initialGroups: {
+    items: Array<{
+      name: string;
+      memberCount: number;
+      previewNames: string[];
+    }>;
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  };
 }
 
 interface RecipientInput {
   no_telp: string;
   nama?: string;
+  group_names?: string[];
 }
 
 interface ParsedCsvRow {
@@ -44,6 +66,31 @@ interface ParsedCsvRow {
   'no telp'?: string;
   phone?: string;
   nama?: string;
+}
+
+interface ContactDirectoryResponse {
+  items: CsvContact[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+interface GroupDirectoryResponse {
+  items: Array<{
+    name: string;
+    memberCount: number;
+    previewNames: string[];
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+interface GroupRecipientsPreviewResponse {
+  totalRecipients: number;
+  previewRecipients: RecipientInput[];
 }
 
 const STEP_TITLES = [
@@ -72,6 +119,13 @@ function uniqueRecipients(recipients: RecipientInput[]): RecipientInput[] {
     deduped.set(normalizedPhone, {
       no_telp: normalizedPhone,
       nama: String(recipient.nama || '').trim() || undefined,
+      group_names: Array.from(
+        new Set(
+          (recipient.group_names || [])
+            .map((groupName) => String(groupName || '').trim())
+            .filter((groupName) => groupName.length > 0),
+        ),
+      ),
     });
   });
 
@@ -79,18 +133,32 @@ function uniqueRecipients(recipients: RecipientInput[]): RecipientInput[] {
 }
 
 function sourceLabel(source: RecipientSource | null): string {
+  if (source === 'contact') return 'Daftar kontak';
   if (source === 'group') return 'Grup kontak';
   if (source === 'csv') return 'File CSV';
   if (source === 'manual') return 'Input Satu per Satu';
   return '-';
 }
 
-export default function BlastComposer({ contacts, availableGroups }: BlastComposerProps) {
+export default function BlastComposer({ initialContacts, initialGroups }: BlastComposerProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [selectedSource, setSelectedSource] = useState<RecipientSource | null>(null);
+  const [contactSearch, setContactSearch] = useState('');
+  const [groupSearch, setGroupSearch] = useState('');
+  const [contactPage, setContactPage] = useState(initialContacts.page || 1);
+  const [groupPage, setGroupPage] = useState(initialGroups.page || 1);
+  const [contactDirectory, setContactDirectory] = useState<ContactDirectoryResponse>(initialContacts);
+  const [groupDirectory, setGroupDirectory] = useState<GroupDirectoryResponse>(initialGroups);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [groupPreview, setGroupPreview] = useState<GroupRecipientsPreviewResponse>({
+    totalRecipients: 0,
+    previewRecipients: [],
+  });
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [manualPhone, setManualPhone] = useState('');
   const [manualName, setManualName] = useState('');
+  const [selectedContactRecipients, setSelectedContactRecipients] = useState<RecipientInput[]>([]);
   const [manualRecipients, setManualRecipients] = useState<RecipientInput[]>([]);
   const [csvRecipients, setCsvRecipients] = useState<RecipientInput[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
@@ -103,23 +171,13 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
   >(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const groupsWithCounts = useMemo(() => {
-    return availableGroups.map((groupName) => ({
-      name: groupName,
-      count: contacts.filter((contact) => contact.group_names.includes(groupName)).length,
-    }));
-  }, [availableGroups, contacts]);
-
   const recipients = useMemo(() => {
+    if (selectedSource === 'contact') {
+      return uniqueRecipients(selectedContactRecipients);
+    }
+
     if (selectedSource === 'group') {
-      return uniqueRecipients(
-        contacts
-          .filter((contact) => contact.group_names.some((groupName) => selectedGroups.includes(groupName)))
-          .map((contact) => ({
-            no_telp: contact.no_telp,
-            nama: contact.nama,
-          })),
-      );
+      return uniqueRecipients(groupPreview.previewRecipients);
     }
 
     if (selectedSource === 'csv') {
@@ -131,16 +189,171 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     }
 
     return [];
-  }, [contacts, csvRecipients, manualRecipients, selectedGroups, selectedSource]);
+  }, [csvRecipients, groupPreview.previewRecipients, manualRecipients, selectedContactRecipients, selectedSource]);
+
+  const recipientCount = selectedSource === 'group' ? groupPreview.totalRecipients : recipients.length;
 
   const canContinueFromStepOne =
-    (selectedSource === 'group' && selectedGroups.length > 0 && recipients.length > 0) ||
+    (selectedSource === 'contact' && recipients.length > 0) ||
+    (selectedSource === 'group' && selectedGroups.length > 0 && groupPreview.totalRecipients > 0) ||
     (selectedSource === 'csv' && recipients.length > 0) ||
     (selectedSource === 'manual' && recipients.length > 0);
   const canContinueFromStepThree =
     message.trim().length > 0 && message.trim().length <= MAX_MESSAGE_LENGTH;
   const shouldShowSaveToGroupOption = selectedSource === 'manual' || selectedSource === 'csv';
   const requiresGroupName = shouldShowSaveToGroupOption && saveToGroup;
+  const previewRecipients = recipients.slice(0, 3);
+  const previewMessages = previewRecipients.map((recipient) => ({
+    recipient,
+    content: renderBlastMessageTemplate(message.trim(), recipient),
+  }));
+
+  useEffect(() => {
+    if (selectedSource !== 'contact') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadContacts = async () => {
+      setLoadingContacts(true);
+
+      try {
+        const params = new URLSearchParams({
+          page: String(contactPage),
+          pageSize: String(initialContacts.pageSize || 20),
+        });
+
+        if (contactSearch.trim()) {
+          params.set('search', contactSearch.trim());
+        }
+
+        const response = await fetch(`/api/admin/contact-directory?${params.toString()}`, {
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gagal memuat daftar kontak (${response.status}).`);
+        }
+
+        const payload = (await response.json()) as ContactDirectoryResponse;
+        if (!cancelled) {
+          setContactDirectory(payload);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setStatus({
+            type: 'error',
+            message: error instanceof Error ? error.message : 'Gagal memuat daftar kontak.',
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingContacts(false);
+        }
+      }
+    };
+
+    void loadContacts();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [contactPage, contactSearch, initialContacts.pageSize, selectedSource]);
+
+  useEffect(() => {
+    if (selectedSource !== 'group') {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadGroups = async () => {
+      setLoadingGroups(true);
+
+      try {
+        const params = new URLSearchParams({
+          page: String(groupPage),
+          pageSize: String(initialGroups.pageSize || 20),
+        });
+
+        if (groupSearch.trim()) {
+          params.set('search', groupSearch.trim());
+        }
+
+        const response = await fetch(`/api/admin/contact-groups?${params.toString()}`, {
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gagal memuat daftar grup (${response.status}).`);
+        }
+
+        const payload = (await response.json()) as GroupDirectoryResponse;
+        if (!cancelled) {
+          setGroupDirectory(payload);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setStatus({
+            type: 'error',
+            message: error instanceof Error ? error.message : 'Gagal memuat daftar grup.',
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingGroups(false);
+        }
+      }
+    };
+
+    void loadGroups();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [groupPage, groupSearch, initialGroups.pageSize, selectedSource]);
+
+  useEffect(() => {
+    if (!selectedGroups.length) {
+      setGroupPreview({ totalRecipients: 0, previewRecipients: [] });
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPreview = async () => {
+      try {
+        const response = await fetch('/api/admin/contact-groups/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ groupNames: selectedGroups }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Gagal memuat preview grup (${response.status}).`);
+        }
+
+        const payload = (await response.json()) as GroupRecipientsPreviewResponse;
+        if (!cancelled) {
+          setGroupPreview(payload);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setStatus({
+            type: 'error',
+            message: error instanceof Error ? error.message : 'Gagal memuat preview penerima grup.',
+          });
+        }
+      }
+    };
+
+    void loadPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedGroups]);
 
   const handleSourceChange = (source: RecipientSource) => {
     setSelectedSource(source);
@@ -148,6 +361,23 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     setSaveGroupName('');
     setStatus(null);
     setCurrentStep(1);
+  };
+
+  const toggleContactRecipient = (contact: CsvContact) => {
+    setSelectedContactRecipients((previous) => {
+      if (previous.some((recipient) => recipient.no_telp === contact.no_telp)) {
+        return previous.filter((recipient) => recipient.no_telp !== contact.no_telp);
+      }
+
+      return uniqueRecipients([
+        ...previous,
+        {
+          no_telp: contact.no_telp,
+          nama: contact.nama,
+          group_names: contact.group_names,
+        },
+      ]);
+    });
   };
 
   const toggleGroup = (groupName: string) => {
@@ -184,6 +414,10 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
 
   const handleRemoveManualRecipient = (phoneNumber: string) => {
     setManualRecipients((previous) => previous.filter((recipient) => recipient.no_telp !== phoneNumber));
+  };
+
+  const handleInsertVariable = (token: string) => {
+    setMessage((previous) => `${previous}${previous.endsWith(' ') || previous.length === 0 ? '' : ' '}${token}`);
   };
 
   const handleCsvFile = (file: File) => {
@@ -250,7 +484,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
   };
 
   const handleSendBlast = async () => {
-    if (!selectedSource || recipients.length === 0 || !message.trim()) {
+    if (!selectedSource || recipientCount === 0 || !message.trim()) {
       setConfirmOpen(false);
       setStatus({ type: 'error', message: 'Data blast belum lengkap. Periksa lagi sebelum kirim.' });
       return;
@@ -281,9 +515,11 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
 
     const result = (await response.json()) as {
       error?: string;
+      batchId?: string;
       acceptedCount?: number;
       failedCount?: number;
       totalRecipients?: number;
+      trackedMessageIds?: string[];
     };
 
     if (!response.ok) {
@@ -302,10 +538,35 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
     } else {
       setStatus({
         type: 'success',
-        message: `Blast queued untuk ${result.acceptedCount || recipients.length} penerima.${
+        message: `Blast queued untuk ${result.acceptedCount || recipientCount} penerima.${
           requiresGroupName ? ` Kontak valid disimpan ke group ${saveGroupName.trim()}.` : ''
         }`,
       });
+    }
+
+    if (result.trackedMessageIds?.length && result.batchId) {
+      const batchLabel =
+        selectedSource === 'group'
+          ? 'Blast grup'
+          : selectedSource === 'csv'
+            ? 'Blast CSV'
+            : 'Blast manual';
+
+      window.dispatchEvent(
+        new CustomEvent(TRACKER_REGISTER_EVENT, {
+          detail: {
+            batch: {
+              id: result.batchId,
+              label: batchLabel,
+              source_type: 'blast',
+              created_at: new Date().toISOString(),
+              tracked_ids: result.trackedMessageIds,
+              total_count: result.totalRecipients || result.trackedMessageIds.length,
+              resolved_at: null,
+            },
+          },
+        }),
+      );
     }
 
     setCurrentStep(4);
@@ -336,15 +597,15 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
         sx={{
           p: { xs: 2.5, md: 3 },
           borderRadius: 3,
-          border: '1px solid rgba(31, 111, 95, 0.14)',
-          backgroundColor: '#ffffff',
+          border: `1px solid ${adminPalette.border}`,
+          backgroundColor: adminPalette.surface,
         }}
       >
         <Stack spacing={2}>
-          <Typography sx={{ fontSize: '1.35rem', fontWeight: 800, color: '#163020' }}>
+          <Typography sx={{ fontSize: '1.35rem', fontWeight: 800, color: adminPalette.textPrimary }}>
             Langkah cepat kirim pesan
           </Typography>
-          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+          <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: adminPalette.textSecondary }}>
             Ikuti urutan ini: pilih penerima, cek daftar, tulis pesan, lalu kirim.
           </Typography>
 
@@ -367,17 +628,15 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   sx={{
                     p: 2,
                     borderRadius: 3,
-                    border: active
-                      ? '2px solid #1f6f5f'
-                      : '1px solid rgba(31, 111, 95, 0.14)',
-                    backgroundColor: completed ? '#eef8f3' : '#fafcfb',
+                    border: active ? `2px solid ${adminPalette.brand}` : `1px solid ${adminPalette.border}`,
+                    backgroundColor: completed ? adminPalette.brandSoft : adminPalette.surfaceSoft,
                   }}
                 >
                   <Stack spacing={0.8}>
-                    <Typography sx={{ fontSize: '0.95rem', fontWeight: 800, color: '#1f6f5f' }}>
+                    <Typography sx={{ fontSize: '0.95rem', fontWeight: 800, color: adminPalette.brand }}>
                       Langkah {stepNumber}
                     </Typography>
-                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#163020' }}>
+                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                       {stepTitle}
                     </Typography>
                   </Stack>
@@ -400,12 +659,12 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           sx={{
             p: { xs: 2.5, md: 3.5 },
             borderRadius: 3,
-            border: '1px solid rgba(31, 111, 95, 0.14)',
-            backgroundColor: '#ffffff',
+            border: `1px solid ${adminPalette.border}`,
+            backgroundColor: adminPalette.surface,
           }}
         >
           <Stack spacing={3}>
-            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: adminPalette.textPrimary }}>
               1. Pilih penerima
             </Typography>
 
@@ -418,22 +677,28 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
             >
               {[
                 {
+                  value: 'contact' as const,
+                  title: 'Pilih dari kontak',
+                  helper: 'Cari dan pilih nomor dari daftar kontak tersimpan.',
+                  icon: <PersonAddAltRoundedIcon sx={{ fontSize: 34, color: adminPalette.brand }} />,
+                },
+                {
                   value: 'group' as const,
                   title: 'Pilih dari grup',
                   helper: 'Pakai kontak yang sudah dikelompokkan sebelumnya.',
-                  icon: <GroupRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
+                  icon: <GroupRoundedIcon sx={{ fontSize: 34, color: adminPalette.brand }} />,
                 },
                 {
                   value: 'csv' as const,
                   title: 'Upload CSV',
                   helper: 'Upload daftar nomor dari file CSV sederhana.',
-                  icon: <UploadFileRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
+                  icon: <UploadFileRoundedIcon sx={{ fontSize: 34, color: adminPalette.brand }} />,
                 },
                 {
                   value: 'manual' as const,
                   title: 'Input Satu per Satu',
                   helper: 'Masukkan nomor satu per satu dengan tombol tambah.',
-                  icon: <PersonAddAltRoundedIcon sx={{ fontSize: 34, color: '#1f6f5f' }} />,
+                  icon: <PersonAddAltRoundedIcon sx={{ fontSize: 34, color: adminPalette.brand }} />,
                 },
               ].map((option) => {
                 const active = selectedSource === option.value;
@@ -445,16 +710,16 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                     sx={{
                       p: 2.5,
                       borderRadius: 3,
-                      border: active ? '2px solid #1f6f5f' : '1px solid rgba(31, 111, 95, 0.14)',
-                      backgroundColor: active ? '#f2fbf8' : '#fffdf8',
+                      border: active ? `1px solid ${adminPalette.brand}` : `1px solid ${adminPalette.border}`,
+                      backgroundColor: active ? adminPalette.brandSoft : adminPalette.surface,
                     }}
                   >
                     <Stack spacing={1.5}>
                       {option.icon}
-                      <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                      <Typography sx={{ fontSize: '1.05rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                         {option.title}
                       </Typography>
-                      <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+                      <Typography sx={{ fontSize: '0.94rem', lineHeight: 1.7, color: adminPalette.textMuted }}>
                         {option.helper}
                       </Typography>
                       <Button
@@ -463,11 +728,11 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                         sx={{
                           alignSelf: 'flex-start',
                           minHeight: 50,
-                          borderRadius: 999,
+                          borderRadius: 2.5,
                           px: 3,
-                          backgroundColor: active ? '#1f6f5f' : undefined,
-                          borderColor: '#1f6f5f',
-                          color: active ? '#ffffff' : '#1f6f5f',
+                          backgroundColor: active ? adminPalette.brand : undefined,
+                          borderColor: adminPalette.borderStrong,
+                          color: active ? '#ffffff' : adminPalette.textSecondary,
                           textTransform: 'none',
                           fontWeight: 700,
                         }}
@@ -480,24 +745,134 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               })}
             </Box>
 
+            {selectedSource === 'contact' ? (
+              <Stack spacing={2}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                  Pilih dari daftar kontak
+                </Typography>
+                <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
+                  <TextField
+                    label="Cari kontak"
+                    value={contactSearch}
+                    onChange={(event) => {
+                      setContactSearch(event.target.value);
+                      setContactPage(1);
+                    }}
+                    placeholder="Contoh: Budi atau 62812"
+                    size="small"
+                    fullWidth
+                  />
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Chip label={`${selectedContactRecipients.length} kontak dipilih`} size="small" sx={{ backgroundColor: adminPalette.brandSoft, color: adminPalette.brand, fontWeight: 700 }} />
+                    <Chip label={`${contactDirectory.total} total hasil`} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} />
+                  </Stack>
+                </Stack>
+
+                <Stack spacing={1.25}>
+                  {contactDirectory.items.map((contact) => {
+                    const active = selectedContactRecipients.some((recipient) => recipient.no_telp === contact.no_telp);
+
+                    return (
+                      <Paper
+                        key={contact.id}
+                        elevation={0}
+                        sx={{
+                          p: 2,
+                          borderRadius: 3,
+                          border: active ? `1px solid ${adminPalette.brand}` : `1px solid ${adminPalette.border}`,
+                          backgroundColor: active ? adminPalette.brandSoft : adminPalette.surface,
+                        }}
+                      >
+                        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
+                          <Stack spacing={0.45}>
+                            <Typography sx={{ fontSize: '0.98rem', fontWeight: 700, color: adminPalette.textPrimary }}>
+                              {contact.nama}
+                            </Typography>
+                            <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textMuted }}>
+                              {contact.no_telp}
+                              {contact.jabatan ? ` • ${contact.jabatan}` : ''}
+                            </Typography>
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                              {contact.group_names.slice(0, 3).map((groupName) => (
+                                <Chip key={`${contact.id}-${groupName}`} label={groupName} size="small" variant="outlined" />
+                              ))}
+                              {contact.group_names.length > 3 ? <Chip label={`+${contact.group_names.length - 3} grup`} size="small" variant="outlined" /> : null}
+                            </Stack>
+                          </Stack>
+                          <Button
+                            variant={active ? 'contained' : 'outlined'}
+                            onClick={() => toggleContactRecipient(contact)}
+                            sx={{ textTransform: 'none', fontWeight: 700, borderRadius: 2.5 }}
+                          >
+                            {active ? 'Dipilih' : 'Pilih kontak'}
+                          </Button>
+                        </Stack>
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography sx={{ fontSize: '0.86rem', color: adminPalette.textMuted }}>
+                    Halaman {contactDirectory.page} dari {contactDirectory.totalPages}
+                    {loadingContacts ? ' • memuat...' : ''}
+                  </Typography>
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      variant="outlined"
+                      onClick={() => setContactPage((previous) => Math.max(1, previous - 1))}
+                      disabled={contactDirectory.page <= 1 || loadingContacts}
+                      sx={{ textTransform: 'none', fontWeight: 700 }}
+                    >
+                      Sebelumnya
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      onClick={() => setContactPage((previous) => Math.min(contactDirectory.totalPages, previous + 1))}
+                      disabled={contactDirectory.page >= contactDirectory.totalPages || loadingContacts}
+                      sx={{ textTransform: 'none', fontWeight: 700 }}
+                    >
+                      Berikutnya
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Stack>
+            ) : null}
+
             {selectedSource === 'group' ? (
               <Stack spacing={2}>
-                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                   Pilih grup penerima
                 </Typography>
-                {groupsWithCounts.length === 0 ? (
+                {groupDirectory.items.length === 0 ? (
                   <Alert severity="info" sx={{ borderRadius: 3 }}>
-                    Belum ada grup kontak. Tambahkan grup dulu di halaman Kontak & Grup.
+                    Belum ada grup kontak. Tambahkan grup dulu di halaman Grup.
                   </Alert>
                 ) : (
-                  <Box
-                    sx={{
-                      display: 'grid',
-                      gridTemplateColumns: { xs: '1fr', md: 'repeat(2, 1fr)' },
-                      gap: 1.5,
-                    }}
-                  >
-                    {groupsWithCounts.map((group) => {
+                  <Stack spacing={2}>
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} justifyContent="space-between">
+                      <TextField
+                        label="Cari grup atau anggota"
+                        value={groupSearch}
+                        onChange={(event) => setGroupSearch(event.target.value)}
+                        placeholder="Contoh: VIP atau Ibu Rina"
+                        size="small"
+                        fullWidth
+                      />
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        <Chip label={`${selectedGroups.length} grup dipilih`} size="small" sx={{ backgroundColor: adminPalette.brandSoft, color: adminPalette.brand, fontWeight: 700 }} />
+                        <Chip label={`${groupPreview.totalRecipients} kontak unik`} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} />
+                      </Stack>
+                    </Stack>
+
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: { xs: '1fr', xl: 'repeat(2, 1fr)' },
+                        gap: 1.5,
+                      }}
+                    >
+                    {groupDirectory.items.map((group) => {
                       const active = selectedGroups.includes(group.name);
 
                       return (
@@ -507,39 +882,89 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                           sx={{
                             p: 2,
                             borderRadius: 3,
-                            border: active
-                              ? '2px solid #1f6f5f'
-                              : '1px solid rgba(31, 111, 95, 0.14)',
-                            backgroundColor: active ? '#f2fbf8' : '#fafcfb',
+                            border: active ? `1px solid ${adminPalette.brand}` : `1px solid ${adminPalette.border}`,
+                            backgroundColor: active ? adminPalette.brandSoft : adminPalette.surface,
                             cursor: 'pointer',
                           }}
                           onClick={() => toggleGroup(group.name)}
                         >
-                          <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between">
-                            <Stack spacing={0.4}>
-                              <Typography sx={{ fontSize: '1.05rem', fontWeight: 800, color: '#163020' }}>
-                                {group.name}
-                              </Typography>
-                              <Typography sx={{ fontSize: '0.98rem', color: '#50665d' }}>
-                                {group.count} kontak
-                              </Typography>
+                          <Stack spacing={1.25}>
+                            <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between">
+                              <Stack spacing={0.4}>
+                                <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                                  {group.name}
+                                </Typography>
+                                <Typography sx={{ fontSize: '0.88rem', color: adminPalette.textMuted }}>
+                                  {group.memberCount} kontak • {group.previewNames.join(', ')}
+                                  {group.memberCount > group.previewNames.length ? ` dan ${group.memberCount - group.previewNames.length} lainnya` : ''}
+                                </Typography>
+                              </Stack>
+                              <Checkbox checked={active} />
                             </Stack>
-                            <Checkbox checked={active} />
+
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                              {group.previewNames.slice(0, 4).map((memberName) => (
+                                <Chip
+                                  key={`${group.name}-${memberName}`}
+                                  label={memberName}
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{ borderColor: adminPalette.borderStrong }}
+                                />
+                              ))}
+                              {group.memberCount > group.previewNames.length ? (
+                                <Chip
+                                  label={`+${group.memberCount - group.previewNames.length} lainnya`}
+                                  size="small"
+                                  sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textMuted, fontWeight: 700 }}
+                                />
+                              ) : null}
+                            </Stack>
                           </Stack>
                         </Paper>
                       );
                     })}
-                  </Box>
+                    </Box>
+
+                    <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1.5}>
+                      <Typography sx={{ fontSize: '0.9rem', color: adminPalette.textMuted }}>
+                        Total penerima akan dihitung unik meskipun satu kontak berada di beberapa grup terpilih.
+                      </Typography>
+                      <Stack direction="row" spacing={1}>
+                        <Button
+                          variant="outlined"
+                          onClick={() => setGroupPage((previous) => Math.max(1, previous - 1))}
+                          disabled={groupDirectory.page <= 1 || loadingGroups}
+                          sx={{ textTransform: 'none', fontWeight: 700 }}
+                        >
+                          Sebelumnya
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          onClick={() => setGroupPage((previous) => Math.min(groupDirectory.totalPages, previous + 1))}
+                          disabled={groupDirectory.page >= groupDirectory.totalPages || loadingGroups}
+                          sx={{ textTransform: 'none', fontWeight: 700 }}
+                        >
+                          Berikutnya
+                        </Button>
+                      </Stack>
+                      <Link href="/group" style={{ textDecoration: 'none' }}>
+                        <Button variant="text" sx={{ textTransform: 'none', fontWeight: 700 }}>
+                          Buka direktori grup
+                        </Button>
+                      </Link>
+                    </Stack>
+                  </Stack>
                 )}
               </Stack>
             ) : null}
 
             {selectedSource === 'csv' ? (
               <Stack spacing={2}>
-                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                   Upload file CSV penerima
                 </Typography>
-                <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>
                   Gunakan kolom: nomor, nama (opsional).
                 </Typography>
                 <Button
@@ -550,8 +975,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                     minHeight: 56,
                     borderRadius: 3,
                     px: 3,
-                    borderColor: '#1f6f5f',
-                    color: '#1f6f5f',
+                    borderColor: adminPalette.brand,
+                    color: adminPalette.brand,
                     textTransform: 'none',
                     fontWeight: 700,
                   }}
@@ -576,15 +1001,15 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                     sx={{
                       p: 2,
                       borderRadius: 3,
-                      backgroundColor: '#f7faf8',
-                      border: '1px solid rgba(31, 111, 95, 0.12)',
+                      backgroundColor: adminPalette.surfaceSoft,
+                      border: `1px solid ${adminPalette.border}`,
                     }}
                   >
                     <Stack spacing={1}>
-                      <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                      <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                         File siap dipakai: {csvFileName}
                       </Typography>
-                      <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                      <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>
                         {csvRecipients.length} nomor berhasil dibaca.
                       </Typography>
                     </Stack>
@@ -595,7 +1020,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
 
             {selectedSource === 'manual' ? (
               <Stack spacing={2}>
-                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
+                <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                   Tambah nomor satu per satu
                 </Typography>
                 <Box
@@ -626,7 +1051,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                     sx={{
                       minHeight: 56,
                       borderRadius: 3,
-                      backgroundColor: '#1f6f5f',
+                      backgroundColor: adminPalette.brand,
                       px: 3,
                       textTransform: 'none',
                       fontWeight: 700,
@@ -645,8 +1070,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                         sx={{
                           p: 2,
                           borderRadius: 3,
-                          border: '1px solid rgba(31, 111, 95, 0.12)',
-                          backgroundColor: '#f7faf8',
+                          border: `1px solid ${adminPalette.border}`,
+                          backgroundColor: adminPalette.surfaceSoft,
                         }}
                       >
                         <Stack
@@ -656,10 +1081,10 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                           justifyContent="space-between"
                         >
                           <Stack spacing={0.4}>
-                            <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                            <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                               {recipient.no_telp}
                             </Typography>
-                            <Typography sx={{ fontSize: '0.98rem', color: '#50665d' }}>
+                            <Typography sx={{ fontSize: '0.98rem', color: adminPalette.textSecondary }}>
                               {recipient.nama || 'Tanpa nama'}
                             </Typography>
                           </Stack>
@@ -688,10 +1113,10 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               alignItems={{ xs: 'flex-start', md: 'center' }}
             >
               <Chip
-                label={`${recipients.length} penerima siap`}
+                label={`${recipientCount} penerima siap`}
                 sx={{
-                  backgroundColor: recipients.length > 0 ? '#e6f4ef' : '#f3f1e8',
-                  color: recipients.length > 0 ? '#1f4d3a' : '#665d4d',
+                  backgroundColor: recipientCount > 0 ? adminPalette.brandSoft : adminPalette.warningBg,
+                  color: recipientCount > 0 ? adminPalette.brandDark : adminPalette.warningText,
                   fontSize: '1rem',
                   fontWeight: 700,
                   px: 1,
@@ -706,7 +1131,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  backgroundColor: '#1f6f5f',
+                  backgroundColor: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -724,15 +1149,15 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           sx={{
             p: { xs: 2.5, md: 3.5 },
             borderRadius: 3,
-            border: '1px solid rgba(31, 111, 95, 0.14)',
-            backgroundColor: '#ffffff',
+            border: `1px solid ${adminPalette.border}`,
+            backgroundColor: adminPalette.surface,
           }}
         >
           <Stack spacing={2.5}>
-            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: adminPalette.textPrimary }}>
               2. Review penerima
             </Typography>
-            <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+            <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>
               Sumber penerima: <strong>{sourceLabel(selectedSource)}</strong>
             </Typography>
             <Paper
@@ -740,16 +1165,16 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               sx={{
                 p: 2.5,
                 borderRadius: 3,
-                backgroundColor: '#f7faf8',
-                border: '1px solid rgba(31, 111, 95, 0.12)',
+                backgroundColor: adminPalette.surfaceSoft,
+                border: `1px solid ${adminPalette.border}`,
               }}
             >
               <Stack spacing={1}>
-                <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                   Total penerima
                 </Typography>
-                <Typography sx={{ fontSize: '2rem', fontWeight: 800, color: '#1f6f5f' }}>
-                  {recipients.length}
+                <Typography sx={{ fontSize: '2rem', fontWeight: 800, color: adminPalette.brand }}>
+                  {recipientCount}
                 </Typography>
               </Stack>
             </Paper>
@@ -761,24 +1186,24 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   sx={{
                     p: 2,
                     borderRadius: 3,
-                    backgroundColor: '#fcfdfb',
-                    border: '1px solid rgba(31, 111, 95, 0.12)',
+                    backgroundColor: adminPalette.surfaceSoft,
+                    border: `1px solid ${adminPalette.border}`,
                     display: 'grid',
                     gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr' },
                     gap: 1,
                   }}
                 >
-                  <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: '#163020' }}>
+                  <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                     {recipient.no_telp}
                   </Typography>
-                  <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                  <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>
                     {recipient.nama || 'Tanpa nama'}
                   </Typography>
                 </Box>
               ))}
-              {recipients.length > 8 ? (
-                <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
-                  Masih ada {recipients.length - 8} penerima lain.
+              {recipientCount > 8 ? (
+                <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>
+                  Masih ada {recipientCount - 8} penerima lain.
                 </Typography>
               ) : null}
             </Stack>
@@ -791,8 +1216,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  borderColor: '#1f6f5f',
-                  color: '#1f6f5f',
+                  borderColor: adminPalette.brand,
+                  color: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -806,7 +1231,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  backgroundColor: '#1f6f5f',
+                  backgroundColor: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -824,12 +1249,12 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           sx={{
             p: { xs: 2.5, md: 3.5 },
             borderRadius: 3,
-            border: '1px solid rgba(31, 111, 95, 0.14)',
-            backgroundColor: '#ffffff',
+            border: `1px solid ${adminPalette.border}`,
+            backgroundColor: adminPalette.surface,
           }}
         >
           <Stack spacing={2.5}>
-            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: adminPalette.textPrimary }}>
               3. Tulis pesan
             </Typography>
             <TextField
@@ -849,6 +1274,43 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               fullWidth
             />
 
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2,
+                borderRadius: 3,
+                backgroundColor: adminPalette.surfaceSoft,
+                border: `1px solid ${adminPalette.border}`,
+              }}
+            >
+              <Stack spacing={1.25}>
+                <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                  Variabel pesan
+                </Typography>
+                <Typography sx={{ fontSize: '0.96rem', color: adminPalette.textSecondary }}>
+                  Gunakan variabel untuk membuat isi pesan lebih adaptif per penerima.
+                </Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                  {BLAST_VARIABLES.map((variable) => (
+                    <Chip
+                      key={variable.token}
+                      clickable
+                      label={variable.token}
+                      onClick={() => handleInsertVariable(variable.token)}
+                      sx={{
+                        backgroundColor: adminPalette.brandSoft,
+                        color: adminPalette.brand,
+                        fontWeight: 700,
+                      }}
+                    />
+                  ))}
+                </Stack>
+                <Typography sx={{ fontSize: '0.86rem', color: adminPalette.textMuted }}>
+                  {'Variabel tersedia: {{name}}, {{phone_number}}, {{group_name}}.'}
+                </Typography>
+              </Stack>
+            </Paper>
+
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
               <Button
                 variant="outlined"
@@ -857,8 +1319,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  borderColor: '#1f6f5f',
-                  color: '#1f6f5f',
+                  borderColor: adminPalette.brand,
+                  color: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -873,7 +1335,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  backgroundColor: '#1f6f5f',
+                  backgroundColor: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -891,12 +1353,12 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
           sx={{
             p: { xs: 2.5, md: 3.5 },
             borderRadius: 3,
-            border: '1px solid rgba(31, 111, 95, 0.14)',
-            backgroundColor: '#ffffff',
+            border: `1px solid ${adminPalette.border}`,
+            backgroundColor: adminPalette.surface,
           }}
         >
           <Stack spacing={2.5}>
-            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: '#163020' }}>
+            <Typography sx={{ fontSize: '1.5rem', fontWeight: 800, color: adminPalette.textPrimary }}>
               4. Preview & konfirmasi
             </Typography>
 
@@ -905,26 +1367,78 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               sx={{
                 p: 2.5,
                 borderRadius: 3,
-                backgroundColor: '#f7faf8',
-                border: '1px solid rgba(31, 111, 95, 0.12)',
+                backgroundColor: adminPalette.surfaceSoft,
+                border: `1px solid ${adminPalette.border}`,
               }}
             >
               <Stack spacing={1.5}>
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <CampaignRoundedIcon sx={{ color: '#1f6f5f' }} />
-                  <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: '#163020' }}>
-                    Siap dikirim ke {recipients.length} penerima
+                  <CampaignRoundedIcon sx={{ color: adminPalette.brand }} />
+                    <Typography sx={{ fontSize: '1.1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                    Siap dikirim ke {recipientCount} penerima
                   </Typography>
                 </Stack>
-                <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>
+                <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>
                   Sumber penerima: {sourceLabel(selectedSource)}
                 </Typography>
                 <Divider />
-                <Typography sx={{ fontSize: '1rem', lineHeight: 1.8, whiteSpace: 'pre-wrap', color: '#163020' }}>
+                <Typography sx={{ fontSize: '1rem', lineHeight: 1.8, whiteSpace: 'pre-wrap', color: adminPalette.textPrimary }}>
                   {message.trim()}
                 </Typography>
               </Stack>
             </Paper>
+
+            {previewMessages.length > 0 ? (
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2.5,
+                  borderRadius: 3,
+                  backgroundColor: adminPalette.surfaceSoft,
+                  border: `1px solid ${adminPalette.border}`,
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography sx={{ fontSize: '1.05rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                    Preview variabel
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.96rem', color: adminPalette.textSecondary }}>
+                    Contoh hasil render untuk beberapa penerima pertama.
+                  </Typography>
+                  {previewMessages.map(({ recipient, content }) => (
+                    <Paper
+                      key={`preview-${recipient.no_telp}`}
+                      elevation={0}
+                      sx={{
+                        p: 2,
+                        borderRadius: 3,
+                        backgroundColor: adminPalette.surface,
+                        border: `1px solid ${adminPalette.border}`,
+                      }}
+                    >
+                      <Stack spacing={0.75}>
+                        <Typography sx={{ fontSize: '0.96rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                          {recipient.nama || 'Tanpa nama'} · {recipient.no_telp}
+                        </Typography>
+                        {recipient.group_names?.length ? (
+                          <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+                            Grup: {recipient.group_names.join(', ')}
+                          </Typography>
+                        ) : null}
+                        <Typography sx={{ fontSize: '0.94rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: adminPalette.textPrimary }}>
+                          {content}
+                        </Typography>
+                      </Stack>
+                    </Paper>
+                  ))}
+                  {recipientCount > previewMessages.length ? (
+                    <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textMuted }}>
+                      Preview dibatasi ke {previewMessages.length} penerima pertama dari total {recipientCount}.
+                    </Typography>
+                  ) : null}
+                </Stack>
+              </Paper>
+            ) : null}
 
             {status?.type === 'success' ? (
               <Paper
@@ -932,17 +1446,17 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                 sx={{
                   p: 2.5,
                   borderRadius: 3,
-                  backgroundColor: '#eef8f3',
-                  border: '1px solid rgba(31, 111, 95, 0.14)',
+                  backgroundColor: adminPalette.successBg,
+                  border: `1px solid ${adminPalette.successBorder}`,
                 }}
               >
                 <Stack direction="row" spacing={1.5} alignItems="center">
-                  <CheckCircleRoundedIcon sx={{ color: '#1f6f5f', fontSize: 32 }} />
+                  <CheckCircleRoundedIcon sx={{ color: adminPalette.successText, fontSize: 32 }} />
                   <Stack spacing={0.4}>
-                    <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
+                    <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: adminPalette.textPrimary }}>
                       Pesan sudah masuk ke antrian
                     </Typography>
-                    <Typography sx={{ fontSize: '1rem', color: '#50665d' }}>{status.message}</Typography>
+                    <Typography sx={{ fontSize: '1rem', color: adminPalette.textSecondary }}>{status.message}</Typography>
                   </Stack>
                 </Stack>
               </Paper>
@@ -957,8 +1471,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  borderColor: '#1f6f5f',
-                  color: '#1f6f5f',
+                  borderColor: adminPalette.brand,
+                  color: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -968,12 +1482,12 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
               <Button
                 variant="contained"
                 onClick={() => setConfirmOpen(true)}
-                disabled={submitting || recipients.length === 0 || !message.trim()}
+                disabled={submitting || recipientCount === 0 || !message.trim()}
                 sx={{
                   minHeight: 56,
                   borderRadius: 999,
                   px: 4,
-                  backgroundColor: '#1f6f5f',
+                  backgroundColor: adminPalette.brand,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -988,7 +1502,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                   minHeight: 56,
                   borderRadius: 999,
                   px: 2,
-                  color: '#5b6b65',
+                  color: adminPalette.textSecondary,
                   textTransform: 'none',
                   fontWeight: 700,
                 }}
@@ -1001,11 +1515,11 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
       ) : null}
 
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800, color: '#163020' }}>Konfirmasi pengiriman</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Konfirmasi pengiriman</DialogTitle>
         <DialogContent>
           <Stack spacing={2}>
-            <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
-              Pesan akan dikirim ke {recipients.length} penerima. Pastikan isi pesan dan daftar penerima sudah benar.
+            <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: adminPalette.textSecondary }}>
+              Pesan akan dikirim ke {recipientCount} penerima. Pastikan isi pesan dan daftar penerima sudah benar.
             </Typography>
 
             {shouldShowSaveToGroupOption ? (
@@ -1014,8 +1528,8 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                 sx={{
                   p: 2,
                   borderRadius: 3,
-                  backgroundColor: '#f7faf8',
-                  border: '1px solid rgba(31, 111, 95, 0.12)',
+                  backgroundColor: adminPalette.surfaceSoft,
+                  border: `1px solid ${adminPalette.border}`,
                 }}
               >
                 <Stack spacing={1.5}>
@@ -1030,7 +1544,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
                       }}
                       sx={{ p: 0.5 }}
                     />
-                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#163020' }}>
+                    <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                       Save as group
                     </Typography>
                   </Stack>
@@ -1060,7 +1574,7 @@ export default function BlastComposer({ contacts, availableGroups }: BlastCompos
             disabled={requiresGroupName && !saveGroupName.trim()}
             sx={{
               borderRadius: 999,
-              backgroundColor: '#1f6f5f',
+              backgroundColor: adminPalette.brand,
               px: 3,
               textTransform: 'none',
               fontWeight: 700,
