@@ -36,6 +36,11 @@ FROM mcr.microsoft.com/playwright:v1.59.1-noble AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV YT_DLP_PATH=/usr/bin/yt-dlp
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder --chown=pwuser:pwuser /app/.next/standalone ./
 COPY --from=builder --chown=pwuser:pwuser /app/.next/static ./.next/static
 COPY --from=builder --chown=pwuser:pwuser /app/public ./public

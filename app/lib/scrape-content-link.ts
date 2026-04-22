@@ -1,11 +1,11 @@
 import 'server-only';
 
 import { chromium } from 'playwright-core';
-import YTDlpWrap from 'yt-dlp-wrap';
 
 import { getPlaywrightLaunchOptions } from './chromium-path';
 import type { ContentRecordingInput } from './api';
 import type { ContentRecordingPlatform } from './types';
+import { createYtDlpClient } from './yt-dlp';
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -194,7 +194,7 @@ function extractSourcePostId(link: string, platform: ContentRecordingPlatform): 
 }
 
 async function scrapeYoutubeLink(link: string): Promise<ScrapedContentDraft> {
-  const ytDlp = new YTDlpWrap();
+  const ytDlp = createYtDlpClient();
   const stdout = await ytDlp.execPromise([
     link,
     '--dump-single-json',

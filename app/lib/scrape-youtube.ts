@@ -1,6 +1,6 @@
 "use server";
 
-import YTDlpWrap from 'yt-dlp-wrap';
+import { createYtDlpClient } from './yt-dlp';
 
 const SCRAPE_ERROR_MESSAGE = 'Gagal mengambil data YouTube saat ini.';
 
@@ -36,7 +36,7 @@ interface YouTubeScrapePayload {
 }
 
 export async function scrape_youtube(channelUrl: string): Promise<ScrapeResult> {
-  const ytDlp = new YTDlpWrap();
+  const ytDlp = createYtDlpClient();
 
   try {
     const args = [
