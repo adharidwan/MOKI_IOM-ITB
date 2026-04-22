@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { renderBlastMessageTemplate } from '@/app/lib/blast-variables';
 import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
+import { resolveAllGroupRecipients } from '@/app/lib/group-directory-server';
 import {
   createDirectBlastOutboundMessages,
   createGroupBlastOutboundMessages,
@@ -19,7 +20,7 @@ interface BlastRecipientInput {
 
 interface BlastRequestBody {
   message?: string;
-  source?: 'manual' | 'csv' | 'group';
+  source?: 'manual' | 'csv' | 'group' | 'contact';
   recipients?: BlastRecipientInput[];
   groupNames?: string[];
   saveToGroup?: boolean;
@@ -87,9 +88,17 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Pilih minimal satu grup penerima.' }, { status: 400 });
       }
 
-      if (recipientRows.length > 0) {
+      const resolvedGroupRecipients = await resolveAllGroupRecipients(groupNames);
+
+      if (!resolvedGroupRecipients.length) {
+        return NextResponse.json({ error: 'Grup terpilih belum memiliki kontak.' }, { status: 400 });
+      }
+
+      const shouldPersonalize = message.includes('{{');
+
+      if (shouldPersonalize) {
         const blastResult = await createPersonalizedBlastOutboundMessages({
-          recipients: recipientRows.map((recipient) => ({
+          recipients: resolvedGroupRecipients.map((recipient) => ({
             recipientPhoneNumber: recipient.no_telp,
             content: renderBlastMessageTemplate(message, recipient),
           })),
