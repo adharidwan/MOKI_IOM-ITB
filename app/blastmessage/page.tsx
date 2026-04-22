@@ -18,9 +18,9 @@ export default async function BlastMessagePage() {
   return (
     <AdminFeatureShell
       currentPath="/blastmessage"
-      badge="Halaman blast message"
-      title="Susun blast message dengan daftar penerima yang tetap jelas saat data membesar"
-      description="Pilih penerima dari daftar kontak atau grup secara bertahap, cek hasilnya, lalu kirim tanpa memindahkan seluruh data penerima ke browser."
+      badge="Blast"
+      title="Susun blast message"
+      description="Pilih penerima, tulis pesan, dan tinjau hasil render tanpa keluar dari satu workspace."
       actions={
         <Link href="/group" style={{ textDecoration: 'none' }}>
           <Button
@@ -34,9 +34,9 @@ export default async function BlastMessagePage() {
               fontWeight: 700,
             }}
           >
-            Buka direktori grup
-          </Button>
-        </Link>
+              Buka groups
+            </Button>
+          </Link>
       }
     >
       <BlastComposer initialContacts={initialContacts} initialGroups={initialGroups} />
