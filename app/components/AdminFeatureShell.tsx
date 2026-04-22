@@ -6,13 +6,14 @@ import Groups2RoundedIcon from '@mui/icons-material/Groups2Rounded';
 import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded';
 import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
+import VideoLibraryRoundedIcon from '@mui/icons-material/VideoLibraryRounded';
 
 import { adminPalette } from '../lib/adminPalette';
 
 interface AdminFeatureShellProps {
   title: string;
   description: string;
-  currentPath: '/contacts' | '/group' | '/blastmessage';
+  currentPath: '/contacts' | '/group' | '/blastmessage' | '/content-record';
   badge?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
@@ -33,6 +34,11 @@ const NAV_ITEMS = [
     href: '/blastmessage' as const,
     label: 'Blast',
     icon: <SendRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: '/content-record' as const,
+    label: 'Record',
+    icon: <VideoLibraryRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
 
