@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import OutboundTrackerOverlay from "./components/OutboundTrackerOverlay";
 import ThemeRegistry from "./components/ThemeRegistry";
+import SsoProvider from "./components/SsoProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,7 +31,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeRegistry>
-          {children}
+          <SsoProvider>{children}</SsoProvider>
           <OutboundTrackerOverlay />
         </ThemeRegistry>
       </body>
