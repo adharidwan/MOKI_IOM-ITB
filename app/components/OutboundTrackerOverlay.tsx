@@ -14,6 +14,7 @@ import {
 import ExpandLessRoundedIcon from '@mui/icons-material/ExpandLessRounded';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 
+import { adminPalette } from '../lib/adminPalette';
 import {
   OUTBOUND_TRACKER_SESSION_STORAGE_KEY,
   collectTrackedIds,
@@ -54,19 +55,19 @@ const STATUS_COPY: Record<
   OutboundMessageStatus,
   { label: string; tone: string; text: string; border: string }
 > = {
-  queued: { label: 'Pending', tone: '#eff6ff', text: '#1d4ed8', border: 'rgba(29, 78, 216, 0.14)' },
-  retrying: { label: 'Retrying', tone: '#fff7ed', text: '#c2410c', border: 'rgba(194, 65, 12, 0.16)' },
-  sent: { label: 'Done', tone: '#ecfdf3', text: '#15803d', border: 'rgba(21, 128, 61, 0.16)' },
-  failed: { label: 'Failed', tone: '#fef2f2', text: '#b91c1c', border: 'rgba(185, 28, 28, 0.16)' },
+  queued: { label: 'Pending', tone: adminPalette.brandSoft, text: adminPalette.brandDark, border: adminPalette.brandSoftStrong },
+  retrying: { label: 'Retrying', tone: adminPalette.warningBg, text: adminPalette.warningText, border: adminPalette.warningBorder },
+  sent: { label: 'Done', tone: adminPalette.successBg, text: adminPalette.successText, border: adminPalette.successBorder },
+  failed: { label: 'Failed', tone: adminPalette.dangerBg, text: adminPalette.dangerText, border: adminPalette.dangerBorder },
 };
 
 const SOURCE_COPY: Record<
   OutboundMessageSourceType,
   { label: string; filterLabel: string; tone: string; text: string }
 > = {
-  blast: { label: 'Blast', filterLabel: 'Blast', tone: '#eef2ff', text: '#4338ca' },
-  ticket_reply: { label: 'Ticket', filterLabel: 'Ticket', tone: '#eff6ff', text: '#1d4ed8' },
-  api_notification: { label: 'External', filterLabel: 'External', tone: '#f0fdf4', text: '#166534' },
+  blast: { label: 'Blast', filterLabel: 'Blast', tone: adminPalette.brandSoftStrong, text: adminPalette.brandDark },
+  ticket_reply: { label: 'Ticket', filterLabel: 'Ticket', tone: adminPalette.brandSoft, text: adminPalette.brand },
+  api_notification: { label: 'External', filterLabel: 'External', tone: adminPalette.surfaceSoft, text: adminPalette.brandDark },
 };
 
 function formatDateTime(value: string): string {
@@ -102,16 +103,16 @@ function TrackerRow({ item }: { item: WhatsappOutboundListItem }) {
         p: 1.5,
         borderRadius: 3,
         border: `1px solid ${status.border}`,
-        backgroundColor: '#ffffff',
+        backgroundColor: adminPalette.surface,
       }}
     >
       <Stack spacing={1}>
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
           <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }} noWrap>
+            <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: adminPalette.textPrimary }} noWrap>
               {item.recipient_phone_number}
             </Typography>
-            <Typography sx={{ fontSize: '0.76rem', color: '#64748b' }}>
+            <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
               {formatDateTime(item.created_at)}
             </Typography>
           </Box>
@@ -131,17 +132,17 @@ function TrackerRow({ item }: { item: WhatsappOutboundListItem }) {
 
         <Stack spacing={0.35}>
           {item.client_reference ? (
-            <Typography sx={{ fontSize: '0.78rem', color: '#334155' }}>
+            <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
               Ref: <strong>{item.client_reference}</strong>
             </Typography>
           ) : null}
           {item.ticket_id ? (
-            <Typography sx={{ fontSize: '0.78rem', color: '#334155' }}>
+            <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
               Ticket: <strong>{item.ticket_id}</strong>
             </Typography>
           ) : null}
           {item.last_delivery_error ? (
-            <Typography sx={{ fontSize: '0.76rem', color: '#b91c1c' }}>{item.last_delivery_error}</Typography>
+            <Typography sx={{ fontSize: '0.76rem', color: adminPalette.dangerText }}>{item.last_delivery_error}</Typography>
           ) : null}
         </Stack>
       </Stack>
@@ -167,17 +168,22 @@ export default function OutboundTrackerOverlay() {
     const storedValue = window.sessionStorage.getItem(OUTBOUND_TRACKER_SESSION_STORAGE_KEY);
 
     if (!storedValue) {
-      setHydrated(true);
+      queueMicrotask(() => setHydrated(true));
       return;
     }
 
     try {
-      setTrackedBatches(normalizeTrackedBatches(JSON.parse(storedValue)));
+      const normalizedBatches = normalizeTrackedBatches(JSON.parse(storedValue));
+
+      queueMicrotask(() => {
+        setTrackedBatches(normalizedBatches);
+        setHydrated(true);
+      });
     } catch {
       window.sessionStorage.removeItem(OUTBOUND_TRACKER_SESSION_STORAGE_KEY);
+      queueMicrotask(() => setHydrated(true));
+      return;
     }
-
-    setHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -229,8 +235,10 @@ export default function OutboundTrackerOverlay() {
 
   useEffect(() => {
     if (!trackedIds.length) {
-      setData(null);
-      setErrorMessage(null);
+      queueMicrotask(() => {
+        setData(null);
+        setErrorMessage(null);
+      });
       return;
     }
 
@@ -312,19 +320,17 @@ export default function OutboundTrackerOverlay() {
     };
   }, [trackedIds]);
 
-  useEffect(() => {
-    if (selectedBatchId !== 'all' && !trackedBatches.some((batch) => batch.id === selectedBatchId)) {
-      setSelectedBatchId('all');
-    }
-  }, [selectedBatchId, trackedBatches]);
-
   const summary = data?.summary;
+  const activeSelectedBatchId =
+    selectedBatchId !== 'all' && !trackedBatches.some((batch) => batch.id === selectedBatchId)
+      ? 'all'
+      : selectedBatchId;
 
   useEffect(() => {
     const attentionCount = (summary?.active || 0) + (summary?.failed || 0);
 
     if (attentionCount > previousAttentionCountRef.current) {
-      setOpen(true);
+      queueMicrotask(() => setOpen(true));
     }
 
     previousAttentionCountRef.current = attentionCount;
@@ -335,8 +341,13 @@ export default function OutboundTrackerOverlay() {
     [data?.items, trackedBatches],
   );
   const batchIdsForFilter = useMemo(
-    () => new Set(selectedBatchId === 'all' ? trackedIds : trackedBatches.find((batch) => batch.id === selectedBatchId)?.tracked_ids || []),
-    [selectedBatchId, trackedBatches, trackedIds],
+    () =>
+      new Set(
+        activeSelectedBatchId === 'all'
+          ? trackedIds
+          : trackedBatches.find((batch) => batch.id === activeSelectedBatchId)?.tracked_ids || [],
+      ),
+    [activeSelectedBatchId, trackedBatches, trackedIds],
   );
 
   const filteredItems = useMemo(() => {
@@ -381,48 +392,87 @@ export default function OutboundTrackerOverlay() {
       updated_at: new Date().toISOString(),
     } satisfies OutboundTrackerResponse['summary']);
 
+  if (!hasTrackedItems && !errorMessage) {
+    return null;
+  }
+
   return (
     <Box
       sx={{
         position: 'fixed',
-        right: { xs: 12, md: 20 },
-        bottom: { xs: 12, md: 20 },
-        width: { xs: 'calc(100vw - 24px)', sm: 500 },
+        right: { xs: 12, md: 16 },
+        bottom: { xs: 12, md: 16 },
+        width: { xs: 'calc(100vw - 24px)', sm: 380 },
         maxWidth: 'calc(100vw - 24px)',
         zIndex: 1400,
       }}
     >
       <Paper
-        elevation={8}
+        elevation={0}
         sx={{
+          display: 'flex',
+          flexDirection: 'column',
           overflow: 'hidden',
-          borderRadius: 3,
-          border: '1px solid #cbd5e1',
-          backgroundColor: '#ffffff',
-          boxShadow: '0 16px 40px rgba(15, 23, 42, 0.12)',
+          maxHeight: { xs: 'calc(100dvh - 24px)', md: 'calc(100dvh - 32px)' },
+          borderRadius: 2.5,
+          border: `1px solid ${adminPalette.borderStrong}`,
+          backgroundColor: 'rgba(255,255,255,0.96)',
+          backdropFilter: 'blur(12px)',
+          boxShadow: '0 10px 26px rgba(2, 132, 199, 0.12)',
         }}
       >
-        <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
+        <Box
+          sx={{
+            px: 1.4,
+            py: 1,
+            borderBottom: open ? `1px solid ${adminPalette.border}` : 'none',
+            backgroundColor: adminPalette.surfaceSoft,
+          }}
+        >
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ alignItems: 'center' }}>
-            <Chip label={`${visibleSummary.active} aktif`} size="small" sx={{ backgroundColor: '#dbeafe', color: '#1d4ed8', fontWeight: 700 }} />
-            <Chip label={`${visibleSummary.failed} gagal`} size="small" sx={{ backgroundColor: '#fee2e2', color: '#b91c1c', fontWeight: 700 }} />
-            <Chip label={`${visibleSummary.sent} selesai`} size="small" sx={{ backgroundColor: '#dcfce7', color: '#15803d', fontWeight: 700 }} />
-            <Chip label={`ETA ${formatEta(visibleSummary.estimated_completion_seconds)}`} size="small" sx={{ backgroundColor: '#eff6ff', color: '#1e40af', fontWeight: 700 }} />
-            <IconButton size="small" onClick={() => setOpen((current) => !current)} sx={{ ml: 'auto' }} > {open ? <ExpandMoreRoundedIcon /> : <ExpandLessRoundedIcon />} </IconButton>
+            <Typography
+              sx={{
+                fontSize: '0.68rem',
+                fontWeight: 700,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: adminPalette.textMuted,
+              }}
+            >
+              Outbound
+            </Typography>
+            <Chip
+              label={`${visibleSummary.active} aktif`}
+              size="small"
+              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoftStrong, color: adminPalette.brandDark, fontWeight: 700 }}
+            />
+            <Chip
+              label={`${visibleSummary.failed} gagal`}
+              size="small"
+              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.dangerBg, color: adminPalette.dangerText, fontWeight: 700 }}
+            />
+            <Chip
+              label={`ETA ${formatEta(visibleSummary.estimated_completion_seconds)}`}
+              size="small"
+              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoft, color: adminPalette.textSecondary, fontWeight: 700 }}
+            />
+            <IconButton size="small" onClick={() => setOpen((current) => !current)} sx={{ ml: 'auto', color: adminPalette.textMuted }}>
+              {open ? <ExpandMoreRoundedIcon /> : <ExpandLessRoundedIcon />}
+            </IconButton>
           </Stack>
         </Box>
 
         {open ? (
-          <Stack spacing={2} sx={{ p: 2 }}>
+          <Stack spacing={2} sx={{ p: 2, overflowY: 'auto', minHeight: 0 }}>
             {errorMessage ? <Alert severity="warning">{errorMessage}</Alert> : null}
 
             {hasTrackedItems ? (
               <Stack spacing={1}>
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+                  <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: adminPalette.textMuted, textTransform: 'uppercase' }}>
                     Batch
                   </Typography>
-                  <IconButton size="small" onClick={() => setBatchListOpen((current) => !current)} sx={{ ml: 'auto' }}>
+                  <IconButton size="small" onClick={() => setBatchListOpen((current) => !current)} sx={{ ml: 'auto', color: adminPalette.textMuted }}>
                     {batchListOpen ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
@@ -433,13 +483,13 @@ export default function OutboundTrackerOverlay() {
                       sx={{
                         p: 1.25,
                         borderRadius: 3,
-                        border: selectedBatchId === 'all' ? '1px solid #003793' : '1px solid #e2e8f0',
-                        backgroundColor: selectedBatchId === 'all' ? '#eff6ff' : '#ffffff',
+                        border: activeSelectedBatchId === 'all' ? `1px solid ${adminPalette.brand}` : `1px solid ${adminPalette.border}`,
+                        backgroundColor: activeSelectedBatchId === 'all' ? adminPalette.brandSoft : adminPalette.surface,
                         cursor: 'pointer',
                       }}
                       onClick={() => setSelectedBatchId('all')}
                     >
-                      <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>Semua batch</Typography>
+                      <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: adminPalette.textPrimary }}>Semua batch</Typography>
                     </Paper>
                     {batchSummaries.map((batch) => (
                       <Paper
@@ -448,15 +498,15 @@ export default function OutboundTrackerOverlay() {
                         sx={{
                           p: 1.25,
                           borderRadius: 3,
-                          border: selectedBatchId === batch.id ? '1px solid #003793' : '1px solid #e2e8f0',
-                          backgroundColor: selectedBatchId === batch.id ? '#eff6ff' : '#ffffff',
+                          border: activeSelectedBatchId === batch.id ? `1px solid ${adminPalette.brand}` : `1px solid ${adminPalette.border}`,
+                          backgroundColor: activeSelectedBatchId === batch.id ? adminPalette.brandSoft : adminPalette.surface,
                           cursor: 'pointer',
                         }}
                         onClick={() => setSelectedBatchId(batch.id)}
                       >
                         <Stack spacing={0.75}>
                           <Stack direction="row" justifyContent="space-between" spacing={1} alignItems="center">
-                            <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#0f172a' }}>
+                            <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                               {batch.label}
                             </Typography>
                             <Chip
@@ -474,7 +524,7 @@ export default function OutboundTrackerOverlay() {
             ) : null}
 
             <Stack spacing={1}>
-              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: adminPalette.textMuted, textTransform: 'uppercase' }}>
                 Status
               </Typography>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -485,14 +535,14 @@ export default function OutboundTrackerOverlay() {
                     label={filterValue === 'all' ? 'All' : STATUS_COPY[filterValue].label}
                     onClick={() => setStatusFilter(filterValue)}
                     variant={statusFilter === filterValue ? 'filled' : 'outlined'}
-                    sx={statusFilter === filterValue ? { backgroundColor: '#dbeafe', color: '#1d4ed8', fontWeight: 700 } : undefined}
+                    sx={statusFilter === filterValue ? { backgroundColor: adminPalette.brandSoftStrong, color: adminPalette.brandDark, fontWeight: 700 } : undefined}
                   />
                 ))}
               </Stack>
             </Stack>
 
             <Stack spacing={1}>
-              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase' }}>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: adminPalette.textMuted, textTransform: 'uppercase' }}>
                 Source
               </Typography>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -503,70 +553,70 @@ export default function OutboundTrackerOverlay() {
                     label={filterValue === 'all' ? 'All' : SOURCE_COPY[filterValue].filterLabel}
                     onClick={() => setSourceFilter(filterValue)}
                     variant={sourceFilter === filterValue ? 'filled' : 'outlined'}
-                    sx={sourceFilter === filterValue ? { backgroundColor: '#dbeafe', color: '#1d4ed8', fontWeight: 700 } : undefined}
+                    sx={sourceFilter === filterValue ? { backgroundColor: adminPalette.brandSoftStrong, color: adminPalette.brandDark, fontWeight: 700 } : undefined}
                   />
                 ))}
               </Stack>
             </Stack>
 
-            <Divider />
+            <Divider sx={{ borderColor: adminPalette.border }} />
 
             {hasTrackedItems ? (
               <Stack spacing={1.25} sx={{ maxHeight: { xs: 280, md: 360 }, overflowY: 'auto', pr: 0.5 }}>
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
+                  <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                     In progress ({activeItems.length})
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() => toggleSection('active')}
                     disabled={!activeItems.length}
-                    sx={{ ml: 'auto' }}
+                    sx={{ ml: 'auto', color: adminPalette.textMuted }}
                   >
                     {sectionOpen.active ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
 
-                {!activeItems.length && sectionOpen.active ? 
+                {(activeItems.length && sectionOpen.active) ? 
                   activeItems.map((item) => <TrackerRow key={item.id} item={item} />) : null}
 
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ pt: 0.5 }}>
-                  <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
+                  <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                     Need attention ({failedItems.length})
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() => toggleSection('failed')}
                     disabled={!failedItems.length}
-                    sx={{ ml: 'auto' }}
+                    sx={{ ml: 'auto', color: adminPalette.textMuted }}
                   >
                     {sectionOpen.failed ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
-                {!failedItems.length && sectionOpen.failed ? 
+                {failedItems.length && sectionOpen.failed ? 
                   failedItems.map((item) => <TrackerRow key={item.id} item={item} />) : null
                 }
 
                 <Stack direction="row" spacing={1} alignItems="center" sx={{ pt: 0.5 }}>
-                  <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: '#0f172a' }}>
+                  <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                     Completed ({doneItems.length})
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() => toggleSection('done')}
                     disabled={!doneItems.length}
-                    sx={{ ml: 'auto' }}
+                    sx={{ ml: 'auto', color: adminPalette.textMuted }}
                   >
                     {sectionOpen.done ? <ExpandLessRoundedIcon /> : <ExpandMoreRoundedIcon />}
                   </IconButton>
                 </Stack>
-                {!doneItems.length && sectionOpen.done ? 
+                {doneItems.length && sectionOpen.done ? 
                   doneItems.map((item) => <TrackerRow key={item.id} item={item} />) : null}
               </Stack>
             ) : (
-              <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
+              <Paper elevation={0} sx={{ p: 2, borderRadius: 3, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft }}>
                 <Stack spacing={0.75}>
-                  <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: '#0f172a' }}>
+                  <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                     Belum ada pengiriman
                   </Typography>
                 </Stack>
