@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Box,
   Typography,
@@ -16,15 +16,20 @@ import {
   Stack,
   IconButton,
   Tooltip,
+  TextField,
+  Alert,
 } from "@mui/material";
 import { Refresh, Checklist, LinkOff } from "@mui/icons-material";
 import { scrape_ig } from "@/app/lib/scrape-ig";
+import { useTransition } from "react";
+import { exportScrapedContentAction } from "@/app/scrape/actions";
 
 interface InstagramPost {
   id: string;
   title: string;
   link: string;
   thumbnail: string;
+  upload_date?: string;
 }
 
 interface InstagramScrapeResult {
@@ -36,24 +41,48 @@ interface InstagramScrapeResult {
 export default function InstagramScraper() {
   const [data, setData] = useState<InstagramScrapeResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportMessage, setExportMessage] = useState<string>("");
+  const [exportError, setExportError] = useState<string>("");
+  const [itemWarnings, setItemWarnings] = useState<Record<string, boolean>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [usernameInput, setUsernameInput] = useState("iom_itb.official");
+
+  function setWarningsFromFailures(
+    failures: Array<{ link: string; error: string }>,
+  ) {
+    const warnings: Record<string, boolean> = {};
+
+    failures.forEach((failure) => {
+      if (failure.error.toLowerCase().includes("sudah ada")) {
+        warnings[failure.link.toLowerCase()] = true;
+      }
+    });
+
+    setItemWarnings(warnings);
+  }
 
   const handleScrape = async () => {
+    const username = usernameInput.trim();
+    if (!username) {
+      setData({ error: "Username Instagram wajib diisi." });
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await scrape_ig("iom_itb.official"); // Ganti sesuai username IOM ITB
+      const result = await scrape_ig(username);
       setData(result);
       setSelectedIds([]);
+      setExportMessage("");
+      setExportError("");
+      setItemWarnings({});
     } catch {
       setData({ error: "Gagal menarik data Instagram." });
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    handleScrape();
-  }, []);
 
   const handleToggle = (id: string) => {
     setSelectedIds((prev) =>
@@ -75,9 +104,64 @@ export default function InstagramScraper() {
     const selectedData = data?.videos?.filter((post) =>
       selectedIds.includes(post.id),
     );
-    console.log("=== EKSPOR DATA INSTAGRAM (PoC) ===");
-    console.log(JSON.stringify(selectedData, null, 2));
-    alert(`${selectedIds.length} post Instagram di-log ke Console.`);
+
+    if (!selectedData?.length) {
+      setExportError("Pilih minimal satu post Instagram untuk diekspor.");
+      return;
+    }
+
+    setExportMessage("");
+    setExportError("");
+
+    startExportTransition(async () => {
+      const result = await exportScrapedContentAction(
+        selectedData.map((post) => ({
+          title: post.title,
+          platform: "Instagram" as const,
+          upload_date: post.upload_date,
+          link: post.link,
+          source_post_id: post.id,
+          thumbnail_url: post.thumbnail,
+        })),
+      );
+
+      if (result.savedCount > 0) {
+        setExportMessage(
+          `${result.savedCount} konten Instagram berhasil disimpan ke recording.`,
+        );
+      }
+
+      setWarningsFromFailures(result.failed);
+
+      const duplicateFailures = result.failed.filter((item) =>
+        item.error.toLowerCase().includes("sudah ada"),
+      );
+      const nonDuplicateFailures = result.failed.filter(
+        (item) => !item.error.toLowerCase().includes("sudah ada"),
+      );
+
+      if (duplicateFailures.length > 0 && nonDuplicateFailures.length === 0) {
+        setExportError(
+          "Beberapa konten sudah ada. Item yang diwarnai oranye tidak disimpan ulang.",
+        );
+      }
+
+      if (nonDuplicateFailures.length > 0) {
+        const details = nonDuplicateFailures
+          .map((item) => item.error)
+          .slice(0, 2)
+          .join(" ");
+        setExportError(
+          details ||
+            `${nonDuplicateFailures.length} konten gagal disimpan. Pastikan metadata scrape lengkap.`,
+        );
+      } else {
+        if (duplicateFailures.length === 0) {
+          setExportError("");
+        }
+        setSelectedIds([]);
+      }
+    });
   };
 
   if (loading && !data)
@@ -92,38 +176,71 @@ export default function InstagramScraper() {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" sx={{ mb: 2 }}>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            variant="outlined"
+      {exportMessage ? (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          {exportMessage}
+        </Alert>
+      ) : null}
+      {exportError ? (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {exportError}
+        </Alert>
+      ) : null}
+
+      <Stack spacing={1.25} sx={{ mb: 2 }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
+          <TextField
             size="small"
-            startIcon={<Checklist />}
-            onClick={handleSelectAll}
-            disabled={!data?.videos || data.videos.length === 0}
+            fullWidth
+            label="Username Instagram"
+            placeholder="contoh: iom_itb.official"
+            value={usernameInput}
+            onChange={(event) => setUsernameInput(event.target.value)}
+            disabled={loading}
+          />
+          <Button
+            variant="contained"
+            sx={{ bgcolor: "#E1306C", minWidth: { md: 140 } }}
+            onClick={handleScrape}
+            disabled={loading || !usernameInput.trim()}
           >
-            {selectedIds.length === data?.videos?.length &&
-            data?.videos?.length !== 0
-              ? "Unselect All"
-              : "Select All"}
+            {loading ? "Scraping..." : "Scrape"}
           </Button>
-          <Tooltip title="Refresh Data">
-            <IconButton
-              onClick={handleScrape}
-              disabled={loading}
-              color="primary"
-            >
-              <Refresh className={loading ? "animate-spin" : ""} />
-            </IconButton>
-          </Tooltip>
         </Stack>
-        <Button
-          variant="contained"
-          sx={{ bgcolor: "#E1306C" }}
-          disabled={selectedIds.length === 0}
-          onClick={handleExport}
-        >
-          Ekspor ({selectedIds.length})
-        </Button>
+
+        <Stack direction="row" justifyContent="space-between">
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<Checklist />}
+              onClick={handleSelectAll}
+              disabled={!data?.videos || data.videos.length === 0}
+            >
+              {selectedIds.length === data?.videos?.length &&
+              data?.videos?.length !== 0
+                ? "Unselect All"
+                : "Select All"}
+            </Button>
+            <Tooltip title="Refresh Data">
+              <IconButton
+                onClick={handleScrape}
+                disabled={loading || !usernameInput.trim()}
+                color="primary"
+              >
+                <Refresh className={loading ? "animate-spin" : ""} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+          <Button
+            variant="contained"
+            sx={{ bgcolor: "#E1306C" }}
+            disabled={selectedIds.length === 0 || isExporting}
+            onClick={handleExport}
+          >
+            {isExporting ? "Menyimpan..." : `Ekspor (${selectedIds.length})`}
+          </Button>
+        </Stack>
       </Stack>
 
       {data && !data.error && (
@@ -134,7 +251,21 @@ export default function InstagramScraper() {
                 <ListItem disablePadding>
                   <ListItemButton
                     onClick={() => handleToggle(post.id)}
-                    sx={{ py: 2, alignItems: "center" }}
+                    sx={{
+                      py: 2,
+                      alignItems: "center",
+                      backgroundColor: itemWarnings[post.link.toLowerCase()]
+                        ? "#fff4e5"
+                        : "transparent",
+                      borderLeft: itemWarnings[post.link.toLowerCase()]
+                        ? "4px solid #f97316"
+                        : "4px solid transparent",
+                      "&:hover": {
+                        backgroundColor: itemWarnings[post.link.toLowerCase()]
+                          ? "#ffe8cc"
+                          : undefined,
+                      },
+                    }}
                   >
                     <ListItemIcon sx={{ minWidth: 48 }}>
                       <Checkbox
@@ -181,10 +312,14 @@ export default function InstagramScraper() {
                             WebkitLineClamp: 2,
                             WebkitBoxOrient: "vertical",
                             overflow: "hidden",
+                            color: itemWarnings[post.link.toLowerCase()]
+                              ? "#9a3412"
+                              : "inherit",
                           }}
                         >
                           {post.title || "Instagram Post"}
                         </Typography>
+
                         <Typography
                           component="a"
                           href={post.link}

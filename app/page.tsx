@@ -1,16 +1,24 @@
-"use client"
+"use client";
 
-import Link from 'next/link';
-import { Box, Button, Container, Paper, Stack, Typography } from '@mui/material';
+import Link from "next/link";
+import {
+  Box,
+  Button,
+  Container,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
 
 export default function HomePage() {
   return (
     <Box
       sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        background: 'linear-gradient(180deg, #f8f4e8 0%, #fdfcf8 35%, #eef6f5 100%)',
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        background:
+          "linear-gradient(180deg, #f8f4e8 0%, #fdfcf8 35%, #eef6f5 100%)",
         py: 4,
       }}
     >
@@ -20,22 +28,31 @@ export default function HomePage() {
           sx={{
             p: { xs: 3, md: 5 },
             borderRadius: 4,
-            border: '1px solid rgba(31, 111, 95, 0.14)',
-            backgroundColor: 'rgba(255,255,255,0.92)',
+            border: "1px solid rgba(31, 111, 95, 0.14)",
+            backgroundColor: "rgba(255,255,255,0.92)",
           }}
         >
           <Stack spacing={3}>
-            <Typography sx={{ fontSize: { xs: '2rem', md: '3rem' }, fontWeight: 800, color: '#163020' }}>
+            <Typography
+              sx={{
+                fontSize: { xs: "2rem", md: "3rem" },
+                fontWeight: 800,
+                color: "#163020",
+              }}
+            >
               Pilih menu yang ingin digunakan
             </Typography>
-            <Typography sx={{ fontSize: '1.1rem', lineHeight: 1.8, color: '#50665d' }}>
-              Anda bisa mulai dari mengatur kontak, atau langsung masuk ke halaman kirim blast message.
+            <Typography
+              sx={{ fontSize: "1.1rem", lineHeight: 1.8, color: "#50665d" }}
+            >
+              Anda bisa mulai dari mengatur kontak, masuk ke halaman kirim blast
+              message, atau membuka menu scrape dan content recording.
             </Typography>
 
             <Box
               sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
                 gap: 2,
               }}
             >
@@ -44,28 +61,37 @@ export default function HomePage() {
                 sx={{
                   p: 3,
                   borderRadius: 3,
-                  border: '1px solid rgba(31, 111, 95, 0.14)',
-                  backgroundColor: '#fffdf8',
+                  border: "1px solid rgba(31, 111, 95, 0.14)",
+                  backgroundColor: "#fffdf8",
                 }}
               >
                 <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: '1.4rem', fontWeight: 800, color: '#163020' }}>
+                  <Typography
+                    sx={{
+                      fontSize: "1.4rem",
+                      fontWeight: 800,
+                      color: "#163020",
+                    }}
+                  >
                     Kontak & Grup
                   </Typography>
-                  <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
-                    Tambah nomor, upload CSV, lalu rapikan penerima ke dalam grup.
+                  <Typography
+                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
+                  >
+                    Tambah nomor, upload CSV, lalu rapikan penerima ke dalam
+                    grup.
                   </Typography>
                   <Button
                     component={Link}
                     href="/contacts"
                     variant="contained"
                     sx={{
-                      alignSelf: 'flex-start',
+                      alignSelf: "flex-start",
                       minHeight: 56,
                       borderRadius: 999,
                       px: 3.5,
-                      backgroundColor: '#1f6f5f',
-                      textTransform: 'none',
+                      backgroundColor: "#1f6f5f",
+                      textTransform: "none",
                       fontWeight: 700,
                     }}
                   >
@@ -79,15 +105,68 @@ export default function HomePage() {
                 sx={{
                   p: 3,
                   borderRadius: 3,
-                  border: '1px solid rgba(31, 111, 95, 0.14)',
-                  backgroundColor: '#f7faf8',
+                  border: "1px solid rgba(31, 111, 95, 0.14)",
+                  backgroundColor: "#f8fbfa",
                 }}
               >
                 <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: '1.4rem', fontWeight: 800, color: '#163020' }}>
+                  <Typography
+                    sx={{
+                      fontSize: "1.4rem",
+                      fontWeight: 800,
+                      color: "#163020",
+                    }}
+                  >
+                    Scrape
+                  </Typography>
+                  <Typography
+                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
+                  >
+                    Ambil konten dari channel YouTube, X, dan Instagram lalu
+                    pilih item yang ingin disimpan ke content recording.
+                  </Typography>
+                  <Button
+                    component={Link}
+                    href="/scrape"
+                    variant="outlined"
+                    sx={{
+                      alignSelf: "flex-start",
+                      minHeight: 56,
+                      borderRadius: 999,
+                      px: 3.5,
+                      borderColor: "#1f6f5f",
+                      color: "#1f6f5f",
+                      textTransform: "none",
+                      fontWeight: 700,
+                    }}
+                  >
+                    Buka scrape
+                  </Button>
+                </Stack>
+              </Paper>
+
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 3,
+                  borderRadius: 3,
+                  border: "1px solid rgba(31, 111, 95, 0.14)",
+                  backgroundColor: "#f7faf8",
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography
+                    sx={{
+                      fontSize: "1.4rem",
+                      fontWeight: 800,
+                      color: "#163020",
+                    }}
+                  >
                     Blast Message
                   </Typography>
-                  <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+                  <Typography
+                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
+                  >
                     Pilih penerima, tulis pesan, cek preview, lalu kirim.
                   </Typography>
                   <Button
@@ -95,13 +174,13 @@ export default function HomePage() {
                     href="/blastmessage"
                     variant="outlined"
                     sx={{
-                      alignSelf: 'flex-start',
+                      alignSelf: "flex-start",
                       minHeight: 56,
                       borderRadius: 999,
                       px: 3.5,
-                      borderColor: '#1f6f5f',
-                      color: '#1f6f5f',
-                      textTransform: 'none',
+                      borderColor: "#1f6f5f",
+                      color: "#1f6f5f",
+                      textTransform: "none",
                       fontWeight: 700,
                     }}
                   >
@@ -115,29 +194,38 @@ export default function HomePage() {
                 sx={{
                   p: 3,
                   borderRadius: 3,
-                  border: '1px solid rgba(217, 167, 84, 0.2)',
-                  backgroundColor: '#fffaf0',
+                  border: "1px solid rgba(217, 167, 84, 0.2)",
+                  backgroundColor: "#fffaf0",
                 }}
               >
                 <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: '1.4rem', fontWeight: 800, color: '#163020' }}>
+                  <Typography
+                    sx={{
+                      fontSize: "1.4rem",
+                      fontWeight: 800,
+                      color: "#163020",
+                    }}
+                  >
                     Content Recording
                   </Typography>
-                  <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
-                    Simpan referensi konten YouTube, X, dan Instagram dengan auto-fill dari link hasil scrape.
+                  <Typography
+                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
+                  >
+                    Simpan referensi konten YouTube, X, dan Instagram dengan
+                    auto-fill dari link hasil scrape.
                   </Typography>
                   <Button
                     component={Link}
                     href="/content-record"
                     variant="outlined"
                     sx={{
-                      alignSelf: 'flex-start',
+                      alignSelf: "flex-start",
                       minHeight: 56,
                       borderRadius: 999,
                       px: 3.5,
-                      borderColor: '#d9a754',
-                      color: '#9a6506',
-                      textTransform: 'none',
+                      borderColor: "#d9a754",
+                      color: "#9a6506",
+                      textTransform: "none",
                       fontWeight: 700,
                     }}
                   >
