@@ -12,6 +12,7 @@ import {
   Divider,
 } from "@mui/material";
 import { YouTube, Instagram, X } from "@mui/icons-material";
+
 import YouTubeScraper from "../components/ScrapeYoutube";
 import XScraper from "../components/ScrapeX";
 import InstagramScraper from "../components/ScrapeIG";
@@ -48,7 +49,6 @@ export default function ContentManagement() {
           </Typography>
         </Box>
 
-        {/* Avatar Navigation Box */}
         <Box
           sx={{
             display: "flex",
@@ -61,28 +61,29 @@ export default function ContentManagement() {
             boxShadow: "0 2px 10px rgba(0,0,0,0.05)",
           }}
         >
-          {platforms.map((p) => (
-            <Tooltip title={p.name} key={p.id}>
+          {platforms.map((platform) => (
+            <Tooltip title={platform.name} key={platform.id}>
               <IconButton
-                onClick={() => setActivePlatform(p.id as Platform)}
+                onClick={() => setActivePlatform(platform.id as Platform)}
                 sx={{
                   transition: "0.3s",
                   transform:
-                    activePlatform === p.id ? "scale(1.2)" : "scale(1)",
+                    activePlatform === platform.id ? "scale(1.2)" : "scale(1)",
                 }}
               >
                 <Avatar
                   sx={{
-                    bgcolor: activePlatform === p.id ? p.color : "#e0e0e0",
+                    bgcolor:
+                      activePlatform === platform.id ? platform.color : "#e0e0e0",
                     width: 56,
                     height: 56,
                     boxShadow:
-                      activePlatform === p.id
-                        ? `0 0 15px ${p.color}66`
+                      activePlatform === platform.id
+                        ? `0 0 15px ${platform.color}66`
                         : "none",
                   }}
                 >
-                  {p.icon}
+                  {platform.icon}
                 </Avatar>
               </IconButton>
             </Tooltip>
@@ -91,12 +92,9 @@ export default function ContentManagement() {
 
         <Divider sx={{ mb: 4 }} />
 
-        {/* Content Area */}
         <Box sx={{ mt: 2 }}>
           {activePlatform === "youtube" && <YouTubeScraper />}
-
           {activePlatform === "instagram" && <InstagramScraper />}
-
           {activePlatform === "twitter" && <XScraper />}
         </Box>
       </Paper>

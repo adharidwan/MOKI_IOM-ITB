@@ -44,3 +44,17 @@ export interface CsvContact {
   imported_at: string;
   created_at: string;
 }
+
+export type ContentRecordingPlatform = 'youtube' | 'x' | 'Instagram';
+
+export interface ContentRecording {
+  id: string;
+  title: string;
+  platform: ContentRecordingPlatform;
+  upload_date: string;
+  link: string;
+  source_post_id: string | null;
+  thumbnail_url: string | null;
+  created_at: string;
+  updated_at: string;
+}

@@ -109,6 +109,42 @@ export default function HomePage() {
                   </Button>
                 </Stack>
               </Paper>
+
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 3,
+                  borderRadius: 3,
+                  border: '1px solid rgba(217, 167, 84, 0.2)',
+                  backgroundColor: '#fffaf0',
+                }}
+              >
+                <Stack spacing={1.5}>
+                  <Typography sx={{ fontSize: '1.4rem', fontWeight: 800, color: '#163020' }}>
+                    Content Recording
+                  </Typography>
+                  <Typography sx={{ fontSize: '1rem', lineHeight: 1.7, color: '#50665d' }}>
+                    Simpan referensi konten YouTube, X, dan Instagram dengan auto-fill dari link hasil scrape.
+                  </Typography>
+                  <Button
+                    component={Link}
+                    href="/content-record"
+                    variant="outlined"
+                    sx={{
+                      alignSelf: 'flex-start',
+                      minHeight: 56,
+                      borderRadius: 999,
+                      px: 3.5,
+                      borderColor: '#d9a754',
+                      color: '#9a6506',
+                      textTransform: 'none',
+                      fontWeight: 700,
+                    }}
+                  >
+                    Buka content recording
+                  </Button>
+                </Stack>
+              </Paper>
             </Box>
           </Stack>
         </Paper>

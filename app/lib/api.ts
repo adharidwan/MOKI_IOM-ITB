@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { getSupabaseServerClient, getSupabaseAdminClient } from './supabase-server';
-import { Ticket, Reply, TicketWithReplies, CsvContact } from './types';
+import { Ticket, Reply, TicketWithReplies, CsvContact, ContentRecording, ContentRecordingPlatform } from './types';
 import { createTicketReplyOutboundMessage } from './whatsapp-notification-repository';
 
 interface GetTicketsParams {
@@ -29,6 +29,15 @@ export interface CsvContactGroupSyncInput {
   contacts: CsvContactInput[];
   groupNames: string[];
   sourceFile?: string;
+}
+
+export interface ContentRecordingInput {
+  title: string;
+  platform: ContentRecordingPlatform;
+  upload_date: string;
+  link: string;
+  source_post_id?: string | null;
+  thumbnail_url?: string | null;
 }
 
 export interface PaginatedCsvContactsParams {
@@ -98,6 +107,26 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
       : String(record.source_file),
     imported_at: String(record.imported_at || ''),
     created_at: String(record.created_at || ''),
+  };
+}
+
+function toContentRecording(record: Record<string, unknown>): ContentRecording {
+  return {
+    id: String(record.id || ''),
+    title: String(record.title || ''),
+    platform: String(record.platform || '') as ContentRecordingPlatform,
+    upload_date: String(record.upload_date || ''),
+    link: String(record.link || ''),
+    source_post_id:
+      record.source_post_id === null || record.source_post_id === undefined
+        ? null
+        : String(record.source_post_id),
+    thumbnail_url:
+      record.thumbnail_url === null || record.thumbnail_url === undefined
+        ? null
+        : String(record.thumbnail_url),
+    created_at: String(record.created_at || ''),
+    updated_at: String(record.updated_at || ''),
   };
 }
 
@@ -553,5 +582,65 @@ export async function deleteCsvContact(id: string): Promise<void> {
 
   if (error) {
     throw new Error(`Failed to delete phone list row: ${error.message}`);
+  }
+}
+
+export async function getContentRecordings(): Promise<ContentRecording[]> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_recordings')
+    .select('*')
+    .order('upload_date', { ascending: false })
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to fetch content recordings: ${error.message}`);
+  }
+
+  return (data || []).map((record) => toContentRecording(record as Record<string, unknown>));
+}
+
+export async function upsertContentRecording(
+  input: ContentRecordingInput,
+): Promise<ContentRecording> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_recordings')
+    .upsert(
+      {
+        title: input.title.trim(),
+        platform: input.platform,
+        upload_date: input.upload_date,
+        link: input.link.trim(),
+        source_post_id: input.source_post_id || null,
+        thumbnail_url: input.thumbnail_url || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'link' },
+    )
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to save content recording: ${error.message}`);
+  }
+
+  return toContentRecording(data as Record<string, unknown>);
+}
+
+export async function deleteContentRecording(id: string): Promise<void> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) {
+    throw new Error('Content recording id is required.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from('content_recordings')
+    .delete()
+    .eq('id', normalizedId);
+
+  if (error) {
+    throw new Error(`Failed to delete content recording: ${error.message}`);
   }
 }

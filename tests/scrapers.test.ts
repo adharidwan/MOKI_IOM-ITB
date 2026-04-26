@@ -40,11 +40,22 @@ describe('scraper smoke tests', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chromium-path-'));
     const chromiumBinary = path.join(tempDir, 'chromium');
     fs.writeFileSync(chromiumBinary, '');
-    process.env.WHATSAPP_CHROMIUM_PATH = chromiumBinary;
+    process.env.PLAYWRIGHT_CHROMIUM_PATH = chromiumBinary;
 
     const { resolveChromiumExecutablePath } = await import('../app/lib/chromium-path');
 
     expect(resolveChromiumExecutablePath()).toBe(chromiumBinary);
+  });
+
+  it('does not inherit WhatsApp chromium path for Playwright scraping', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chromium-path-'));
+    const chromiumBinary = path.join(tempDir, 'chromium');
+    fs.writeFileSync(chromiumBinary, '');
+    process.env.WHATSAPP_CHROMIUM_PATH = chromiumBinary;
+
+    const { resolveChromiumExecutablePath } = await import('../app/lib/chromium-path');
+
+    expect(resolveChromiumExecutablePath()).toBeUndefined();
   });
 
   it('launches Playwright headless by default', async () => {
@@ -82,5 +93,14 @@ describe('scraper smoke tests', () => {
     expect(result).toEqual({
       error: 'Gagal mengambil data YouTube saat ini.',
     });
+  });
+
+  it('detects supported content platforms from links', async () => {
+    const { detectPlatformFromLink } = await import('../app/lib/scrape-content-link');
+
+    expect(detectPlatformFromLink('https://youtu.be/abc123')).toBe('youtube');
+    expect(detectPlatformFromLink('https://x.com/example/status/123')).toBe('x');
+    expect(detectPlatformFromLink('https://www.instagram.com/p/ABC123/')).toBe('Instagram');
+    expect(detectPlatformFromLink('https://example.com/post/123')).toBeNull();
   });
 });

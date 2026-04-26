@@ -1,10 +1,11 @@
 FROM node:20-bookworm-slim AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 FROM base AS deps
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --no-audit --fund=false
 
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
@@ -31,13 +32,18 @@ ENV SSO_ALLOWED_ROLES=$SSO_ALLOWED_ROLES
 ENV SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
 RUN npm run build
 
-FROM base AS runner
+FROM mcr.microsoft.com/playwright:v1.59.1-noble AS runner
+WORKDIR /app
 ENV NODE_ENV=production
-RUN groupadd --system --gid 1001 nextjs \
-    && useradd --system --uid 1001 --gid nextjs nextjs
-COPY --from=builder --chown=nextjs:nextjs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nextjs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nextjs /app/public ./public
-USER nextjs
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV YT_DLP_PATH=/usr/bin/yt-dlp
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder --chown=pwuser:pwuser /app/.next/standalone ./
+COPY --from=builder --chown=pwuser:pwuser /app/.next/static ./.next/static
+COPY --from=builder --chown=pwuser:pwuser /app/public ./public
+USER pwuser
 EXPOSE 3000
 CMD ["node", "server.js"]
