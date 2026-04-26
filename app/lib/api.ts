@@ -8,6 +8,7 @@ interface GetTicketsParams {
   page?: number;
   search?: string;
   sort?: string;
+  sortDir?: SortDirection;
   pageSize?: number;
   instanceId?: string;
 }
@@ -36,6 +37,8 @@ export interface PaginatedCsvContactsParams {
   pageSize?: number;
   search?: string;
   groupName?: string;
+  sortBy?: CsvContactSortKey;
+  sortDir?: SortDirection;
 }
 
 export interface PaginatedCsvContactsResponse {
@@ -50,6 +53,17 @@ export interface CsvContactsOverview {
   totalContacts: number;
   ungroupedContacts: number;
 }
+
+export type SortDirection = 'asc' | 'desc';
+
+export type CsvContactSortKey = 'imported_at' | 'nama' | 'no_telp' | 'status';
+
+type TicketSortKey = 'updated_at' | 'status' | 'subject' | 'id';
+
+const DEFAULT_CONTACT_SORT_BY: CsvContactSortKey = 'imported_at';
+const DEFAULT_CONTACT_SORT_DIR: SortDirection = 'desc';
+const DEFAULT_TICKET_SORT_BY: TicketSortKey = 'updated_at';
+const DEFAULT_TICKET_SORT_DIR: SortDirection = 'desc';
 
 function normalizeGroupNames(values: string[] | null | undefined): string[] {
   const normalized: string[] = [];
@@ -101,6 +115,74 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
   };
 }
 
+function toReply(record: Record<string, unknown>): Reply {
+  return {
+    id: String(record.id || ''),
+    ticket_id: String(record.ticket_id || ''),
+    author: String(record.author || ''),
+    content: String(record.content || ''),
+    sender_type: record.sender_type === 'admin' || record.sender_type === 'system' ? record.sender_type : 'customer',
+    delivery_status:
+      record.delivery_status === 'queued' ||
+      record.delivery_status === 'retrying' ||
+      record.delivery_status === 'sent' ||
+      record.delivery_status === 'failed' ||
+      record.delivery_status === 'not_applicable'
+        ? record.delivery_status
+        : 'pending',
+    delivery_attempts: Number(record.delivery_attempts || 0),
+    next_retry_at: record.next_retry_at === null || record.next_retry_at === undefined ? null : String(record.next_retry_at),
+    last_delivery_error: record.last_delivery_error === null || record.last_delivery_error === undefined ? null : String(record.last_delivery_error),
+    whatsapp_message_id: record.whatsapp_message_id === null || record.whatsapp_message_id === undefined ? null : String(record.whatsapp_message_id),
+    delivered_at: record.delivered_at === null || record.delivered_at === undefined ? null : String(record.delivered_at),
+    created_at: String(record.created_at || ''),
+  };
+}
+
+function toTicketWithReplies(record: Record<string, unknown>): TicketWithReplies {
+  const replies = Array.isArray(record.replies)
+    ? record.replies.map((reply) => toReply((reply || {}) as Record<string, unknown>))
+    : [];
+
+  return {
+    id: String(record.id || ''),
+    subject: String(record.subject || ''),
+    description: record.description === null || record.description === undefined ? null : String(record.description),
+    status:
+      record.status === 'In Progress' || record.status === 'Resolved' || record.status === 'Closed'
+        ? record.status
+        : 'Open',
+    user_email: record.user_email === null || record.user_email === undefined ? null : String(record.user_email),
+    channel: record.channel === null || record.channel === undefined ? null : String(record.channel),
+    phone_number: record.phone_number === null || record.phone_number === undefined ? null : String(record.phone_number),
+    whatsapp_chat_id: record.whatsapp_chat_id === null || record.whatsapp_chat_id === undefined ? null : String(record.whatsapp_chat_id),
+    whatsapp_instance_id: record.whatsapp_instance_id === null || record.whatsapp_instance_id === undefined ? null : String(record.whatsapp_instance_id),
+    created_at: String(record.created_at || ''),
+    updated_at: record.updated_at === null || record.updated_at === undefined ? null : String(record.updated_at),
+    replies,
+  };
+}
+
+function normalizeSortDirection(sortDir: string | undefined, fallback: SortDirection): SortDirection {
+  return sortDir === 'asc' || sortDir === 'desc' ? sortDir : fallback;
+}
+
+function normalizeCsvContactSortKey(sortBy: string | undefined): CsvContactSortKey {
+  if (sortBy === 'nama' || sortBy === 'no_telp' || sortBy === 'status' || sortBy === 'imported_at') {
+    return sortBy;
+  }
+
+  return DEFAULT_CONTACT_SORT_BY;
+}
+
+function normalizeTicketSortKey(sortBy: string | undefined): TicketSortKey {
+  if (sortBy === 'id' || sortBy === 'status' || sortBy === 'subject' || sortBy === 'updated_at' || sortBy === 'created_at') {
+    return sortBy === 'created_at' ? 'updated_at' : sortBy;
+  }
+
+  return DEFAULT_TICKET_SORT_BY;
+}
+
 export async function getCsvContactsByPhoneNumbers(phoneNumbers: string[]): Promise<CsvContact[]> {
   const normalizedPhoneNumbers = Array.from(
     new Set(
@@ -127,49 +209,37 @@ export async function getCsvContactsByPhoneNumbers(phoneNumbers: string[]): Prom
   return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
 }
 
-const SORT_COLUMN_MAP: Record<string, string> = {
-  createdAt: 'created_at',
-  created_at: 'created_at',
-  id: 'id',
-  status: 'status',
-  subject: 'subject',
-};
-
 export async function getTickets({ 
   page = 1, 
   search = '', 
-  sort = 'created_at',
+  sort = DEFAULT_TICKET_SORT_BY,
+  sortDir = DEFAULT_TICKET_SORT_DIR,
   pageSize = 10,
   instanceId,
 }: GetTicketsParams): Promise<GetTicketsResponse> {
   const supabase = getSupabaseServerClient();
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
-  const normalizedSort = SORT_COLUMN_MAP[sort] || 'created_at';
-
-  let query = supabase
-    .from('tickets')
-    .select('*, replies(*)', { count: 'exact' })
-    .order(normalizedSort, { ascending: normalizedSort === 'created_at' ? false : true })
-    .range(from, to);
-
-  if (search) {
-    query = query.ilike('subject', `%${search}%`);
-  }
-
-  if (instanceId) {
-    query = query.eq('whatsapp_instance_id', instanceId);
-  }
-
-  const { data, error, count } = await query;
+  const safePage = Math.max(1, Math.floor(page));
+  const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
+  const normalizedSort = normalizeTicketSortKey(sort);
+  const normalizedSortDir = normalizeSortDirection(sortDir, DEFAULT_TICKET_SORT_DIR);
+  const { data, error } = await supabase.rpc('list_tickets', {
+    p_search: search.trim() || null,
+    p_instance_id: instanceId || null,
+    p_page: safePage,
+    p_page_size: safePageSize,
+    p_sort_by: normalizedSort,
+    p_sort_dir: normalizedSortDir,
+  });
 
   if (error) {
     throw new Error(`Failed to fetch tickets: ${error.message}`);
   }
 
+  const rows = Array.isArray(data) ? data : [];
+
   return {
-    tickets: (data as TicketWithReplies[]) || [],
-    total: count || 0,
+    tickets: rows.map((row) => toTicketWithReplies(row as Record<string, unknown>)),
+    total: Number(rows[0]?.total_count || 0),
   };
 }
 
@@ -374,41 +444,34 @@ export async function getPaginatedCsvContacts({
   pageSize = 20,
   search = '',
   groupName,
+  sortBy = DEFAULT_CONTACT_SORT_BY,
+  sortDir = DEFAULT_CONTACT_SORT_DIR,
 }: PaginatedCsvContactsParams): Promise<PaginatedCsvContactsResponse> {
   const safePage = Math.max(1, Math.floor(page));
   const safePageSize = Math.min(100, Math.max(10, Math.floor(pageSize)));
-  const from = (safePage - 1) * safePageSize;
-  const to = from + safePageSize - 1;
   const normalizedSearch = search.trim();
   const normalizedGroupName = String(groupName || '').trim();
+  const normalizedSortBy = normalizeCsvContactSortKey(sortBy);
+  const normalizedSortDir = normalizeSortDirection(sortDir, DEFAULT_CONTACT_SORT_DIR);
   const supabase = getSupabaseAdminClient();
-
-  let query = supabase
-    .from('csv_contacts')
-    .select('*', { count: 'exact' })
-    .order('created_at', { ascending: false })
-    .range(from, to);
-
-  if (normalizedSearch) {
-    query = query.or(
-      `no_telp.ilike.%${normalizedSearch}%,nama.ilike.%${normalizedSearch}%,jabatan.ilike.%${normalizedSearch}%`,
-    );
-  }
-
-  if (normalizedGroupName) {
-    query = query.contains('group_names', [normalizedGroupName]);
-  }
-
-  const { data, error, count } = await query;
+  const { data, error } = await supabase.rpc('list_csv_contacts', {
+    p_search: normalizedSearch || null,
+    p_group_name: normalizedGroupName || null,
+    p_page: safePage,
+    p_page_size: safePageSize,
+    p_sort_by: normalizedSortBy,
+    p_sort_dir: normalizedSortDir,
+  });
 
   if (error) {
     throw new Error(`Failed to fetch paginated contacts: ${error.message}`);
   }
 
-  const total = count || 0;
+  const rows = Array.isArray(data) ? data : [];
+  const total = Number(rows[0]?.total_count || 0);
 
   return {
-    items: (data || []).map((record) => toCsvContact(record as Record<string, unknown>)),
+    items: rows.map((record) => toCsvContact(record as Record<string, unknown>)),
     total,
     page: safePage,
     pageSize: safePageSize,

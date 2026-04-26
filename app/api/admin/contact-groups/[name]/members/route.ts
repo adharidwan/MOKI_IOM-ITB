@@ -16,6 +16,8 @@ export async function GET(request: Request, { params }: Props): Promise<Response
       page: Number(searchParams.get('page') || '1'),
       pageSize: Number(searchParams.get('pageSize') || '20'),
       search: searchParams.get('search') || '',
+      sortBy: (searchParams.get('sortBy') as 'nama' | 'no_telp' | 'jenis_kelamin' | null) || undefined,
+      sortDir: (searchParams.get('sortDir') as 'asc' | 'desc' | null) || undefined,
     }),
   );
 }
