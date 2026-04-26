@@ -30,3 +30,27 @@ export const adminPalette = {
   sidebarAccent: '#93c5fd',
   sidebarActive: '#dbeafe',
 } as const;
+
+export const adminTableSortLabelSx = {
+  color: 'inherit',
+  borderRadius: 999,
+  px: 0.75,
+  py: 0.25,
+  mx: -0.75,
+  transition: 'background-color 160ms ease, box-shadow 160ms ease, color 160ms ease',
+  '&:hover': {
+    color: '#ffffff',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  '& .MuiTableSortLabel-icon': {
+    color: 'rgba(255,255,255,0.72) !important',
+  },
+  '&.Mui-active': {
+    color: '#ffffff',
+    backgroundColor: 'rgba(147,197,253,0.22)',
+    boxShadow: 'inset 0 0 0 1px rgba(191,219,254,0.55)',
+  },
+  '&.Mui-active .MuiTableSortLabel-icon': {
+    color: '#bfdbfe !important',
+  },
+} as const;

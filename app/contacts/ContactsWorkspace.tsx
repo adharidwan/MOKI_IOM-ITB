@@ -38,6 +38,8 @@ interface ContactsWorkspaceProps {
   totalPages: number;
   currentSearch: string;
   currentGroupName: string;
+  currentSortBy: 'imported_at' | 'nama' | 'no_telp' | 'status';
+  currentSortDir: 'asc' | 'desc';
 }
 
 function MetricTile({ label, value }: { label: string; value: number }) {
@@ -90,6 +92,8 @@ export default function ContactsWorkspace({
   totalPages,
   currentSearch,
   currentGroupName,
+  currentSortBy,
+  currentSortDir,
 }: ContactsWorkspaceProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -166,13 +170,15 @@ export default function ContactsWorkspace({
       </Paper>
 
       <PhoneListSearch
-        key={`${currentPage}-${currentSearch}-${currentGroupName}`}
+        key={`${currentPage}-${currentSearch}-${currentGroupName}-${currentSortBy}-${currentSortDir}`}
         contacts={contacts}
         totalCount={totalCount}
         currentPage={currentPage}
         totalPages={totalPages}
         currentSearch={currentSearch}
         currentGroupName={currentGroupName}
+        currentSortBy={currentSortBy}
+        currentSortDir={currentSortDir}
       />
 
       <Drawer

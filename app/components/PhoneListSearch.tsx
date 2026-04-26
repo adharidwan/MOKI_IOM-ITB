@@ -29,11 +29,12 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from '@mui/material';
 
-import { adminPalette } from '../lib/adminPalette';
+import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 import {
   assignContactGroupAction,
@@ -49,6 +50,8 @@ interface PhoneListTableProps {
   totalPages: number;
   currentSearch: string;
   currentGroupName: string;
+  currentSortBy: ContactSortKey;
+  currentSortDir: SortDirection;
 }
 
 interface ContactFilters {
@@ -60,6 +63,9 @@ type DeleteState =
   | { mode: 'single'; contact: CsvContact }
   | { mode: 'bulk' }
   | null;
+
+type ContactSortKey = 'nama' | 'no_telp' | 'status' | 'imported_at';
+type SortDirection = 'asc' | 'desc';
 
 const GENDER_OPTIONS = ['Laki-laki', 'Perempuan', 'Tidak diketahui'];
 
@@ -88,6 +94,13 @@ const QUIET_TAG_SX = {
   fontSize: '0.71rem',
   fontWeight: 600,
 } as const;
+
+const DEFAULT_SORT_DIRECTIONS: Record<ContactSortKey, SortDirection> = {
+  nama: 'asc',
+  no_telp: 'asc',
+  status: 'asc',
+  imported_at: 'desc',
+};
 
 function formatCompactDate(value: string): string {
   const date = new Date(value);
@@ -126,6 +139,8 @@ export default function PhoneListTable({
   totalPages,
   currentSearch,
   currentGroupName,
+  currentSortBy,
+  currentSortDir,
 }: PhoneListTableProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -194,6 +209,23 @@ export default function PhoneListTable({
   const goToPage = (nextPage: number) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('page', String(nextPage));
+    const nextQuery = params.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
+  };
+
+  const handleSortChange = (sortBy: ContactSortKey) => {
+    const params = new URLSearchParams(searchParams.toString());
+    const nextSortDir =
+      currentSortBy === sortBy
+        ? currentSortDir === 'asc'
+          ? 'desc'
+          : 'asc'
+        : DEFAULT_SORT_DIRECTIONS[sortBy];
+
+    params.set('sortBy', sortBy);
+    params.set('sortDir', nextSortDir);
+    params.set('page', '1');
+
     const nextQuery = params.toString();
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
   };
@@ -339,22 +371,50 @@ export default function PhoneListTable({
                         }}
                       />
                     </TableCell>
-                    {['Name', 'WhatsApp', 'Group', 'Status', 'Imported', ''].map((label) => (
-                      <TableCell
-                        key={label || 'actions'}
-                        align={label ? 'left' : 'right'}
-                        sx={{
-                          py: 0.8,
-                          fontSize: '0.64rem',
-                          fontWeight: 700,
-                          letterSpacing: '0.1em',
-                          textTransform: 'uppercase',
-                          color: 'rgba(255,255,255,0.88)',
-                        }}
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableSortLabel
+                        active={currentSortBy === 'nama'}
+                        direction={currentSortBy === 'nama' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.nama}
+                        onClick={() => handleSortChange('nama')}
+                        sx={adminTableSortLabelSx}
                       >
-                        {label}
-                      </TableCell>
-                    ))}
+                        Name
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableSortLabel
+                        active={currentSortBy === 'no_telp'}
+                        direction={currentSortBy === 'no_telp' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.no_telp}
+                        onClick={() => handleSortChange('no_telp')}
+                        sx={adminTableSortLabelSx}
+                      >
+                        WhatsApp
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      Group
+                    </TableCell>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableSortLabel
+                        active={currentSortBy === 'status'}
+                        direction={currentSortBy === 'status' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.status}
+                        onClick={() => handleSortChange('status')}
+                        sx={adminTableSortLabelSx}
+                      >
+                        Status
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableSortLabel
+                        active={currentSortBy === 'imported_at'}
+                        direction={currentSortBy === 'imported_at' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.imported_at}
+                        onClick={() => handleSortChange('imported_at')}
+                        sx={adminTableSortLabelSx}
+                      >
+                        Imported
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>

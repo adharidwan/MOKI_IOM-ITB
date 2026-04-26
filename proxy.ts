@@ -22,6 +22,10 @@ function isPublicPath(pathname: string): boolean {
 }
 
 export async function proxy(request: NextRequest) {
+  if (process.env.NEXT_PUBLIC_DISABLE_SSO === 'true') {
+    return NextResponse.next();
+  }
+
   const { pathname, search } = request.nextUrl;
 
   if (isPublicPath(pathname)) {

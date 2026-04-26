@@ -4,10 +4,21 @@ import type { CsvContactInput } from './api';
 import { getSupabaseAdminClient } from './supabase-server';
 import type { CsvContact } from './types';
 
+export type SortDirection = 'asc' | 'desc';
+export type GroupSortKey = 'name' | 'memberCount';
+export type GroupMemberSortKey = 'nama' | 'no_telp' | 'jenis_kelamin';
+
+const DEFAULT_GROUP_SORT_BY: GroupSortKey = 'memberCount';
+const DEFAULT_GROUP_SORT_DIR: SortDirection = 'desc';
+const DEFAULT_GROUP_MEMBER_SORT_BY: GroupMemberSortKey = 'nama';
+const DEFAULT_GROUP_MEMBER_SORT_DIR: SortDirection = 'asc';
+
 export interface PaginatedContactGroupsParams {
   page?: number;
   pageSize?: number;
   search?: string;
+  sortBy?: GroupSortKey;
+  sortDir?: SortDirection;
 }
 
 export interface PaginatedContactGroupsResponse {
@@ -27,6 +38,8 @@ export interface PaginatedGroupMembersParams {
   page?: number;
   pageSize?: number;
   search?: string;
+  sortBy?: GroupMemberSortKey;
+  sortDir?: SortDirection;
 }
 
 export interface PaginatedGroupMembersResponse {
@@ -53,18 +66,38 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
   };
 }
 
+function normalizeSortDirection(sortDir: string | undefined, fallback: SortDirection): SortDirection {
+  return sortDir === 'asc' || sortDir === 'desc' ? sortDir : fallback;
+}
+
+function normalizeGroupSortKey(sortBy: string | undefined): GroupSortKey {
+  return sortBy === 'name' || sortBy === 'memberCount' ? sortBy : DEFAULT_GROUP_SORT_BY;
+}
+
+function normalizeGroupMemberSortKey(sortBy: string | undefined): GroupMemberSortKey {
+  return sortBy === 'nama' || sortBy === 'no_telp' || sortBy === 'jenis_kelamin'
+    ? sortBy
+    : DEFAULT_GROUP_MEMBER_SORT_BY;
+}
+
 export async function getPaginatedContactGroups({
   page = 1,
   pageSize = 20,
   search = '',
+  sortBy = DEFAULT_GROUP_SORT_BY,
+  sortDir = DEFAULT_GROUP_SORT_DIR,
 }: PaginatedContactGroupsParams): Promise<PaginatedContactGroupsResponse> {
   const safePage = Math.max(1, Math.floor(page));
   const safePageSize = Math.min(100, Math.max(10, Math.floor(pageSize)));
+  const normalizedSortBy = normalizeGroupSortKey(sortBy);
+  const normalizedSortDir = normalizeSortDirection(sortDir, DEFAULT_GROUP_SORT_DIR);
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase.rpc('list_csv_contact_groups', {
     p_search: search.trim() || null,
     p_page: safePage,
     p_page_size: safePageSize,
+    p_sort_by: normalizedSortBy === 'name' ? 'group_name' : 'member_count',
+    p_sort_dir: normalizedSortDir,
   });
 
   if (error) {
@@ -94,15 +127,21 @@ export async function getPaginatedGroupMembers({
   page = 1,
   pageSize = 20,
   search = '',
+  sortBy = DEFAULT_GROUP_MEMBER_SORT_BY,
+  sortDir = DEFAULT_GROUP_MEMBER_SORT_DIR,
 }: PaginatedGroupMembersParams): Promise<PaginatedGroupMembersResponse> {
   const safePage = Math.max(1, Math.floor(page));
   const safePageSize = Math.min(100, Math.max(10, Math.floor(pageSize)));
+  const normalizedSortBy = normalizeGroupMemberSortKey(sortBy);
+  const normalizedSortDir = normalizeSortDirection(sortDir, DEFAULT_GROUP_MEMBER_SORT_DIR);
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase.rpc('list_csv_contact_group_members', {
     p_group_name: groupName,
     p_search: search.trim() || null,
     p_page: safePage,
     p_page_size: safePageSize,
+    p_sort_by: normalizedSortBy,
+    p_sort_dir: normalizedSortDir,
   });
 
   if (error) {

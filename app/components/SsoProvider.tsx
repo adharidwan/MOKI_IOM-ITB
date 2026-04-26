@@ -23,6 +23,13 @@ interface SsoContextValue {
 }
 
 const SsoContext = createContext<SsoContextValue | null>(null);
+const isSsoDisabled = process.env.NEXT_PUBLIC_DISABLE_SSO === 'true';
+const devSsoContext: SsoContextValue = {
+  userName: 'Local Developer',
+  userEmail: 'dev@local',
+  roles: ['admin'],
+  logout: async () => {},
+};
 
 async function syncSessionCookie(token: string): Promise<void> {
   const response = await fetch('/api/auth/session', {
@@ -50,7 +57,7 @@ function shouldAttachAuthHeader(input: RequestInfo | URL): boolean {
   return requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith('/api/');
 }
 
-export default function SsoProvider({ children }: { children: React.ReactNode }) {
+function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isLoginPage = pathname === '/sso/login';
@@ -268,6 +275,14 @@ export default function SsoProvider({ children }: { children: React.ReactNode })
       {children}
     </SsoContext.Provider>
   );
+}
+
+export default function SsoProvider({ children }: { children: React.ReactNode }) {
+  if (isSsoDisabled) {
+    return <SsoContext.Provider value={devSsoContext}>{children}</SsoContext.Provider>;
+  }
+
+  return <AuthenticatedSsoProvider>{children}</AuthenticatedSsoProvider>;
 }
 
 export function useSso(): SsoContextValue {
