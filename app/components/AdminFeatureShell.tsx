@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Box, Button, Stack, Typography } from '@mui/material';
+import ConfirmationNumberRoundedIcon from '@mui/icons-material/ConfirmationNumberRounded';
 import Groups2RoundedIcon from '@mui/icons-material/Groups2Rounded';
 import NotificationsNoneRoundedIcon from '@mui/icons-material/NotificationsNoneRounded';
 import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded';
@@ -12,7 +13,7 @@ import { adminPalette } from '../lib/adminPalette';
 interface AdminFeatureShellProps {
   title: string;
   description: string;
-  currentPath: '/contacts' | '/group' | '/blastmessage';
+  currentPath: '/contacts' | '/group' | '/blastmessage' | '/ticket';
   badge?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
@@ -33,6 +34,11 @@ const NAV_ITEMS = [
     href: '/blastmessage' as const,
     label: 'Blast',
     icon: <SendRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: '/ticket' as const,
+    label: 'Ticket',
+    icon: <ConfirmationNumberRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
 
