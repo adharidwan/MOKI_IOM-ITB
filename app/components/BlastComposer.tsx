@@ -21,12 +21,13 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from '@mui/material';
 
 import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
-import { adminPalette } from '../lib/adminPalette';
+import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 
 const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
@@ -34,6 +35,9 @@ const MAX_MESSAGE_LENGTH = 4096;
 const VARIABLE_PATTERN = /\{\{\s*(name|phone_number|group_name)\s*\}\}/g;
 
 type RecipientSource = 'contact' | 'group' | 'csv' | 'manual';
+type ContactSortKey = 'nama' | 'no_telp';
+type GroupSortKey = 'name' | 'memberCount';
+type SortDirection = 'asc' | 'desc';
 
 interface BlastComposerProps {
   initialContacts: {
@@ -94,6 +98,16 @@ interface GroupRecipientsPreviewResponse {
   totalRecipients: number;
   previewRecipients: RecipientInput[];
 }
+
+const CONTACT_SORT_DEFAULTS: Record<ContactSortKey, SortDirection> = {
+  nama: 'asc',
+  no_telp: 'asc',
+};
+
+const GROUP_SORT_DEFAULTS: Record<GroupSortKey, SortDirection> = {
+  name: 'asc',
+  memberCount: 'desc',
+};
 
 const QUIET_BUTTON_SX = {
   minHeight: 34,
@@ -214,12 +228,10 @@ function renderHighlightedTemplate(text: string) {
         component="span"
         sx={{
           display: 'inline',
-          px: 0.55,
-          py: 0.15,
-          borderRadius: 1,
+          borderRadius: 0.75,
           backgroundColor: adminPalette.brandSoftStrong,
           color: adminPalette.brandDark,
-          fontWeight: 700,
+          boxShadow: `0 0 0 1px ${adminPalette.brandSoftStrong}`,
         }}
       >
         {part.text}
@@ -279,6 +291,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const [groupSearch, setGroupSearch] = useState('');
   const [contactPage, setContactPage] = useState(initialContacts.page || 1);
   const [groupPage, setGroupPage] = useState(initialGroups.page || 1);
+  const [contactSortBy, setContactSortBy] = useState<ContactSortKey>('nama');
+  const [contactSortDir, setContactSortDir] = useState<SortDirection>('asc');
+  const [groupSortBy, setGroupSortBy] = useState<GroupSortKey>('memberCount');
+  const [groupSortDir, setGroupSortDir] = useState<SortDirection>('desc');
   const [contactDirectory, setContactDirectory] = useState<ContactDirectoryResponse>(initialContacts);
   const [groupDirectory, setGroupDirectory] = useState<GroupDirectoryResponse>(initialGroups);
   const [loadingContacts, setLoadingContacts] = useState(false);
@@ -357,6 +373,8 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
         const params = new URLSearchParams({
           page: String(contactPage),
           pageSize: String(initialContacts.pageSize || 20),
+          sortBy: contactSortBy,
+          sortDir: contactSortDir,
         });
 
         if (contactSearch.trim()) {
@@ -394,7 +412,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     return () => {
       cancelled = true;
     };
-  }, [contactPage, contactSearch, initialContacts.pageSize, selectedSource]);
+  }, [contactPage, contactSearch, contactSortBy, contactSortDir, initialContacts.pageSize, selectedSource]);
 
   useEffect(() => {
     if (selectedSource !== 'group') {
@@ -410,6 +428,8 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
         const params = new URLSearchParams({
           page: String(groupPage),
           pageSize: String(initialGroups.pageSize || 20),
+          sortBy: groupSortBy,
+          sortDir: groupSortDir,
         });
 
         if (groupSearch.trim()) {
@@ -447,7 +467,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     return () => {
       cancelled = true;
     };
-  }, [groupPage, groupSearch, initialGroups.pageSize, selectedSource]);
+  }, [groupPage, groupSearch, groupSortBy, groupSortDir, initialGroups.pageSize, selectedSource]);
 
   useEffect(() => {
     if (!selectedGroups.length) {
@@ -497,6 +517,18 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
       setSaveToGroup(false);
       setSaveGroupName('');
     }
+  };
+
+  const handleContactSortChange = (sortBy: ContactSortKey) => {
+    setContactSortDir((previous) => (contactSortBy === sortBy ? (previous === 'asc' ? 'desc' : 'asc') : CONTACT_SORT_DEFAULTS[sortBy]));
+    setContactSortBy(sortBy);
+    setContactPage(1);
+  };
+
+  const handleGroupSortChange = (sortBy: GroupSortKey) => {
+    setGroupSortDir((previous) => (groupSortBy === sortBy ? (previous === 'asc' ? 'desc' : 'asc') : GROUP_SORT_DEFAULTS[sortBy]));
+    setGroupSortBy(sortBy);
+    setGroupPage(1);
   };
 
   const toggleContactRecipient = (contact: CsvContact) => {
@@ -806,9 +838,6 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
           <Stack spacing={1} sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}>
             <Stack spacing={0.35}>
               <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>Penerima</Typography>
-              <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textMuted }}>
-                Pilih sumber penerima dan sesuaikan daftar tanpa meninggalkan editor pesan.
-              </Typography>
             </Stack>
 
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
@@ -842,7 +871,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
           <Stack spacing={1.5} sx={{ p: { xs: 1.25, md: 1.5 } }}>
             {selectedSource === null ? (
               <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-                Pilih sumber penerima terlebih dahulu. Pesan tetap bisa mulai ditulis di panel kanan kapan saja.
+                Silahkan pilih sumber penerima terlebih dahulu
               </Alert>
             ) : null}
 
@@ -876,11 +905,32 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   >
                     <TableHead>
                       <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                        {['Pilih', 'Nama', 'Nomor WhatsApp', 'Grup'].map((label) => (
-                          <TableCell key={label} sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
-                            {label}
-                          </TableCell>
-                        ))}
+                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                          Pilih
+                        </TableCell>
+                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                          <TableSortLabel
+                            active={contactSortBy === 'nama'}
+                            direction={contactSortBy === 'nama' ? contactSortDir : CONTACT_SORT_DEFAULTS.nama}
+                            onClick={() => handleContactSortChange('nama')}
+                            sx={adminTableSortLabelSx}
+                          >
+                            Nama
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                          <TableSortLabel
+                            active={contactSortBy === 'no_telp'}
+                            direction={contactSortBy === 'no_telp' ? contactSortDir : CONTACT_SORT_DEFAULTS.no_telp}
+                            onClick={() => handleContactSortChange('no_telp')}
+                            sx={adminTableSortLabelSx}
+                          >
+                            Nomor WhatsApp
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                          Grup
+                        </TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -968,11 +1018,32 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                       <Table size="small" sx={{ minWidth: 700, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
                         <TableHead>
                           <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                            {['Pilih', 'Grup', 'Jumlah anggota', 'Pratinjau'].map((label) => (
-                              <TableCell key={label} sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
-                                {label}
-                              </TableCell>
-                            ))}
+                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                              Pilih
+                            </TableCell>
+                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                              <TableSortLabel
+                                active={groupSortBy === 'name'}
+                                direction={groupSortBy === 'name' ? groupSortDir : GROUP_SORT_DEFAULTS.name}
+                                onClick={() => handleGroupSortChange('name')}
+                                sx={adminTableSortLabelSx}
+                              >
+                                Grup
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                              <TableSortLabel
+                                active={groupSortBy === 'memberCount'}
+                                direction={groupSortBy === 'memberCount' ? groupSortDir : GROUP_SORT_DEFAULTS.memberCount}
+                                onClick={() => handleGroupSortChange('memberCount')}
+                                sx={adminTableSortLabelSx}
+                              >
+                                Jumlah anggota
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                              Pratinjau
+                            </TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -1145,7 +1216,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 <Typography sx={{ fontSize: '0.82rem', color: adminPalette.textMuted }}>
                   {selectedSource === 'group'
                     ? `${selectedGroups.length} grup dipilih dengan estimasi ${groupPreview.totalRecipients} penerima unik.`
-                    : `${recipientCount} penerima siap dipakai untuk blast.`}
+                    : `${recipientCount} penerima`}
                 </Typography>
                 {selectedSource === 'group' ? (
                   <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
@@ -1232,13 +1303,15 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   aria-hidden
                   sx={{
                     minHeight: 240,
-                    px: 1.75,
+                    px: 1.5,
                     py: 1.5,
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                     overflow: 'auto',
                     fontSize: '0.96rem',
                     lineHeight: 1.65,
+                    fontFamily: 'inherit',
+                    letterSpacing: 'normal',
                     color: adminPalette.textPrimary,
                   }}
                 >
@@ -1273,13 +1346,11 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                     fontSize: '0.96rem',
                     lineHeight: 1.65,
                     fontFamily: 'inherit',
+                    letterSpacing: 'normal',
                   }}
                 />
               </Box>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" sx={{ mt: 0.9 }}>
-                <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textMuted }}>
-                  Variabel tersedia: {BLAST_VARIABLES.map((variable) => variable.token).join(', ')}.
-                </Typography>
                 <Typography sx={{ fontSize: '0.8rem', color: message.trim().length > MAX_MESSAGE_LENGTH ? adminPalette.dangerText : adminPalette.textMuted, fontWeight: 700 }}>
                   {message.trim().length}/{MAX_MESSAGE_LENGTH} karakter
                 </Typography>

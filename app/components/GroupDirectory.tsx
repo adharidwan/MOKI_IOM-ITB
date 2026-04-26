@@ -24,13 +24,14 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from '@mui/material';
 
 import { createGroupMemberAction, createGroupWithFirstMemberAction } from '../group/actions';
 import type { PaginatedContactGroupsResponse, PaginatedGroupMembersResponse } from '../lib/group-directory-server';
-import { adminPalette } from '../lib/adminPalette';
+import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
 
 const GENDER_OPTIONS = ['Laki-laki', 'Perempuan', 'Tidak diketahui'];
 
@@ -69,13 +70,32 @@ const ACTIVE_ROW_SX = {
   boxShadow: `inset 3px 0 0 ${adminPalette.brand}`,
 } as const;
 
+const GROUP_SORT_DEFAULTS: Record<GroupSortKey, SortDirection> = {
+  name: 'asc',
+  memberCount: 'desc',
+};
+
+const MEMBER_SORT_DEFAULTS: Record<GroupMemberSortKey, SortDirection> = {
+  nama: 'asc',
+  no_telp: 'asc',
+  jenis_kelamin: 'asc',
+};
+
 interface GroupDirectoryProps {
   groups: PaginatedContactGroupsResponse;
   selectedGroupName: string;
   members: PaginatedGroupMembersResponse;
   currentSearch: string;
   currentMemberSearch: string;
+  currentSortBy: GroupSortKey;
+  currentSortDir: SortDirection;
+  currentMemberSortBy: GroupMemberSortKey;
+  currentMemberSortDir: SortDirection;
 }
+
+type GroupSortKey = 'name' | 'memberCount';
+type GroupMemberSortKey = 'nama' | 'no_telp' | 'jenis_kelamin';
+type SortDirection = 'asc' | 'desc';
 
 function MetricTile({ label, value }: { label: string; value: string | number }) {
   return (
@@ -170,6 +190,10 @@ export default function GroupDirectory({
   members,
   currentSearch,
   currentMemberSearch,
+  currentSortBy,
+  currentSortDir,
+  currentMemberSortBy,
+  currentMemberSortDir,
 }: GroupDirectoryProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -266,6 +290,39 @@ export default function GroupDirectory({
       group: groupName,
       memberPage: '1',
       memberSearch: null,
+    });
+  };
+
+  const handleGroupSortChange = (sortBy: GroupSortKey) => {
+    const nextSortDir =
+      currentSortBy === sortBy
+        ? currentSortDir === 'asc'
+          ? 'desc'
+          : 'asc'
+        : GROUP_SORT_DEFAULTS[sortBy];
+
+    updateQuery({
+      sortBy,
+      sortDir: nextSortDir,
+      page: '1',
+      group: null,
+      memberPage: null,
+      memberSearch: null,
+    });
+  };
+
+  const handleMemberSortChange = (sortBy: GroupMemberSortKey) => {
+    const nextSortDir =
+      currentMemberSortBy === sortBy
+        ? currentMemberSortDir === 'asc'
+          ? 'desc'
+          : 'asc'
+        : MEMBER_SORT_DEFAULTS[sortBy];
+
+    updateQuery({
+      memberSortBy: sortBy,
+      memberSortDir: nextSortDir,
+      memberPage: '1',
     });
   };
 
@@ -382,21 +439,29 @@ export default function GroupDirectory({
                 >
                   <TableHead>
                     <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                      {['Nama grup', 'Jumlah anggota', 'Preview'].map((label) => (
-                        <TableCell
-                          key={label}
-                          sx={{
-                            py: 0.8,
-                            fontSize: '0.64rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.1em',
-                            textTransform: 'uppercase',
-                            color: 'rgba(255,255,255,0.88)',
-                          }}
+                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableSortLabel
+                          active={currentSortBy === 'name'}
+                          direction={currentSortBy === 'name' ? currentSortDir : GROUP_SORT_DEFAULTS.name}
+                          onClick={() => handleGroupSortChange('name')}
+                          sx={adminTableSortLabelSx}
                         >
-                          {label}
-                        </TableCell>
-                      ))}
+                          Nama grup
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableSortLabel
+                          active={currentSortBy === 'memberCount'}
+                          direction={currentSortBy === 'memberCount' ? currentSortDir : GROUP_SORT_DEFAULTS.memberCount}
+                          onClick={() => handleGroupSortChange('memberCount')}
+                          sx={adminTableSortLabelSx}
+                        >
+                          Jumlah anggota
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        Preview
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -571,21 +636,36 @@ export default function GroupDirectory({
                 >
                   <TableHead>
                     <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                      {['Nama', 'Nomor WhatsApp', 'Jenis kelamin'].map((label) => (
-                        <TableCell
-                          key={label}
-                          sx={{
-                            py: 0.8,
-                            fontSize: '0.64rem',
-                            fontWeight: 700,
-                            letterSpacing: '0.1em',
-                            textTransform: 'uppercase',
-                            color: 'rgba(255,255,255,0.88)',
-                          }}
+                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableSortLabel
+                          active={currentMemberSortBy === 'nama'}
+                          direction={currentMemberSortBy === 'nama' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.nama}
+                          onClick={() => handleMemberSortChange('nama')}
+                          sx={adminTableSortLabelSx}
                         >
-                          {label}
-                        </TableCell>
-                      ))}
+                          Nama
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableSortLabel
+                          active={currentMemberSortBy === 'no_telp'}
+                          direction={currentMemberSortBy === 'no_telp' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.no_telp}
+                          onClick={() => handleMemberSortChange('no_telp')}
+                          sx={adminTableSortLabelSx}
+                        >
+                          Nomor WhatsApp
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableSortLabel
+                          active={currentMemberSortBy === 'jenis_kelamin'}
+                          direction={currentMemberSortBy === 'jenis_kelamin' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.jenis_kelamin}
+                          onClick={() => handleMemberSortChange('jenis_kelamin')}
+                          sx={adminTableSortLabelSx}
+                        >
+                          Jenis kelamin
+                        </TableSortLabel>
+                      </TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
