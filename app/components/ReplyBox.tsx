@@ -1,8 +1,10 @@
-"use client";
+'use client';
 
-import React, { useActionState } from "react";
-import { Alert, Box, TextField, Button, Stack } from "@mui/material";
-import SendIcon from "@mui/icons-material/Send";
+import { useActionState } from 'react';
+import SendRoundedIcon from '@mui/icons-material/SendRounded';
+import { Alert, Box, Button, Stack, TextField, Typography } from '@mui/material';
+
+import { adminPalette } from '../lib/adminPalette';
 
 interface ReplyActionState {
   error: string | null;
@@ -22,41 +24,56 @@ interface ReplyBoxProps {
 }
 
 export default function ReplyBox({ sendReplyAction }: ReplyBoxProps) {
-  const [state, formAction, isPending] = useActionState(
-    sendReplyAction,
-    initialReplyActionState,
-  );
+  const [state, formAction, isPending] = useActionState(sendReplyAction, initialReplyActionState);
 
   return (
-    <Box sx={{ mt: 4, borderTop: "1px solid #eee" }}>
-      <Stack spacing={2} component="form" action={formAction}>
-        {state.error ? <Alert severity="error">{state.error}</Alert> : null}
-        {state.success ? (
-          <Alert severity="success">
-            Reply queued. The bot will send it to WhatsApp and retry if it fails.
-          </Alert>
-        ) : null}
-        <TextField
-          label="Write a reply..."
-          multiline
-          rows={4}
-          fullWidth
-          required
-          name="content"
+    <Stack spacing={1.25} component="form" action={formAction}>
+      <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textMuted }}>
+        Tulis balasan untuk pelanggan. Jika tiket terhubung ke WhatsApp, sistem akan mengantrekan pengiriman dan retry otomatis bila diperlukan.
+      </Typography>
+
+      {state.error ? <Alert severity="error" sx={{ borderRadius: 2.5 }}>{state.error}</Alert> : null}
+      {state.success ? (
+        <Alert severity="success" sx={{ borderRadius: 2.5 }}>
+          Balasan berhasil masuk ke antrean pengiriman.
+        </Alert>
+      ) : null}
+
+      <TextField
+        label="Isi balasan"
+        multiline
+        minRows={5}
+        fullWidth
+        required
+        name="content"
+        disabled={isPending}
+        placeholder="Tulis balasan yang akan dikirim ke pelanggan."
+        sx={{ '& .MuiOutlinedInput-root': { backgroundColor: adminPalette.surfaceSoft } }}
+      />
+
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button
+          variant="contained"
+          endIcon={<SendRoundedIcon />}
+          type="submit"
           disabled={isPending}
-          sx = {{ backgroundColor: "#f9f9f9", mb: 2 }}
-        />
-        <Box sx={{ display: "flex", justifyContent: "flex-end"}}>
-          <Button
-            variant="contained"
-            endIcon={<SendIcon />}
-            type="submit"
-            disabled={isPending}
-          >
-            {isPending ? "Queueing..." : "Send Reply"}
-          </Button>
-        </Box>
-      </Stack>
-    </Box>
+          sx={{
+            minHeight: 38,
+            borderRadius: 2,
+            px: 2.2,
+            backgroundColor: adminPalette.brand,
+            textTransform: 'none',
+            fontWeight: 700,
+            boxShadow: 'none',
+            '&:hover': {
+              backgroundColor: adminPalette.brandDark,
+              boxShadow: 'none',
+            },
+          }}
+        >
+          {isPending ? 'Mengantrekan...' : 'Kirim balasan'}
+        </Button>
+      </Box>
+    </Stack>
   );
 }
