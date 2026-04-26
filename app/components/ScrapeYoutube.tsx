@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Box,
   Typography,
@@ -17,33 +17,69 @@ import {
   Stack,
   Tooltip,
   IconButton,
+  TextField,
+  Alert,
 } from "@mui/material";
 import { Refresh, VideoLibrary, Checklist, LinkOff } from "@mui/icons-material";
+import { useTransition } from "react";
 import { scrape_youtube, ScrapeResult } from "@/app/lib/scrape-youtube";
+import { exportScrapedContentAction } from "@/app/scrape/actions";
+
+function buildYouTubeChannelUrl(rawInput: string): string {
+  const input = rawInput.trim();
+  if (input.startsWith("http://") || input.startsWith("https://")) {
+    return input;
+  }
+
+  const cleaned = input.replace(/^@/, "");
+  return `https://www.youtube.com/@${cleaned}/videos`;
+}
 
 export default function YouTubeScraper() {
   const [data, setData] = useState<ScrapeResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportMessage, setExportMessage] = useState<string>("");
+  const [exportError, setExportError] = useState<string>("");
+  const [itemWarnings, setItemWarnings] = useState<Record<string, boolean>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [channelInput, setChannelInput] = useState("IOM-ITB");
+
+  function setWarningsFromFailures(
+    failures: Array<{ link: string; error: string }>,
+  ) {
+    const warnings: Record<string, boolean> = {};
+
+    failures.forEach((failure) => {
+      if (failure.error.toLowerCase().includes("sudah ada")) {
+        warnings[failure.link.toLowerCase()] = true;
+      }
+    });
+
+    setItemWarnings(warnings);
+  }
 
   const handleScrape = async () => {
+    const channel = channelInput.trim();
+    if (!channel) {
+      setData({ error: "Nama channel YouTube wajib diisi." });
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await scrape_youtube(
-        "https://www.youtube.com/@IOM-ITB/videos",
-      );
+      const result = await scrape_youtube(buildYouTubeChannelUrl(channel));
       setData(result);
       setSelectedIds([]); // Reset seleksi saat refresh
+      setExportMessage("");
+      setExportError("");
+      setItemWarnings({});
     } catch (error) {
       setData({ error: "Gagal mengambil data IOM ITB." });
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    handleScrape();
-  }, []);
 
   const handleToggle = (id: string) => {
     setSelectedIds((prev) =>
@@ -65,9 +101,64 @@ export default function YouTubeScraper() {
     const selectedData = data?.videos?.filter((v) =>
       selectedIds.includes(v.id),
     );
-    console.log("=== EKSPOR DATA JSON (PoC) ===");
-    console.log(JSON.stringify(selectedData, null, 2));
-    alert(`${selectedIds.length} video di-log ke Console.`);
+
+    if (!selectedData?.length) {
+      setExportError("Pilih minimal satu video untuk diekspor.");
+      return;
+    }
+
+    setExportMessage("");
+    setExportError("");
+
+    startExportTransition(async () => {
+      const result = await exportScrapedContentAction(
+        selectedData.map((video) => ({
+          title: video.title,
+          platform: "youtube" as const,
+          upload_date: video.upload_date,
+          link: video.link,
+          source_post_id: video.id,
+          thumbnail_url: video.thumbnail,
+        })),
+      );
+
+      if (result.savedCount > 0) {
+        setExportMessage(
+          `${result.savedCount} konten YouTube berhasil disimpan ke recording.`,
+        );
+      }
+
+      setWarningsFromFailures(result.failed);
+
+      const duplicateFailures = result.failed.filter((item) =>
+        item.error.toLowerCase().includes("sudah ada"),
+      );
+      const nonDuplicateFailures = result.failed.filter(
+        (item) => !item.error.toLowerCase().includes("sudah ada"),
+      );
+
+      if (duplicateFailures.length > 0 && nonDuplicateFailures.length === 0) {
+        setExportError(
+          "Beberapa konten sudah ada. Item yang diwarnai oranye tidak disimpan ulang.",
+        );
+      }
+
+      if (nonDuplicateFailures.length > 0) {
+        const details = nonDuplicateFailures
+          .map((item) => item.error)
+          .slice(0, 2)
+          .join(" ");
+        setExportError(
+          details ||
+            `${nonDuplicateFailures.length} konten gagal disimpan. Pastikan metadata scrape lengkap.`,
+        );
+      } else {
+        if (duplicateFailures.length === 0) {
+          setExportError("");
+        }
+        setSelectedIds([]);
+      }
+    });
   };
 
   if (loading && !data) {
@@ -83,45 +174,79 @@ export default function YouTubeScraper() {
 
   return (
     <Box>
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{ mb: 2 }}
-      >
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<Checklist />}
-            onClick={handleSelectAll}
-            disabled={!data?.videos || data.videos.length === 0}
-          >
-            {selectedIds.length === data?.videos?.length &&
-            data?.videos?.length !== 0
-              ? "Unselect All"
-              : "Select All"}
-          </Button>
+      {exportMessage ? (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          {exportMessage}
+        </Alert>
+      ) : null}
+      {exportError ? (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {exportError}
+        </Alert>
+      ) : null}
 
-          <Tooltip title="Refresh Data">
-            <IconButton
-              onClick={handleScrape}
-              disabled={loading}
-              color="primary"
-            >
-              <Refresh className={loading ? "animate-spin" : ""} />
-            </IconButton>
-          </Tooltip>
+      <Stack spacing={1.25} sx={{ mb: 2 }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
+          <TextField
+            size="small"
+            fullWidth
+            label="Channel YouTube"
+            placeholder="contoh: IOM-ITB atau URL channel"
+            value={channelInput}
+            onChange={(event) => setChannelInput(event.target.value)}
+            disabled={loading}
+          />
+          <Button
+            variant="contained"
+            color="error"
+            startIcon={<VideoLibrary />}
+            onClick={handleScrape}
+            disabled={loading || !channelInput.trim()}
+            sx={{ minWidth: { md: 140 } }}
+          >
+            {loading ? "Scraping..." : "Scrape"}
+          </Button>
         </Stack>
 
-        <Button
-          variant="contained"
-          color="success"
-          disabled={selectedIds.length === 0}
-          onClick={handleExport}
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
         >
-          Ekspor ({selectedIds.length})
-        </Button>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<Checklist />}
+              onClick={handleSelectAll}
+              disabled={!data?.videos || data.videos.length === 0}
+            >
+              {selectedIds.length === data?.videos?.length &&
+              data?.videos?.length !== 0
+                ? "Unselect All"
+                : "Select All"}
+            </Button>
+
+            <Tooltip title="Refresh Data">
+              <IconButton
+                onClick={handleScrape}
+                disabled={loading || !channelInput.trim()}
+                color="primary"
+              >
+                <Refresh className={loading ? "animate-spin" : ""} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+
+          <Button
+            variant="contained"
+            color="success"
+            disabled={selectedIds.length === 0 || isExporting}
+            onClick={handleExport}
+          >
+            {isExporting ? "Menyimpan..." : `Ekspor (${selectedIds.length})`}
+          </Button>
+        </Stack>
       </Stack>
 
       {data && !data.error && (
@@ -139,10 +264,25 @@ export default function YouTubeScraper() {
           <List sx={{ p: 0, maxHeight: "500px", overflow: "auto" }}>
             {data.videos?.map((video, index) => (
               <Box key={`${video.id}-${index}`}>
+                {Boolean(itemWarnings[video.link.toLowerCase()]) ? null : null}
                 <ListItem disablePadding>
                   <ListItemButton
                     onClick={() => handleToggle(video.id)}
-                    sx={{ py: 2, alignItems: "center" }}
+                    sx={{
+                      py: 2,
+                      alignItems: "center",
+                      backgroundColor: itemWarnings[video.link.toLowerCase()]
+                        ? "#fff4e5"
+                        : "transparent",
+                      borderLeft: itemWarnings[video.link.toLowerCase()]
+                        ? "4px solid #f97316"
+                        : "4px solid transparent",
+                      "&:hover": {
+                        backgroundColor: itemWarnings[video.link.toLowerCase()]
+                          ? "#ffe8cc"
+                          : undefined,
+                      },
+                    }}
                   >
                     <ListItemIcon sx={{ minWidth: 48 }}>
                       <Checkbox
@@ -192,6 +332,9 @@ export default function YouTubeScraper() {
                             overflow: "hidden",
                             lineHeight: 1.2,
                             mb: 0.5,
+                            color: itemWarnings[video.link.toLowerCase()]
+                              ? "#9a3412"
+                              : "inherit",
                           }}
                         >
                           {video.title}

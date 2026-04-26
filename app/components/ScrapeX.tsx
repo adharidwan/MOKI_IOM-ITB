@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Box,
   Typography,
@@ -16,6 +16,8 @@ import {
   Stack,
   Tooltip,
   IconButton,
+  TextField,
+  Alert,
 } from "@mui/material";
 import {
   Refresh,
@@ -25,11 +27,15 @@ import {
   LinkOff,
 } from "@mui/icons-material";
 import { scrape_x } from "@/app/lib/scrape-x";
+import { useTransition } from "react";
+import { exportScrapedContentAction } from "@/app/scrape/actions";
 
 interface XPost {
   id: string;
   title: string;
   link: string;
+  upload_date?: string;
+  thumbnail?: string;
 }
 
 interface XScrapeResult {
@@ -41,28 +47,50 @@ interface XScrapeResult {
 export default function XScraper() {
   const [data, setData] = useState<XScrapeResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportMessage, setExportMessage] = useState<string>("");
+  const [exportError, setExportError] = useState<string>("");
+  const [itemWarnings, setItemWarnings] = useState<Record<string, boolean>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [usernameInput, setUsernameInput] = useState("IomITB");
+
+  function setWarningsFromFailures(
+    failures: Array<{ link: string; error: string }>,
+  ) {
+    const warnings: Record<string, boolean> = {};
+
+    failures.forEach((failure) => {
+      if (failure.error.toLowerCase().includes("sudah ada")) {
+        warnings[failure.link.toLowerCase()] = true;
+      }
+    });
+
+    setItemWarnings(warnings);
+  }
 
   const handleScrape = async () => {
+    const username = usernameInput.trim();
+    if (!username) {
+      setData({ error: "Username X wajib diisi." });
+      return;
+    }
+
     setLoading(true);
     try {
-      const result = await scrape_x("@mrpokke", {
-        maxScrolls: 10,
+      const result = await scrape_x(username, {
         minPosts: 25,
-        delayPerScroll: 1500,
       });
       setData(result);
       setSelectedIds([]);
+      setExportMessage("");
+      setExportError("");
+      setItemWarnings({});
     } catch {
       setData({ error: "Gagal scrape X." });
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    handleScrape();
-  }, []);
 
   const handleToggle = (id: string) => {
     setSelectedIds((prev) =>
@@ -84,9 +112,64 @@ export default function XScraper() {
     const selectedData = data?.videos?.filter((v) =>
       selectedIds.includes(v.id),
     );
-    console.log("=== EKSPOR DATA X (PoC) ===");
-    console.log(JSON.stringify(selectedData, null, 2));
-    alert(`${selectedIds.length} tweet di-log ke Console.`);
+
+    if (!selectedData?.length) {
+      setExportError("Pilih minimal satu tweet untuk diekspor.");
+      return;
+    }
+
+    setExportMessage("");
+    setExportError("");
+
+    startExportTransition(async () => {
+      const result = await exportScrapedContentAction(
+        selectedData.map((tweet) => ({
+          title: tweet.title,
+          platform: "x" as const,
+          upload_date: tweet.upload_date,
+          link: tweet.link,
+          source_post_id: tweet.id,
+          thumbnail_url: tweet.thumbnail,
+        })),
+      );
+
+      if (result.savedCount > 0) {
+        setExportMessage(
+          `${result.savedCount} konten X berhasil disimpan ke recording.`,
+        );
+      }
+
+      setWarningsFromFailures(result.failed);
+
+      const duplicateFailures = result.failed.filter((item) =>
+        item.error.toLowerCase().includes("sudah ada"),
+      );
+      const nonDuplicateFailures = result.failed.filter(
+        (item) => !item.error.toLowerCase().includes("sudah ada"),
+      );
+
+      if (duplicateFailures.length > 0 && nonDuplicateFailures.length === 0) {
+        setExportError(
+          "Beberapa konten sudah ada. Item yang diwarnai oranye tidak disimpan ulang.",
+        );
+      }
+
+      if (nonDuplicateFailures.length > 0) {
+        const details = nonDuplicateFailures
+          .map((item) => item.error)
+          .slice(0, 2)
+          .join(" ");
+        setExportError(
+          details ||
+            `${nonDuplicateFailures.length} konten gagal disimpan. Pastikan metadata scrape lengkap.`,
+        );
+      } else {
+        if (duplicateFailures.length === 0) {
+          setExportError("");
+        }
+        setSelectedIds([]);
+      }
+    });
   };
 
   if (loading && !data)
@@ -101,44 +184,79 @@ export default function XScraper() {
 
   return (
     <Box>
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="center"
-        sx={{ mb: 2 }}
-      >
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            variant="outlined"
+      {exportMessage ? (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          {exportMessage}
+        </Alert>
+      ) : null}
+      {exportError ? (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {exportError}
+        </Alert>
+      ) : null}
+
+      <Stack spacing={1.25} sx={{ mb: 2 }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1}>
+          <TextField
             size="small"
-            startIcon={<Checklist />}
-            onClick={handleSelectAll}
-            disabled={!data?.videos || data.videos.length === 0}
+            fullWidth
+            label="Username X"
+            placeholder="contoh: IomITB atau @IomITB"
+            value={usernameInput}
+            onChange={(event) => setUsernameInput(event.target.value)}
+            disabled={loading}
+          />
+          <Button
+            variant="contained"
+            sx={{ bgcolor: "#000", minWidth: { md: 140 } }}
+            startIcon={<Message />}
+            onClick={handleScrape}
+            disabled={loading || !usernameInput.trim()}
           >
-            {selectedIds.length === data?.videos?.length &&
-            data?.videos?.length !== 0
-              ? "Unselect All"
-              : "Select All"}
+            {loading ? "Scraping..." : "Scrape"}
           </Button>
-          <Tooltip title="Refresh Data">
-            <IconButton
-              onClick={handleScrape}
-              disabled={loading}
-              color="primary"
-            >
-              <Refresh className={loading ? "animate-spin" : ""} />
-            </IconButton>
-          </Tooltip>
         </Stack>
-        <Button
-          variant="contained"
-          sx={{ bgcolor: "#000" }}
-          startIcon={<Download />}
-          disabled={selectedIds.length === 0}
-          onClick={handleExport}
+
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
         >
-          Ekspor Tweet ({selectedIds.length})
-        </Button>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<Checklist />}
+              onClick={handleSelectAll}
+              disabled={!data?.videos || data.videos.length === 0}
+            >
+              {selectedIds.length === data?.videos?.length &&
+              data?.videos?.length !== 0
+                ? "Unselect All"
+                : "Select All"}
+            </Button>
+            <Tooltip title="Refresh Data">
+              <IconButton
+                onClick={handleScrape}
+                disabled={loading || !usernameInput.trim()}
+                color="primary"
+              >
+                <Refresh className={loading ? "animate-spin" : ""} />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+          <Button
+            variant="contained"
+            sx={{ bgcolor: "#000" }}
+            startIcon={<Download />}
+            disabled={selectedIds.length === 0 || isExporting}
+            onClick={handleExport}
+          >
+            {isExporting
+              ? "Menyimpan..."
+              : `Ekspor Tweet (${selectedIds.length})`}
+          </Button>
+        </Stack>
       </Stack>
 
       {data && !data.error && (
@@ -149,7 +267,21 @@ export default function XScraper() {
                 <ListItem disablePadding>
                   <ListItemButton
                     onClick={() => handleToggle(tweet.id)}
-                    sx={{ py: 2, alignItems: "center" }}
+                    sx={{
+                      py: 2,
+                      alignItems: "center",
+                      backgroundColor: itemWarnings[tweet.link.toLowerCase()]
+                        ? "#fff4e5"
+                        : "transparent",
+                      borderLeft: itemWarnings[tweet.link.toLowerCase()]
+                        ? "4px solid #f97316"
+                        : "4px solid transparent",
+                      "&:hover": {
+                        backgroundColor: itemWarnings[tweet.link.toLowerCase()]
+                          ? "#ffe8cc"
+                          : undefined,
+                      },
+                    }}
                   >
                     <ListItemIcon sx={{ minWidth: 48 }}>
                       <Checkbox
@@ -173,10 +305,14 @@ export default function XScraper() {
                           WebkitLineClamp: 2,
                           WebkitBoxOrient: "vertical",
                           overflow: "hidden",
+                          color: itemWarnings[tweet.link.toLowerCase()]
+                            ? "#9a3412"
+                            : "inherit",
                         }}
                       >
                         {tweet.title || "Tweet"}
                       </Typography>
+
                       <Typography
                         component="a"
                         href={tweet.link}
