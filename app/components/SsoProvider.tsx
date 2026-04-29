@@ -225,7 +225,7 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
 
   if (!ready) {
     return (
-      <>
+      <SsoContext.Provider value={contextValue}>
         <Backdrop open sx={{ color: '#fff', zIndex: (theme) => theme.zIndex.drawer + 1 }}>
           <Stack spacing={2} alignItems="center">
             <CircularProgress color="inherit" />
@@ -233,45 +233,12 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
           </Stack>
         </Backdrop>
         {children}
-      </>
+      </SsoContext.Provider>
     );
   }
 
   return (
     <SsoContext.Provider value={contextValue}>
-      <Box sx={{ position: 'fixed', top: 16, right: 16, zIndex: (theme) => theme.zIndex.appBar }}>
-        <Paper
-          elevation={3}
-          sx={{
-            px: 2,
-            py: 1.25,
-            borderRadius: 999,
-            display: 'flex',
-            gap: 1.5,
-            alignItems: 'center',
-            bgcolor: 'rgba(255,255,255,0.94)',
-          }}
-        >
-          <Stack spacing={0}>
-            <Typography sx={{ fontSize: '0.85rem', fontWeight: 700, lineHeight: 1.1 }}>
-              {userName || 'Pengguna SSO'}
-            </Typography>
-            <Typography sx={{ fontSize: '0.75rem', color: 'text.secondary', lineHeight: 1.1 }}>
-              {userEmail || roles.join(', ') || 'IOM SSO'}
-            </Typography>
-          </Stack>
-          <Button
-            size="small"
-            variant="outlined"
-            sx={{ borderRadius: 999, textTransform: 'none' }}
-            onClick={() => {
-              void contextValue.logout();
-            }}
-          >
-            Logout
-          </Button>
-        </Paper>
-      </Box>
       {children}
     </SsoContext.Provider>
   );
