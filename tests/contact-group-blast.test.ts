@@ -36,6 +36,13 @@ beforeEach(() => {
   storedOutboundMessages.clear();
 
   fakeSupabase = {
+    rpc(fnName: string) {
+      if (fnName !== 'resolve_csv_contact_group_recipients') {
+        throw new Error(`Unexpected rpc call: ${fnName}`);
+      }
+
+      return Promise.resolve({ data: [], error: null });
+    },
     from(tableName: string) {
       if (tableName === 'csv_contacts') {
         return {
@@ -133,32 +140,27 @@ beforeEach(() => {
 
 describe('contact group blast', () => {
   it('queues blast messages for contacts in any selected group', async () => {
-    fakeSupabase.from = (tableName: string) => {
-      if (tableName === 'csv_contacts') {
-        return {
-          select() {
-            return {
-              overlaps(_column: string, groupNames: string[]) {
-                return {
-                  order() {
-                    const normalizedGroups = groupNames.map((groupName) => groupName.toLowerCase());
-                    return Promise.resolve({
-                      data: normalizedGroups.includes('vip')
-                        ? [
-                            { no_telp: '628111111111' },
-                            { no_telp: '628222222222' },
-                          ]
-                        : [],
-                      error: null,
-                    });
-                  },
-                };
-              },
-            };
-          },
-        };
+    fakeSupabase.rpc = (fnName: string, params: Record<string, unknown>) => {
+      if (fnName !== 'resolve_csv_contact_group_recipients') {
+        throw new Error(`Unexpected rpc call: ${fnName}`);
       }
 
+      const normalizedGroups = Array.isArray(params.p_group_names)
+        ? params.p_group_names.map((groupName) => String(groupName).toLowerCase())
+        : [];
+
+      return Promise.resolve({
+        data: normalizedGroups.includes('vip')
+          ? [
+              { no_telp: '628111111111' },
+              { no_telp: '628222222222' },
+            ]
+          : [],
+        error: null,
+      });
+    };
+
+    fakeSupabase.from = (tableName: string) => {
       if (tableName === 'outbound_messages') {
         return {
           insert(payload: Record<string, unknown>) {
@@ -209,26 +211,18 @@ describe('contact group blast', () => {
   });
 
   it('deduplicates retries for the same blast payload', async () => {
-    fakeSupabase.from = (tableName: string) => {
-      if (tableName === 'csv_contacts') {
-        return {
-          select() {
-            return {
-              overlaps() {
-                return {
-                  order() {
-                    return Promise.resolve({
-                      data: [{ no_telp: '628111111111' }],
-                      error: null,
-                    });
-                  },
-                };
-              },
-            };
-          },
-        };
+    fakeSupabase.rpc = (fnName: string) => {
+      if (fnName !== 'resolve_csv_contact_group_recipients') {
+        throw new Error(`Unexpected rpc call: ${fnName}`);
       }
 
+      return Promise.resolve({
+        data: [{ no_telp: '628111111111' }],
+        error: null,
+      });
+    };
+
+    fakeSupabase.from = (tableName: string) => {
       if (tableName === 'outbound_messages') {
         return {
           insert(payload: Record<string, unknown>) {
