@@ -502,11 +502,11 @@ export async function createGroupBlastOutboundMessages(
     };
   }
 
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .select('no_telp')
-    .overlaps('group_names', targetGroups)
-    .order('created_at', { ascending: false });
+  const { data, error } = await supabase.rpc('resolve_csv_contact_group_recipients', {
+    p_group_names: targetGroups,
+    p_limit: null,
+    p_sort_by: 'created_at',
+  });
 
   if (error) {
     throw toRepositoryError('Failed to load blast recipients.', error);

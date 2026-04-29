@@ -80,6 +80,19 @@ function normalizeGroupMemberSortKey(sortBy: string | undefined): GroupMemberSor
     : DEFAULT_GROUP_MEMBER_SORT_BY;
 }
 
+function normalizeGroupNames(values: string[]): string[] {
+  const byKey = new Map<string, string>();
+
+  values.forEach((value) => {
+    const groupName = String(value || '').trim();
+    if (groupName) {
+      byKey.set(groupName.toLowerCase(), groupName);
+    }
+  });
+
+  return Array.from(byKey.values());
+}
+
 export async function getPaginatedContactGroups({
   page = 1,
   pageSize = 20,
@@ -164,29 +177,28 @@ export async function resolveGroupRecipientsPreview(groupNames: string[]): Promi
   totalRecipients: number;
   previewRecipients: Array<Pick<CsvContact, 'id' | 'no_telp' | 'nama' | 'group_names'>>;
 }> {
-  const normalizedGroupNames = Array.from(
-    new Set(groupNames.map((groupName) => String(groupName || '').trim()).filter(Boolean)),
-  );
+  const normalizedGroupNames = normalizeGroupNames(groupNames);
 
   if (!normalizedGroupNames.length) {
     return { totalRecipients: 0, previewRecipients: [] };
   }
 
   const supabase = getSupabaseAdminClient();
-  const { data, error, count } = await supabase
-    .from('csv_contacts')
-    .select('id, no_telp, nama, group_names', { count: 'exact' })
-    .overlaps('group_names', normalizedGroupNames)
-    .order('nama', { ascending: true })
-    .limit(6);
+  const { data, error } = await supabase.rpc('resolve_csv_contact_group_recipients', {
+    p_group_names: normalizedGroupNames,
+    p_limit: 6,
+    p_sort_by: 'nama',
+  });
 
   if (error) {
     throw new Error(`Failed to resolve group preview recipients: ${error.message}`);
   }
 
+  const rows = Array.isArray(data) ? data : [];
+
   return {
-    totalRecipients: count || 0,
-    previewRecipients: (Array.isArray(data) ? data : []).map((row) => ({
+    totalRecipients: Number(rows[0]?.total_count || 0),
+    previewRecipients: rows.map((row) => ({
       id: String(row.id || ''),
       no_telp: String(row.no_telp || ''),
       nama: String(row.nama || ''),
@@ -198,20 +210,18 @@ export async function resolveGroupRecipientsPreview(groupNames: string[]): Promi
 }
 
 export async function resolveAllGroupRecipients(groupNames: string[]): Promise<CsvContactInput[]> {
-  const normalizedGroupNames = Array.from(
-    new Set(groupNames.map((groupName) => String(groupName || '').trim()).filter(Boolean)),
-  );
+  const normalizedGroupNames = normalizeGroupNames(groupNames);
 
   if (!normalizedGroupNames.length) {
     return [];
   }
 
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .select('no_telp, nama, jenis_kelamin, jabatan, group_names')
-    .overlaps('group_names', normalizedGroupNames)
-    .order('created_at', { ascending: false });
+  const { data, error } = await supabase.rpc('resolve_csv_contact_group_recipients', {
+    p_group_names: normalizedGroupNames,
+    p_limit: null,
+    p_sort_by: 'created_at',
+  });
 
   if (error) {
     throw new Error(`Failed to resolve group recipients: ${error.message}`);
