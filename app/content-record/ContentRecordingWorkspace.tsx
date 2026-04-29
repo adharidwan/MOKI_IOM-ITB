@@ -101,7 +101,7 @@ const SORT_LABELS: Record<ContentRecordingSortKey, string> = {
   title: 'Title',
   platform: 'Platform',
   content_type: 'Type',
-  upload_date: 'Published',
+  upload_date: 'Date Uploaded',
   created_at: 'Created',
   updated_at: 'Updated',
 };
