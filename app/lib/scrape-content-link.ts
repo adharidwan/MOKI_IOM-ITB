@@ -72,7 +72,7 @@ export function detectPlatformFromLink(rawLink: string): ContentRecordingPlatfor
     return 'Instagram';
   }
 
-  return null;
+  return 'Website';
 }
 
 function cleanText(value: string | null | undefined): string {
@@ -213,6 +213,8 @@ async function scrapeYoutubeLink(link: string): Promise<ScrapedContentDraft> {
   return {
     title: cleanText(data.title) || 'Untitled Video',
     platform: 'youtube',
+    caption: cleanText(data.description) || null,
+    content_type: String(data.webpage_url || link).includes('/shorts/') ? 'short' : 'video',
     upload_date: uploadDate,
     link: normalizedLink,
     source_post_id: cleanText(data.id) || extractSourcePostId(normalizedLink, 'youtube'),
@@ -324,19 +326,18 @@ async function scrapeSocialLink(
       .find((value) => cleanText(value).length > 0) || '';
 
   const canonicalLink = pickFirstNonEmpty(metadata.canonical, link);
-  const title = pickFirstNonEmpty(
+  const caption = pickFirstNonEmpty(
     jsonLdTitle,
-    metadata.ogTitle,
-    metadata.twitterTitle,
     metadata.ogDescription,
     metadata.twitterDescription,
     metadata.description,
-    normalizePageTitle(metadata.pageTitle, platform),
   );
 
   return {
-    title,
+    title: '',
     platform,
+    caption: caption || null,
+    content_type: platform === 'x' ? 'tweet' : canonicalLink.includes('/reel/') ? 'reel' : 'post',
     upload_date:
       toIsoDate(jsonLdDate) ||
       toIsoDate(metadata.articlePublishedTime) ||
@@ -347,16 +348,47 @@ async function scrapeSocialLink(
   };
 }
 
+async function scrapeWebsiteLink(link: string): Promise<ScrapedContentDraft> {
+  const metadata = await scrapeBrowserMetadata(link);
+  const jsonLdCandidates = parseJsonLdCandidates(metadata.scripts);
+  const jsonLdDate =
+    jsonLdCandidates
+      .map((candidate) =>
+        pickFirstNonEmpty(
+          typeof candidate.datePublished === 'string' ? candidate.datePublished : '',
+          typeof candidate.dateCreated === 'string' ? candidate.dateCreated : '',
+        ),
+      )
+      .find((value) => value.length > 0) || '';
+  const title = pickFirstNonEmpty(metadata.ogTitle, metadata.twitterTitle, metadata.pageTitle, link);
+  const caption = pickFirstNonEmpty(metadata.ogDescription, metadata.twitterDescription, metadata.description);
+
+  return {
+    title,
+    platform: 'Website',
+    caption: caption || null,
+    content_type: 'article',
+    upload_date: toIsoDate(jsonLdDate) || toIsoDate(metadata.articlePublishedTime),
+    link: pickFirstNonEmpty(metadata.canonical, link),
+    source_post_id: null,
+    thumbnail_url: pickFirstNonEmpty(metadata.ogImage, metadata.twitterImage) || null,
+  };
+}
+
 export async function scrapeContentFromLink(link: string): Promise<ScrapedContentDraft> {
   const normalizedLink = cleanText(link);
   const platform = detectPlatformFromLink(normalizedLink);
 
   if (!platform) {
-    throw new Error('Link harus berasal dari YouTube, X, atau Instagram.');
+    throw new Error('Link wajib valid agar metadata bisa diambil.');
   }
 
   if (platform === 'youtube') {
     return scrapeYoutubeLink(normalizedLink);
+  }
+
+  if (platform === 'Website') {
+    return scrapeWebsiteLink(normalizedLink);
   }
 
   return scrapeSocialLink(normalizedLink, platform);
