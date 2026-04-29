@@ -206,13 +206,13 @@ export default function HomePage() {
                       color: "#163020",
                     }}
                   >
-                    Content Recording
+                    Content Library
                   </Typography>
                   <Typography
                     sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
                   >
-                    Simpan referensi konten YouTube, X, dan Instagram dengan
-                    auto-fill dari link hasil scrape.
+                    Simpan referensi konten YouTube, X, Instagram, dan website
+                    dengan auto-fill dari link.
                   </Typography>
                   <Button
                     component={Link}
@@ -229,7 +229,7 @@ export default function HomePage() {
                       fontWeight: 700,
                     }}
                   >
-                    Buka content recording
+                    Buka content library
                   </Button>
                 </Stack>
               </Paper>

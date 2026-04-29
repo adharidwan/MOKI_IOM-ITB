@@ -50,12 +50,12 @@ const NAV_ITEMS = [
   },
   {
     href: "/scrape" as const,
-    label: "Scrape",
+    label: "Import",
     icon: <ManageSearchRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/content-record" as const,
-    label: "Record",
+    label: "Library",
     icon: <VideoLibraryRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
