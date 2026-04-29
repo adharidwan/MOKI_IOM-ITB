@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { type ReactNode, useState } from 'react';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -80,6 +80,14 @@ function MetricTile({ label, value }: { label: string; value: number }) {
         {value}
       </Typography>
     </Box>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+      {children}
+    </Typography>
   );
 }
 
@@ -187,7 +195,7 @@ export default function ContactsWorkspace({
         onClose={() => setAddOpen(false)}
         PaperProps={{
           sx: {
-            width: { xs: '100%', sm: 440 },
+            width: { xs: '100%', sm: 560 },
             backgroundColor: adminPalette.canvas,
             borderLeft: `1px solid ${adminPalette.border}`,
           },
@@ -206,7 +214,7 @@ export default function ContactsWorkspace({
                     color: adminPalette.brand,
                   }}
                 >
-                  Quick entry
+                  Add Contact
                 </Typography>
                 <Typography sx={{ mt: 0.7, fontSize: '1.45rem', fontWeight: 700, color: adminPalette.textPrimary }}>
                   Add contact
@@ -220,55 +228,64 @@ export default function ContactsWorkspace({
                 <CloseRoundedIcon fontSize="small" />
               </IconButton>
             </Stack>
-            <Typography sx={{ fontSize: '0.92rem', lineHeight: 1.65, color: adminPalette.textSecondary }}>
-              Simpan kontak baru tanpa meninggalkan tabel. Gunakan grup untuk menjaga segmentasi tetap rapi.
-            </Typography>
           </Stack>
 
-          <Box component="form" action={createContactAction} sx={{ display: 'grid', gap: 1.5, px: 2.5, py: 2.5 }}>
-            <TextField
-              name="no_telp"
-              label="Nomor WhatsApp"
-              required
-              placeholder="6281234567890"
-              size="small"
-              helperText="Gunakan angka saja agar sinkronisasi lebih stabil."
-            />
-            <TextField name="nama" label="Nama kontak" required placeholder="Ibu Rina" size="small" />
-            <TextField name="jenis_kelamin" label="Jenis kelamin" select defaultValue="Tidak diketahui" size="small">
-              {GENDER_OPTIONS.map((option) => (
-                <MenuItem key={option} value={option}>
-                  {option}
-                </MenuItem>
-              ))}
-            </TextField>
-            <TextField name="jabatan" label="Keterangan" placeholder="Orang tua murid" size="small" />
-            <TextField
-              name="group_names"
-              label="Grup"
-              placeholder="Pisahkan dengan koma"
-              size="small"
-              helperText="Opsional. Contoh: Orang Tua Kelas A, Alumni 2026"
-            />
-            <Button
-              type="submit"
-              variant="contained"
-              sx={{
-                mt: 1,
-                minHeight: 46,
-                borderRadius: 2.5,
-                backgroundColor: adminPalette.brand,
-                textTransform: 'none',
-                fontWeight: 700,
-                boxShadow: 'none',
-                '&:hover': {
-                  backgroundColor: adminPalette.brandDark,
+          <Box component="form" action={createContactAction} sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <Stack spacing={2.2} sx={{ p: 2.5, flex: 1, overflowY: 'auto' }}>
+              <Stack spacing={1.4}>
+                <SectionLabel>Contact details</SectionLabel>
+                <TextField name="nama" label="Nama kontak" required placeholder="Ibu Rina" fullWidth />
+                <TextField
+                  name="no_telp"
+                  label="Nomor WhatsApp"
+                  required
+                  placeholder="6281234567890"
+                  helperText="Gunakan angka saja agar sinkronisasi lebih stabil."
+                  fullWidth
+                />
+                <TextField name="jenis_kelamin" label="Jenis kelamin" select defaultValue="Tidak diketahui" fullWidth>
+                  {GENDER_OPTIONS.map((option) => (
+                    <MenuItem key={option} value={option}>
+                      {option}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField name="jabatan" label="Keterangan" placeholder="Orang tua murid" minRows={3} multiline fullWidth />
+              </Stack>
+
+              <Stack spacing={1.4}>
+                <SectionLabel>Segmentation</SectionLabel>
+                <TextField
+                  name="group_names"
+                  label="Grup"
+                  placeholder="Pisahkan dengan koma"
+                  helperText="Opsional. Contoh: Orang Tua Kelas A, Alumni 2026"
+                  fullWidth
+                />
+              </Stack>
+            </Stack>
+
+            <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ p: 2.5, borderTop: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+              <Button onClick={() => setAddOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="contained"
+                sx={{
+                  backgroundColor: adminPalette.brand,
+                  textTransform: 'none',
+                  fontWeight: 700,
                   boxShadow: 'none',
-                },
-              }}
-            >
-              Simpan kontak
-            </Button>
+                  '&:hover': {
+                    backgroundColor: adminPalette.brandDark,
+                    boxShadow: 'none',
+                  },
+                }}
+              >
+                Save
+              </Button>
+            </Stack>
           </Box>
         </Stack>
       </Drawer>

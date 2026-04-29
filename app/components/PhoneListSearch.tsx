@@ -152,8 +152,6 @@ export default function PhoneListTable({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingContact, setEditingContact] = useState<CsvContact | null>(null);
   const [bulkMenuAnchor, setBulkMenuAnchor] = useState<HTMLElement | null>(null);
-  const [rowMenuAnchor, setRowMenuAnchor] = useState<HTMLElement | null>(null);
-  const [rowMenuContact, setRowMenuContact] = useState<CsvContact | null>(null);
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
   const [deleteState, setDeleteState] = useState<DeleteState>(null);
 
@@ -238,15 +236,8 @@ export default function PhoneListTable({
     setBulkMenuAnchor(event.currentTarget);
   };
 
-  const handleOpenRowMenu = (event: MouseEvent<HTMLElement>, contact: CsvContact) => {
-    setRowMenuAnchor(event.currentTarget);
-    setRowMenuContact(contact);
-  };
-
   const handleCloseMenus = () => {
     setBulkMenuAnchor(null);
-    setRowMenuAnchor(null);
-    setRowMenuContact(null);
   };
 
   return (
@@ -414,7 +405,9 @@ export default function PhoneListTable({
                         Imported
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }} />
+                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      Actions
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -533,13 +526,24 @@ export default function PhoneListTable({
                           {formatCompactDate(contact.imported_at)}
                         </TableCell>
                         <TableCell align="right" sx={{ py: 0.8 }}>
-                          <IconButton
-                            onClick={(event) => handleOpenRowMenu(event, contact)}
-                            size="small"
-                            sx={{ color: adminPalette.textMuted }}
-                          >
-                            <MoreHorizRoundedIcon fontSize="small" />
-                          </IconButton>
+                          <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+                            <IconButton
+                              onClick={() => setEditingContact(contact)}
+                              size="small"
+                              sx={{ color: adminPalette.textMuted }}
+                              aria-label={`Edit contact ${contact.nama}`}
+                            >
+                              <EditOutlinedIcon fontSize="small" />
+                            </IconButton>
+                            <IconButton
+                              onClick={() => setDeleteState({ mode: 'single', contact })}
+                              size="small"
+                              color="error"
+                              aria-label={`Delete contact ${contact.nama}`}
+                            >
+                              <DeleteOutlineRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Stack>
                         </TableCell>
                       </TableRow>
                     );
@@ -606,38 +610,6 @@ export default function PhoneListTable({
         >
           <DeleteOutlineRoundedIcon sx={{ mr: 1, fontSize: 18 }} />
           Hapus kontak terpilih
-        </MenuItem>
-      </Menu>
-
-      <Menu
-        anchorEl={rowMenuAnchor}
-        open={Boolean(rowMenuAnchor)}
-        onClose={handleCloseMenus}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-      >
-        <MenuItem
-          onClick={() => {
-            if (rowMenuContact) {
-              setEditingContact(rowMenuContact);
-            }
-            handleCloseMenus();
-          }}
-        >
-          <EditOutlinedIcon sx={{ mr: 1, fontSize: 18, color: adminPalette.textMuted }} />
-          Edit contact
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (rowMenuContact) {
-              setDeleteState({ mode: 'single', contact: rowMenuContact });
-            }
-            handleCloseMenus();
-          }}
-          sx={{ color: adminPalette.dangerText }}
-        >
-          <DeleteOutlineRoundedIcon sx={{ mr: 1, fontSize: 18 }} />
-          Delete contact
         </MenuItem>
       </Menu>
 
