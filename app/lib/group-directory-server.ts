@@ -93,6 +93,12 @@ function normalizeGroupNames(values: string[]): string[] {
   return Array.from(byKey.values());
 }
 
+function toGroupNames(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((groupName): groupName is string => typeof groupName === 'string')
+    : [];
+}
+
 export async function getPaginatedContactGroups({
   page = 1,
   pageSize = 20,
@@ -202,9 +208,7 @@ export async function resolveGroupRecipientsPreview(groupNames: string[]): Promi
       id: String(row.id || ''),
       no_telp: String(row.no_telp || ''),
       nama: String(row.nama || ''),
-      group_names: Array.isArray(row.group_names)
-        ? row.group_names.filter((value): value is string => typeof value === 'string')
-        : [],
+      group_names: toGroupNames(row.group_names),
     })),
   };
 }
@@ -232,8 +236,6 @@ export async function resolveAllGroupRecipients(groupNames: string[]): Promise<C
     nama: String(row.nama || ''),
     jenis_kelamin: String(row.jenis_kelamin || ''),
     jabatan: row.jabatan === null || row.jabatan === undefined ? undefined : String(row.jabatan),
-    group_names: Array.isArray(row.group_names)
-      ? row.group_names.filter((value): value is string => typeof value === 'string')
-      : [],
+    group_names: toGroupNames(row.group_names),
   }));
 }

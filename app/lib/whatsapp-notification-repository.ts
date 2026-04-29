@@ -512,7 +512,9 @@ export async function createGroupBlastOutboundMessages(
     throw toRepositoryError('Failed to load blast recipients.', error);
   }
 
-  const recipientPhoneNumbers = (data || []).map((record) => String(record.no_telp || '').trim());
+  const recipientPhoneNumbers = (Array.isArray(data) ? data : []).map((record: { no_telp?: unknown }) =>
+    String(record.no_telp || '').trim(),
+  );
 
   return dispatchBlastMessages(
     recipientPhoneNumbers,
