@@ -1,30 +1,50 @@
 'use client';
 
 import type { ClipboardEvent } from 'react';
-import { useDeferredValue, useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import EditRoundedIcon from '@mui/icons-material/EditRounded';
+import ImageNotSupportedRoundedIcon from '@mui/icons-material/ImageNotSupportedRounded';
+import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
+import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
+import Autocomplete, { createFilterOptions } from '@mui/material/Autocomplete';
 import {
   Alert,
   Box,
   Button,
-  Card,
-  CardContent,
   Chip,
-  Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Drawer,
+  IconButton,
   InputAdornment,
   MenuItem,
   Paper,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TablePagination,
+  TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from '@mui/material';
-import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
-import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
-import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
-import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
-import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
 
-import type { ContentRecording } from '../lib/types';
+import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import type { ContentRecording, ContentRecordingPlatform, ContentRecordingType, ContentTag } from '../lib/types';
+import type { ContentRecordingSortKey, ContentRecordingsOverview, SortDirection } from '../lib/api';
 import type { ContentRecordingFormState } from './actions';
 import {
   deleteContentRecordingAction,
@@ -33,7 +53,19 @@ import {
 } from './actions';
 
 interface WorkspaceProps {
-  initialRecordings: ContentRecording[];
+  recordings: ContentRecording[];
+  totalCount: number;
+  currentPage: number;
+  pageSize: number;
+  totalPages: number;
+  overview: ContentRecordingsOverview;
+  tags: ContentTag[];
+  currentSearch: string;
+  currentPlatform: string;
+  currentContentType: string;
+  currentTagId: string;
+  currentSortBy: ContentRecordingSortKey;
+  currentSortDir: SortDirection;
   initialLoadError?: string | null;
 }
 
@@ -41,96 +73,296 @@ type FlashState =
   | { severity: 'success' | 'info' | 'warning' | 'error'; message: string }
   | null;
 
-const PLATFORM_OPTIONS = [
+interface TagOption {
+  id: string;
+  name: string;
+  inputValue?: string;
+  isNew?: boolean;
+}
+
+const PLATFORM_OPTIONS: Array<{ value: ContentRecordingPlatform; label: string }> = [
   { value: 'youtube', label: 'YouTube' },
-  { value: 'x', label: 'X' },
   { value: 'Instagram', label: 'Instagram' },
-] as const;
+  { value: 'x', label: 'X' },
+  { value: 'Website', label: 'Website' },
+];
+
+const CONTENT_TYPE_OPTIONS: Array<{ value: ContentRecordingType; label: string }> = [
+  { value: 'video', label: 'Video' },
+  { value: 'short', label: 'Short' },
+  { value: 'reel', label: 'Reel' },
+  { value: 'post', label: 'Post' },
+  { value: 'tweet', label: 'Tweet' },
+  { value: 'article', label: 'Article' },
+  { value: 'other', label: 'Other' },
+];
+
+const SORT_LABELS: Record<ContentRecordingSortKey, string> = {
+  title: 'Title',
+  platform: 'Platform',
+  content_type: 'Type',
+  upload_date: 'Published',
+  created_at: 'Created',
+  updated_at: 'Updated',
+};
 
 const EMPTY_FORM: ContentRecordingFormState = {
+  id: null,
   title: '',
   platform: 'youtube',
+  caption: '',
+  description: '',
+  content_type: '',
   upload_date: '',
   link: '',
   source_post_id: '',
   thumbnail_url: '',
+  tag_ids: [],
+  new_tag_names: [],
 };
+
+const tagFilter = createFilterOptions<TagOption>();
+
+function createEmptyForm(): ContentRecordingFormState {
+  return { ...EMPTY_FORM, tag_ids: [], new_tag_names: [] };
+}
 
 function formatDateLabel(value: string): string {
   if (!value) {
     return '-';
   }
 
-  try {
-    return new Intl.DateTimeFormat('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    }).format(new Date(value));
-  } catch {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
     return value;
   }
+
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date);
 }
 
-function formatPlatformLabel(value: ContentRecording['platform']): string {
+function formatPlatformLabel(value: ContentRecordingPlatform): string {
   return PLATFORM_OPTIONS.find((option) => option.value === value)?.label || value;
 }
 
+function formatContentTypeLabel(value: ContentRecordingType | null | ''): string {
+  if (!value) {
+    return 'Unspecified';
+  }
+
+  return CONTENT_TYPE_OPTIONS.find((option) => option.value === value)?.label || value;
+}
+
+function normalizeTagOption(option: TagOption | string): TagOption {
+  if (typeof option === 'string') {
+    const name = option.replace(/\s+/g, ' ').trim();
+    return { id: `new:${name.toLowerCase()}`, name, inputValue: name, isNew: true };
+  }
+
+  if (option.inputValue) {
+    return {
+      id: `new:${option.inputValue.toLowerCase()}`,
+      name: option.inputValue,
+      inputValue: option.inputValue,
+      isNew: true,
+    };
+  }
+
+  return option;
+}
+
+function toForm(record: ContentRecording): ContentRecordingFormState {
+  return {
+    id: record.id,
+    title: record.title,
+    platform: record.platform,
+    caption: record.caption || '',
+    description: record.description || '',
+    content_type: record.content_type || '',
+    upload_date: record.upload_date,
+    link: record.link,
+    source_post_id: record.source_post_id || '',
+    thumbnail_url: record.thumbnail_url || '',
+    tag_ids: record.tags.map((tag) => tag.id),
+    new_tag_names: [],
+  };
+}
+
+function MetricTile({ label, value }: { label: string; value: number }) {
+  return (
+    <Box
+      sx={{
+        minWidth: 0,
+        px: { xs: 0, sm: 1.4 },
+        py: 0.1,
+        borderLeft: { sm: `1px solid ${adminPalette.border}` },
+        '&:first-of-type': { pl: 0, borderLeft: 'none' },
+      }}
+    >
+      <Typography sx={{ fontSize: '0.63rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+        {label}
+      </Typography>
+      <Typography sx={{ mt: 0.4, fontSize: { xs: '1rem', sm: '1.12rem' }, fontWeight: 700, lineHeight: 1, color: adminPalette.brandDark }}>
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+      {children}
+    </Typography>
+  );
+}
+
+function setOptionalParam(params: URLSearchParams, key: string, value: string) {
+  if (value) {
+    params.set(key, value);
+  } else {
+    params.delete(key);
+  }
+}
+
+function toUrl(path: string, params: URLSearchParams) {
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
 export default function ContentRecordingWorkspace({
-  initialRecordings,
+  recordings,
+  totalCount,
+  currentPage,
+  pageSize,
+  totalPages,
+  overview,
+  tags,
+  currentSearch,
+  currentPlatform,
+  currentContentType,
+  currentTagId,
+  currentSortBy,
+  currentSortDir,
   initialLoadError,
 }: WorkspaceProps) {
-  const [recordings, setRecordings] = useState(initialRecordings);
-  const [form, setForm] = useState<ContentRecordingFormState>(EMPTY_FORM);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [form, setForm] = useState<ContentRecordingFormState>(() => createEmptyForm());
+  const [selectedTags, setSelectedTags] = useState<TagOption[]>([]);
+  const [tagOptions, setTagOptions] = useState<TagOption[]>(tags);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ContentRecording | null>(null);
   const [flash, setFlash] = useState<FlashState>(
     initialLoadError ? { severity: 'warning', message: initialLoadError } : null,
   );
-  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({
+    search: currentSearch,
+    platform: currentPlatform,
+    contentType: currentContentType,
+    tagId: currentTagId,
+  });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
 
   const isBusy = isScraping || isSaving || isDeleting;
-  const totalRecordings = recordings.length;
-  const deferredSearchTerm = useDeferredValue(searchTerm);
-  const normalizedSearchTerm = deferredSearchTerm.trim().toLowerCase();
-  const sortedRecordings = [...recordings].sort((left, right) => {
-    const leftValue = `${left.upload_date}-${left.created_at}`;
-    const rightValue = `${right.upload_date}-${right.created_at}`;
-    return rightValue.localeCompare(leftValue);
-  });
-  const filteredRecordings = sortedRecordings.filter((record) => {
-    if (!normalizedSearchTerm) {
-      return true;
-    }
+  const activeFilterCount = [currentSearch, currentPlatform, currentContentType, currentTagId].filter(Boolean).length;
+  useEffect(() => {
+    setTagOptions(tags);
+  }, [tags]);
 
-    const haystacks = [
-      record.title,
-      record.platform,
-      record.link,
-      record.upload_date,
-    ];
+  useEffect(() => {
+    setFilters({
+      search: currentSearch,
+      platform: currentPlatform,
+      contentType: currentContentType,
+      tagId: currentTagId,
+    });
+  }, [currentContentType, currentPlatform, currentSearch, currentTagId]);
 
-    return haystacks.some((value) => value.toLowerCase().includes(normalizedSearchTerm));
-  });
+  useEffect(() => {
+    const delay = setTimeout(() => {
+      if (
+        filters.search === currentSearch &&
+        filters.platform === currentPlatform &&
+        filters.contentType === currentContentType &&
+        filters.tagId === currentTagId
+      ) {
+        return;
+      }
 
-  function setField<K extends keyof ContentRecordingFormState>(
-    key: K,
-    value: ContentRecordingFormState[K],
-  ) {
+      const params = new URLSearchParams(searchParams.toString());
+      setOptionalParam(params, 'search', filters.search.trim());
+      setOptionalParam(params, 'platform', filters.platform);
+      setOptionalParam(params, 'contentType', filters.contentType);
+      setOptionalParam(params, 'tagId', filters.tagId);
+      params.set('page', '1');
+      router.replace(toUrl(pathname, params));
+    }, 300);
+
+    return () => clearTimeout(delay);
+  }, [currentContentType, currentPlatform, currentSearch, currentTagId, filters, pathname, router, searchParams]);
+
+  function updateQuery(mutator: (params: URLSearchParams) => void) {
+    const params = new URLSearchParams(searchParams.toString());
+    mutator(params);
+    router.replace(toUrl(pathname, params));
+  }
+
+  function setField<K extends keyof ContentRecordingFormState>(key: K, value: ContentRecordingFormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function syncTags(nextTags: TagOption[]) {
+    const normalized = Array.from(
+      new Map(
+        nextTags
+          .map(normalizeTagOption)
+          .filter((tag) => tag.name.trim())
+          .map((tag) => [tag.isNew ? `new:${tag.name.toLowerCase()}` : tag.id, tag] as const),
+      ).values(),
+    );
+
+    setSelectedTags(normalized);
+    setForm((current) => ({
+      ...current,
+      tag_ids: normalized.filter((tag) => !tag.isNew).map((tag) => tag.id),
+      new_tag_names: normalized.filter((tag) => tag.isNew).map((tag) => tag.name),
+    }));
+  }
+
+  function openAddDrawer() {
+    setForm(createEmptyForm());
+    setSelectedTags([]);
+    setLastScrapedLink('');
+    setDrawerOpen(true);
+  }
+
+  function openEditDrawer(record: ContentRecording) {
+    setForm(toForm(record));
+    setSelectedTags(record.tags);
+    setLastScrapedLink(record.link);
+    setDrawerOpen(true);
   }
 
   function applyScrapedData(data: Partial<ContentRecordingFormState>) {
     setForm((current) => ({
       ...current,
-      title: data.title || current.title,
+      title: current.title || data.title || '',
       platform: data.platform || current.platform,
-      upload_date: data.upload_date || current.upload_date,
-      link: data.link || current.link,
-      source_post_id: data.source_post_id || current.source_post_id,
-      thumbnail_url: data.thumbnail_url || current.thumbnail_url,
+      caption: current.caption || data.caption || '',
+      description: current.description || data.description || '',
+      content_type: current.content_type || data.content_type || '',
+      upload_date: current.upload_date || data.upload_date || '',
+      link: current.link || data.link || '',
+      source_post_id: current.source_post_id || data.source_post_id || '',
+      thumbnail_url: current.thumbnail_url || data.thumbnail_url || '',
     }));
   }
 
@@ -140,19 +372,13 @@ export default function ContentRecordingWorkspace({
       return;
     }
 
-    setFlash({
-      severity: 'info',
-      message: 'Mengambil metadata dari link konten...',
-    });
+    setFlash({ severity: 'info', message: 'Mengambil metadata dari link konten...' });
 
     startScrapeTransition(async () => {
       const result = await scrapeContentRecordingAction(link);
 
       if (!result.success || !result.data) {
-        setFlash({
-          severity: 'error',
-          message: result.error || 'Gagal mengambil metadata dari link.',
-        });
+        setFlash({ severity: 'error', message: result.error || 'Gagal mengambil metadata dari link.' });
         return;
       }
 
@@ -161,8 +387,8 @@ export default function ContentRecordingWorkspace({
       setFlash({
         severity: result.data.upload_date ? 'success' : 'warning',
         message: result.data.upload_date
-          ? 'Metadata berhasil diisi dari hasil scrape.'
-          : 'Metadata sebagian berhasil diisi. Lengkapi tanggal upload bila belum tersedia.',
+          ? 'Metadata imported. Please review before saving.'
+          : 'Some metadata could not be found. Complete the missing fields manually.',
       });
     });
   }
@@ -174,12 +400,7 @@ export default function ContentRecordingWorkspace({
     }
 
     event.preventDefault();
-    setForm((current) => ({
-      ...current,
-      link: pastedLink,
-      source_post_id: '',
-      thumbnail_url: '',
-    }));
+    setForm((current) => ({ ...current, link: pastedLink }));
     void Promise.resolve().then(() => hydrateFromLink(pastedLink));
   }
 
@@ -190,403 +411,296 @@ export default function ContentRecordingWorkspace({
       const result = await saveContentRecordingAction(form);
 
       if (!result.success || !result.record) {
-        setFlash({
-          severity: 'error',
-          message: result.error || 'Gagal menyimpan content recording.',
-        });
+        setFlash({ severity: 'error', message: result.error || 'Gagal menyimpan content record.' });
         return;
       }
 
-      const savedRecord = result.record;
-      setRecordings((current) => {
-        const next = current.filter((item) => item.link !== savedRecord.link);
-        next.unshift(savedRecord);
-        return next;
+      setTagOptions((current) => {
+        const byId = new Map(current.map((tag) => [tag.id, tag]));
+        result.record?.tags.forEach((tag) => byId.set(tag.id, tag));
+        return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
       });
-      setForm(EMPTY_FORM);
-      setLastScrapedLink('');
-      setFlash({
-        severity: 'success',
-        message: 'Content recording berhasil disimpan ke database.',
-      });
+      setDrawerOpen(false);
+      setForm(createEmptyForm());
+      setSelectedTags([]);
+      setFlash({ severity: 'success', message: 'Content record berhasil disimpan.' });
+      router.refresh();
     });
   }
 
-  function handleDelete(record: ContentRecording) {
+  function handleDelete() {
+    if (!deleteTarget) {
+      return;
+    }
+
+    const record = deleteTarget;
     setFlash(null);
 
     startDeleteTransition(async () => {
       const result = await deleteContentRecordingAction(record.id);
 
       if (!result.success) {
-        setFlash({
-          severity: 'error',
-          message: result.error || 'Gagal menghapus content recording.',
-        });
+        setFlash({ severity: 'error', message: result.error || 'Gagal menghapus content record.' });
         return;
       }
 
-      setRecordings((current) => current.filter((item) => item.id !== record.id));
-      setFlash({
-        severity: 'success',
-        message: `Content recording "${record.title}" berhasil dihapus.`,
-      });
+      setDeleteTarget(null);
+      setDrawerOpen(false);
+      setFlash({ severity: 'success', message: `Content record "${record.title}" berhasil dihapus.` });
+      router.refresh();
+    });
+  }
+
+  function handleSortChange(sortBy: ContentRecordingSortKey) {
+    updateQuery((params) => {
+      const nextSortDir = currentSortBy === sortBy && currentSortDir === 'asc' ? 'desc' : 'asc';
+      params.set('sortBy', sortBy);
+      params.set('sortDir', nextSortDir);
+      params.set('page', '1');
+    });
+  }
+
+  function clearFilters() {
+    setFilters({ search: '', platform: '', contentType: '', tagId: '' });
+    updateQuery((params) => {
+      params.delete('search');
+      params.delete('platform');
+      params.delete('contentType');
+      params.delete('tagId');
+      params.set('page', '1');
     });
   }
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
 
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: '1fr', xl: 'minmax(0, 1.25fr) minmax(320px, 0.75fr)' },
-          gap: 3,
-        }}
-      >
-        <Paper
-          elevation={0}
-          sx={{
-            borderRadius: 3,
-            border: '1px solid rgba(22, 48, 32, 0.1)',
-            overflow: 'hidden',
-            background:
-              'linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(246,250,247,0.96) 100%)',
-          }}
-        >
-          <Box
-            sx={{
-              px: { xs: 2, md: 3 },
-              py: 2.5,
-              background:
-                'linear-gradient(135deg, rgba(31,111,95,0.08) 0%, rgba(217,167,84,0.12) 100%)',
-            }}
-          >
-            <Stack spacing={1}>
-              <Typography sx={{ fontSize: '1.35rem', fontWeight: 800, color: '#163020' }}>
-                Form Content Recording
-              </Typography>
-              <Typography sx={{ color: '#50665d', lineHeight: 1.7 }}>
-                Paste link konten untuk auto-fill metadata dari hasil scrape. Semua field tetap bisa
-                diedit manual sebelum disimpan.
-              </Typography>
+      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+        <Stack spacing={1.1} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.2, md: 1.35 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
+              <MetricTile label="Total records" value={overview.totalRecords} />
+              <MetricTile label="Platforms" value={overview.platformCount} />
+              <MetricTile label="This month" value={overview.thisMonthCount} />
+              <MetricTile label="Untagged" value={overview.untaggedCount} />
             </Stack>
-          </Box>
 
-          <Stack spacing={2.25} sx={{ p: { xs: 2, md: 3 } }}>
-            <TextField
-              label="Link konten"
-              value={form.link}
-              onChange={(event) => {
-                setField('link', event.target.value);
-                setLastScrapedLink('');
-              }}
-              onBlur={(event) => hydrateFromLink(event.target.value)}
-              onPaste={handlePaste}
-              placeholder="https://www.youtube.com/watch?v=... / https://x.com/... / https://www.instagram.com/p/..."
-              fullWidth
-              disabled={isBusy}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <LinkRoundedIcon sx={{ color: '#1f6f5f' }} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-              <Button
-                variant="outlined"
-                startIcon={<AutoFixHighRoundedIcon />}
-                onClick={() => hydrateFromLink(form.link)}
-                disabled={isBusy || !form.link.trim()}
-                sx={{
-                  minHeight: 48,
-                  borderRadius: 999,
-                  borderColor: '#1f6f5f',
-                  color: '#1f6f5f',
-                  textTransform: 'none',
-                  fontWeight: 700,
-                }}
-              >
-                {isScraping ? 'Mengambil metadata...' : 'Auto Fill dari Link'}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', lg: 'auto' } }}>
+              <Button component={Link} href="/scrape" variant="outlined" startIcon={<UploadFileRoundedIcon />} sx={{ minHeight: 36, borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>
+                Import from Channel
               </Button>
-
-              <Button
-                variant="contained"
-                startIcon={<SaveRoundedIcon />}
-                onClick={handleSubmit}
-                disabled={isBusy}
-                sx={{
-                  minHeight: 48,
-                  borderRadius: 999,
-                  px: 3,
-                  textTransform: 'none',
-                  fontWeight: 700,
-                  backgroundColor: '#1f6f5f',
-                }}
-              >
-                {isSaving ? 'Menyimpan...' : 'Simpan Recording'}
+              <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openAddDrawer} sx={{ minHeight: 36, borderRadius: 2, backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+                Add Content
               </Button>
             </Stack>
-
-            <Divider />
-
-            <TextField
-              label="Title"
-              value={form.title}
-              onChange={(event) => setField('title', event.target.value)}
-              fullWidth
-              disabled={isBusy}
-            />
-
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' },
-                gap: 2,
-              }}
-            >
-              <TextField
-                select
-                label="Platform"
-                value={form.platform}
-                onChange={(event) =>
-                  setField(
-                    'platform',
-                    event.target.value as ContentRecordingFormState['platform'],
-                  )
-                }
-                fullWidth
-                disabled={isBusy}
-              >
-                {PLATFORM_OPTIONS.map((option) => (
-                  <MenuItem key={option.value} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-              </TextField>
-
-              <TextField
-                label="Tanggal upload"
-                type="date"
-                value={form.upload_date}
-                onChange={(event) => setField('upload_date', event.target.value)}
-                fullWidth
-                disabled={isBusy}
-                slotProps={{
-                  inputLabel: { shrink: true },
-                }}
-              />
-            </Box>
           </Stack>
-        </Paper>
-
-        <Card
-          elevation={0}
-          sx={{
-            borderRadius: 3,
-            border: '1px solid rgba(22, 48, 32, 0.1)',
-            backgroundColor: '#ffffff',
-          }}
-        >
-          <CardContent>
-            <Stack spacing={2}>
-              <Typography sx={{ fontSize: '1.15rem', fontWeight: 800, color: '#163020' }}>
-                Ringkasan
-              </Typography>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 2,
-                  borderRadius: 2.5,
-                  backgroundColor: '#f7faf8',
-                  border: '1px solid rgba(31, 111, 95, 0.12)',
-                }}
-              >
-                <Typography
-                  sx={{
-                    fontSize: '0.8rem',
-                    color: '#6a7d75',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                  }}
-                >
-                  Total recording
-                </Typography>
-                <Typography sx={{ mt: 0.5, fontSize: '2rem', fontWeight: 800, color: '#163020' }}>
-                  {totalRecordings}
-                </Typography>
-              </Paper>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 2,
-                  borderRadius: 2.5,
-                  backgroundColor: '#fffaf0',
-                  border: '1px solid rgba(217, 167, 84, 0.18)',
-                }}
-              >
-                <Stack spacing={1.25}>
-                  <Typography sx={{ fontSize: '0.9rem', fontWeight: 700, color: '#163020' }}>
-                    Catatan
-                  </Typography>
-                  <Typography sx={{ color: '#50665d', lineHeight: 1.7 }}>
-                    Jika scrape tidak memberi tanggal atau title lengkap, Anda tetap bisa mengisi
-                    manual lalu simpan.
-                  </Typography>
-                </Stack>
-              </Paper>
-
-              {form.thumbnail_url ? (
-                <Paper
-                  elevation={0}
-                  sx={{
-                    p: 1.5,
-                    borderRadius: 2.5,
-                    border: '1px solid rgba(22, 48, 32, 0.08)',
-                  }}
-                >
-                  <Typography sx={{ mb: 1.25, fontSize: '0.88rem', fontWeight: 700, color: '#163020' }}>
-                    Thumbnail hasil scrape
-                  </Typography>
-                  <Box
-                    component="img"
-                    src={form.thumbnail_url}
-                    alt={form.title || 'Thumbnail konten'}
-                    sx={{
-                      display: 'block',
-                      width: '100%',
-                      borderRadius: 2,
-                      objectFit: 'cover',
-                      aspectRatio: '16 / 9',
-                      backgroundColor: '#eef4f2',
-                    }}
-                  />
-                </Paper>
-              ) : null}
-            </Stack>
-          </CardContent>
-        </Card>
-      </Box>
-
-      <Paper
-        elevation={0}
-        sx={{
-          borderRadius: 3,
-          border: '1px solid rgba(22, 48, 32, 0.1)',
-          overflow: 'hidden',
-          backgroundColor: '#ffffff',
-        }}
-      >
-        <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, borderBottom: '1px solid rgba(22, 48, 32, 0.08)' }}>
-          <Stack
-            direction={{ xs: 'column', md: 'row' }}
-            spacing={1.5}
-            justifyContent="space-between"
-            alignItems={{ xs: 'stretch', md: 'center' }}
-          >
-            <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
-              Recording Tersimpan
-            </Typography>
-            <TextField
-              size="small"
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Cari title, platform, tanggal, atau link"
-              sx={{ width: { xs: '100%', md: 360 } }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchRoundedIcon sx={{ color: '#1f6f5f' }} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Stack>
-        </Box>
-
-        <Stack spacing={0} divider={<Divider flexItem />}>
-          {filteredRecordings.length === 0 ? (
-            <Box sx={{ px: 3, py: 5, textAlign: 'center' }}>
-              <Typography sx={{ color: '#50665d' }}>
-                {normalizedSearchTerm
-                  ? 'Tidak ada content recording yang cocok dengan pencarian.'
-                  : 'Belum ada content recording yang tersimpan.'}
-              </Typography>
-            </Box>
-          ) : (
-            filteredRecordings.map((record) => (
-              <Box
-                key={record.id}
-                sx={{
-                  px: { xs: 2, md: 3 },
-                  py: 2.25,
-                  display: 'grid',
-                  gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 1fr) auto auto auto' },
-                  gap: 1.5,
-                  alignItems: { lg: 'center' },
-                }}
-              >
-                <Stack spacing={0.8} sx={{ minWidth: 0 }}>
-                  <Typography sx={{ fontWeight: 700, color: '#163020' }}>{record.title}</Typography>
-                  <Typography
-                    component={Link}
-                    href={record.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{
-                      color: '#1f6f5f',
-                      textDecoration: 'none',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {record.link}
-                  </Typography>
-                </Stack>
-
-                <Chip
-                  label={formatPlatformLabel(record.platform)}
-                  sx={{
-                    justifySelf: { lg: 'start' },
-                    width: 'fit-content',
-                    fontWeight: 700,
-                    backgroundColor: '#eef6f5',
-                    color: '#1f6f5f',
-                  }}
-                />
-
-                <Typography sx={{ color: '#50665d', fontWeight: 600 }}>
-                  {formatDateLabel(record.upload_date)}
-                </Typography>
-
-                <Button
-                  variant="outlined"
-                  color="error"
-                  startIcon={<DeleteOutlineRoundedIcon />}
-                  disabled={isDeleting}
-                  onClick={() => handleDelete(record)}
-                  sx={{
-                    justifySelf: { lg: 'end' },
-                    width: 'fit-content',
-                    borderRadius: 999,
-                    textTransform: 'none',
-                    fontWeight: 700,
-                  }}
-                >
-                  Hapus
-                </Button>
-              </Box>
-            ))
-          )}
         </Stack>
       </Paper>
+
+      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 } }}>
+          <TextField
+            size="small"
+            value={filters.search}
+            onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+            placeholder="Search title, caption, link, or source ID"
+            sx={{ flex: 1, minWidth: { lg: 280 } }}
+            InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }}
+          />
+          <TextField select size="small" label="Platform" value={filters.platform} onChange={(event) => setFilters((current) => ({ ...current, platform: event.target.value }))} sx={{ minWidth: { xs: '100%', sm: 170 } }}>
+            <MenuItem value="">All platforms</MenuItem>
+            {PLATFORM_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+          </TextField>
+          <TextField select size="small" label="Content type" value={filters.contentType} onChange={(event) => setFilters((current) => ({ ...current, contentType: event.target.value }))} sx={{ minWidth: { xs: '100%', sm: 170 } }}>
+            <MenuItem value="">All types</MenuItem>
+            {CONTENT_TYPE_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+          </TextField>
+          <TextField select size="small" label="Tag" value={filters.tagId} onChange={(event) => setFilters((current) => ({ ...current, tagId: event.target.value }))} sx={{ minWidth: { xs: '100%', sm: 190 } }}>
+            <MenuItem value="">All tags</MenuItem>
+            {tagOptions.map((tag) => <MenuItem key={tag.id} value={tag.id}>{tag.name}</MenuItem>)}
+          </TextField>
+          {activeFilterCount > 0 ? <Button onClick={clearFilters} sx={{ color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>Clear filters</Button> : null}
+        </Stack>
+      </Paper>
+
+      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, overflow: 'hidden', backgroundColor: adminPalette.surface }}>
+        <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
+          <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Content Library</Typography>
+          <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>{totalCount} records total, page {currentPage} of {totalPages}</Typography>
+        </Box>
+
+        <TableContainer sx={{ overflowX: 'auto' }}>
+          <Table size="small" sx={{ minWidth: 1120 }}>
+            <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+              <TableRow>
+                <TableCell sx={{ width: 112, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
+                {(['title', 'platform', 'content_type', 'upload_date'] as ContentRecordingSortKey[]).map((sortKey) => (
+                  <TableCell key={sortKey} sx={{ color: '#ffffff', fontWeight: 800 }}>
+                    <TableSortLabel active={currentSortBy === sortKey} direction={currentSortBy === sortKey ? currentSortDir : 'asc'} onClick={() => handleSortChange(sortKey)} sx={adminTableSortLabelSx}>
+                      {SORT_LABELS[sortKey]}
+                    </TableSortLabel>
+                  </TableCell>
+                ))}
+                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
+                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Metadata</TableCell>
+                <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {recordings.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} sx={{ py: 6, textAlign: 'center' }}>
+                    <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{totalCount === 0 ? 'Belum ada konten yang tercatat.' : 'Tidak ada konten yang cocok.'}</Typography>
+                    <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>{totalCount === 0 ? 'Tambahkan konten manual atau import dari workflow channel.' : 'Coba ubah pencarian atau hapus filter aktif.'}</Typography>
+                  </TableCell>
+                </TableRow>
+              ) : recordings.map((record) => (
+                <TableRow key={record.id} hover>
+                  <TableCell>
+                    <Box sx={{ width: 88, height: 56, borderRadius: 1.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
+                      {record.thumbnail_url ? <Box component="img" src={record.thumbnail_url} alt={record.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
+                    </Box>
+                  </TableCell>
+                  <TableCell sx={{ maxWidth: 330 }}>
+                    <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{record.title}</Typography>
+                    <Typography sx={{ mt: 0.4, color: adminPalette.textSecondary, fontSize: '0.78rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{record.caption || record.description || 'No caption recorded yet.'}</Typography>
+                    <Typography component={Link} href={record.link} target="_blank" rel="noopener noreferrer" sx={{ mt: 0.4, display: 'block', color: adminPalette.textMuted, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.76rem', '&:hover': { color: adminPalette.brand } }}>{record.source_post_id ? `${record.source_post_id} - ` : ''}{record.link}</Typography>
+                  </TableCell>
+                  <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
+                  <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
+                  <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
+                  <TableCell sx={{ maxWidth: 220 }}>
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {record.tags.length ? record.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ height: 22, borderRadius: 1.5, backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+                    </Stack>
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                      {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                      {!record.thumbnail_url ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                      {record.caption && record.thumbnail_url ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                    </Stack>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+                      <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
+                      <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
+                      <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        <TablePagination
+          component="div"
+          count={totalCount}
+          page={Math.max(0, currentPage - 1)}
+          rowsPerPage={pageSize}
+          rowsPerPageOptions={[10, 20, 50, 100]}
+          onPageChange={(_, nextPage) => updateQuery((params) => params.set('page', String(nextPage + 1)))}
+          onRowsPerPageChange={(event) => updateQuery((params) => {
+            params.set('pageSize', event.target.value);
+            params.set('page', '1');
+          })}
+        />
+      </Paper>
+
+      <Drawer anchor="right" open={drawerOpen} onClose={() => setDrawerOpen(false)} PaperProps={{ sx: { width: { xs: '100%', sm: 560 }, backgroundColor: adminPalette.canvas, borderLeft: `1px solid ${adminPalette.border}` } }}>
+        <Stack sx={{ minHeight: '100%' }}>
+          <Stack spacing={1.5} sx={{ px: 2.5, py: 2.25, borderBottom: `1px solid ${adminPalette.border}` }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+              <Box>
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>{form.id ? 'Edit Content' : 'Add Content'}</Typography>
+                <Typography sx={{ mt: 0.7, fontSize: '1.45rem', fontWeight: 700, color: adminPalette.textPrimary }}>{form.id ? 'Edit content record' : 'Add content record'}</Typography>
+              </Box>
+              <IconButton onClick={() => setDrawerOpen(false)} size="small"><CloseRoundedIcon fontSize="small" /></IconButton>
+            </Stack>
+          </Stack>
+
+          <Stack spacing={2.2} sx={{ p: 2.5, flex: 1, overflowY: 'auto' }}>
+            <Stack spacing={1.4}>
+              <SectionLabel>Source details</SectionLabel>
+              <TextField label="Link" value={form.link} onChange={(event) => { setField('link', event.target.value); setLastScrapedLink(''); }} onBlur={(event) => hydrateFromLink(event.target.value)} onPaste={handlePaste} helperText="Paste a published content URL to auto-fill available metadata." fullWidth disabled={isBusy} InputProps={{ startAdornment: <InputAdornment position="start"><LinkRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }} />
+              <Button variant="outlined" startIcon={<AutoFixHighRoundedIcon />} onClick={() => hydrateFromLink(form.link)} disabled={isBusy || !form.link.trim()} sx={{ alignSelf: 'flex-start', borderRadius: 2, textTransform: 'none', fontWeight: 700 }}>{isScraping ? 'Importing metadata...' : 'Auto-fill from link'}</Button>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2}>
+                <TextField select label="Platform" value={form.platform} onChange={(event) => setField('platform', event.target.value as ContentRecordingFormState['platform'])} fullWidth disabled={isBusy}>{PLATFORM_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}</TextField>
+                <TextField select label="Content type" value={form.content_type} onChange={(event) => setField('content_type', event.target.value as ContentRecordingFormState['content_type'])} fullWidth disabled={isBusy}><MenuItem value="">Unspecified</MenuItem>{CONTENT_TYPE_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}</TextField>
+              </Stack>
+            </Stack>
+
+            <Stack spacing={1.4}>
+              <SectionLabel>Metadata</SectionLabel>
+              <TextField
+                label="Title"
+                value={form.title}
+                onChange={(event) => setField('title', event.target.value)}
+                helperText="Required. For Instagram and X, add a short internal label manually."
+                fullWidth
+                disabled={isBusy}
+              />
+              <TextField label="Caption" value={form.caption} onChange={(event) => setField('caption', event.target.value)} helperText="Original caption or post text from the source platform." minRows={4} multiline fullWidth disabled={isBusy} />
+              <TextField label="Upload/publication date" type="date" value={form.upload_date} onChange={(event) => setField('upload_date', event.target.value)} fullWidth disabled={isBusy} slotProps={{ inputLabel: { shrink: true } }} />
+              <TextField label="Source post ID" value={form.source_post_id} onChange={(event) => setField('source_post_id', event.target.value)} fullWidth disabled={isBusy} />
+            </Stack>
+
+            <Stack spacing={1.4}>
+              <SectionLabel>Preview</SectionLabel>
+              <TextField label="Thumbnail URL" value={form.thumbnail_url} onChange={(event) => setField('thumbnail_url', event.target.value)} fullWidth disabled={isBusy} />
+              <Box sx={{ height: 180, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>{form.thumbnail_url ? <Box component="img" src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
+            </Stack>
+
+            <Stack spacing={1.4}>
+              <SectionLabel>Organization</SectionLabel>
+              <Autocomplete
+                multiple
+                freeSolo
+                options={tagOptions}
+                value={selectedTags}
+                filterSelectedOptions
+                filterOptions={(options, params) => {
+                  const filtered = tagFilter(options, params);
+                  const input = params.inputValue.replace(/\s+/g, ' ').trim();
+                  const exists = options.some((option) => option.name.toLowerCase() === input.toLowerCase());
+                  if (input && !exists) {
+                    filtered.push({ id: `new:${input.toLowerCase()}`, name: `Add "${input}"`, inputValue: input, isNew: true });
+                  }
+                  return filtered;
+                }}
+                getOptionLabel={(option) => typeof option === 'string' ? option : option.name}
+                isOptionEqualToValue={(option, value) => option.id === value.id}
+                onChange={(_, value) => syncTags(value.map(normalizeTagOption))}
+                renderOption={(props, option) => <Box component="li" {...props}>{option.inputValue ? `Add "${option.inputValue}"` : option.name}</Box>}
+                renderInput={(params) => <TextField {...params} label="Tags" helperText="Select existing tags or type a new tag name and choose Add." />}
+                renderTags={(value, getTagProps) => value.map((option, index) => {
+                  const { key, ...tagProps } = getTagProps({ index });
+                  return <Chip key={key} label={option.inputValue || option.name} {...tagProps} />;
+                })}
+                disabled={isBusy}
+              />
+              <TextField label="Internal description" value={form.description} onChange={(event) => setField('description', event.target.value)} helperText="Internal notes for the team. Not copied from the platform." minRows={3} multiline fullWidth disabled={isBusy} />
+            </Stack>
+          </Stack>
+
+          <Stack direction="row" spacing={1} justifyContent="space-between" sx={{ p: 2.5, borderTop: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+            {form.id ? <Button color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => setDeleteTarget(recordings.find((item) => item.id === form.id) || null)} sx={{ textTransform: 'none', fontWeight: 700 }}>Delete</Button> : <Box />}
+            <Stack direction="row" spacing={1}>
+              <Button onClick={() => setDrawerOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
+              <Button variant="contained" onClick={handleSubmit} disabled={isBusy} sx={{ backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>{isSaving ? 'Saving...' : 'Save'}</Button>
+            </Stack>
+          </Stack>
+        </Stack>
+      </Drawer>
+
+      <Dialog open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Delete content record?</DialogTitle>
+        <DialogContent><Typography sx={{ color: adminPalette.textSecondary }}>{`This will remove "${deleteTarget?.title || ''}" from the content library. The original platform post will not be affected.`}</Typography></DialogContent>
+        <DialogActions sx={{ p: 2.5, pt: 1 }}>
+          <Button onClick={() => setDeleteTarget(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleDelete} disabled={isDeleting} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>{isDeleting ? 'Deleting...' : 'Delete'}</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
