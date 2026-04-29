@@ -55,7 +55,7 @@ const INSTANCE_AFFINITY_RECHECK_DELAY_MS = 1000;
 const NON_RETRYABLE_DELIVERY_ERROR = 'Recipient is not a registered WhatsApp user.';
 const DEFAULT_DISPATCH_SETTINGS = {
   id: 'default',
-  global_messages_per_minute: 24,
+  global_messages_per_minute: 50,
   api_notifications_paused: false,
 };
 const DEFAULT_WHATSAPP_INSTANCE_ID = process.env.WHATSAPP_INSTANCE_ID || 'default';
