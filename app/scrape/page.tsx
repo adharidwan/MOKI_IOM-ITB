@@ -6,7 +6,7 @@ export default function ContentManagementPage() {
     <AdminFeatureShell
       badge="Content"
       title="Channel Content Scraping"
-      description="Ambil data konten level channel dari YouTube, X, dan Instagram sekaligus. Output bersifat batch (banyak post), lalu bisa dipilih untuk dicatat satu per satu di Content Recording."
+      description="Ambil data konten level channel dari YouTube, X, dan Instagram sekaligus. Output bersifat batch (banyak post), lalu bisa dipilih untuk dicatat satu per satu di Content Library."
       currentPath="/scrape"
     >
       <ContentScrapingWorkspace />

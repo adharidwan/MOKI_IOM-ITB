@@ -11,6 +11,7 @@ import ManageSearchRoundedIcon from "@mui/icons-material/ManageSearchRounded";
 import VideoLibraryRoundedIcon from "@mui/icons-material/VideoLibraryRounded";
 
 import { adminPalette } from "../lib/adminPalette";
+import { useSso } from "./SsoProvider";
 
 interface AdminFeatureShellProps {
   title: string;
@@ -50,12 +51,12 @@ const NAV_ITEMS = [
   },
   {
     href: "/scrape" as const,
-    label: "Scrape",
+    label: "Import",
     icon: <ManageSearchRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/content-record" as const,
-    label: "Record",
+    label: "Library",
     icon: <VideoLibraryRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
@@ -68,6 +69,8 @@ export default function AdminFeatureShell({
   actions,
   children,
 }: AdminFeatureShellProps) {
+  const { userName, userEmail, roles, logout } = useSso();
+
   return (
     <Box sx={{ minHeight: "100vh", backgroundColor: adminPalette.canvas }}>
       <Box
@@ -205,30 +208,96 @@ export default function AdminFeatureShell({
             </Typography>
           </Stack>
 
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              px: 1.25,
-              py: 0.75,
-              borderRadius: 999,
-              border: "1px solid rgba(255,255,255,0.18)",
-              backgroundColor: "rgba(255,255,255,0.14)",
-            }}
-          >
-            <NotificationsNoneRoundedIcon sx={{ fontSize: 18 }} />
-            <Typography
+          <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+            <Box
               sx={{
-                display: { xs: "none", sm: "block" },
-                fontSize: "0.82rem",
-                fontWeight: 600,
-                color: "inherit",
+                display: { xs: "none", md: "flex" },
+                alignItems: "center",
+                gap: 1,
+                px: 1.25,
+                py: 0.75,
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.18)",
+                backgroundColor: "rgba(255,255,255,0.14)",
               }}
             >
-              Notifications
-            </Typography>
-          </Box>
+              <NotificationsNoneRoundedIcon sx={{ fontSize: 18 }} />
+              <Typography
+                sx={{
+                  fontSize: "0.82rem",
+                  fontWeight: 600,
+                  color: "inherit",
+                }}
+              >
+                Notifications
+              </Typography>
+            </Box>
+
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: { xs: 0.75, sm: 1 },
+                minWidth: 0,
+                maxWidth: { xs: 190, sm: 320 },
+                px: { xs: 1, sm: 1.25 },
+                py: 0.55,
+                borderRadius: 999,
+                border: "1px solid rgba(255,255,255,0.22)",
+                backgroundColor: "rgba(255,255,255,0.16)",
+              }}
+            >
+              <Box sx={{ minWidth: 0 }}>
+                <Typography
+                  sx={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontSize: { xs: "0.76rem", sm: "0.82rem" },
+                    fontWeight: 700,
+                    lineHeight: 1.15,
+                    color: "inherit",
+                  }}
+                >
+                  {userName || "Pengguna SSO"}
+                </Typography>
+                <Typography
+                  sx={{
+                    display: { xs: "none", sm: "block" },
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontSize: "0.72rem",
+                    lineHeight: 1.15,
+                    color: "rgba(255,255,255,0.72)",
+                  }}
+                >
+                  {userEmail || roles.join(", ") || "IOM SSO"}
+                </Typography>
+              </Box>
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{
+                  minWidth: 0,
+                  borderRadius: 999,
+                  borderColor: "rgba(255,255,255,0.42)",
+                  color: "#ffffff",
+                  textTransform: "none",
+                  fontWeight: 700,
+                  "&:hover": {
+                    borderColor: "rgba(255,255,255,0.72)",
+                    backgroundColor: "rgba(255,255,255,0.12)",
+                  },
+                }}
+                onClick={() => {
+                  void logout();
+                }}
+              >
+                Logout
+              </Button>
+            </Box>
+          </Stack>
         </Box>
 
         <Stack

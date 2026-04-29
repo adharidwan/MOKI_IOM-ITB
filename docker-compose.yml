@@ -37,7 +37,7 @@ services:
         SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
     image: iom4-web:latest
     ports:
-      - "3000:3000"
+      - "3069:3000"
     env_file:
       - .env.local
     depends_on:

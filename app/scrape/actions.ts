@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { upsertContentRecording } from "../lib/api";
 import { scrapeContentFromLink } from "../lib/scrape-content-link";
 import { getSupabaseAdminClient } from "../lib/supabase-server";
-import type { ContentRecordingPlatform } from "../lib/types";
+import type { ContentRecordingPlatform, ContentRecordingType } from "../lib/types";
 
 export interface ScrapedRecordingCandidate {
   title: string;
@@ -14,6 +14,8 @@ export interface ScrapedRecordingCandidate {
   link: string;
   source_post_id?: string;
   thumbnail_url?: string;
+  caption?: string;
+  content_type?: ContentRecordingType;
 }
 
 interface ExportFailure {
@@ -51,6 +53,14 @@ function normalizeDate(value: string | null | undefined): string {
   }
 
   return "";
+}
+
+function normalizeContentType(value: string | null | undefined): ContentRecordingType | null {
+  const normalized = normalizeText(value);
+  const validTypes: ContentRecordingType[] = ['video', 'short', 'reel', 'post', 'tweet', 'article', 'other'];
+  return validTypes.includes(normalized as ContentRecordingType)
+    ? normalized as ContentRecordingType
+    : null;
 }
 
 function dedupeByLink(
@@ -108,6 +118,8 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   link: string;
   sourcePostId: string;
   thumbnailUrl: string;
+  caption: string;
+  contentType: ContentRecordingType | null;
 }> {
   const link = normalizeText(candidate.link);
   let title = normalizeText(candidate.title);
@@ -115,6 +127,8 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   let uploadDate = normalizeDate(candidate.upload_date);
   let sourcePostId = normalizeText(candidate.source_post_id);
   let thumbnailUrl = normalizeText(candidate.thumbnail_url);
+  let caption = normalizeText(candidate.caption);
+  let contentType = normalizeContentType(candidate.content_type);
 
   const needsHydration =
     !title || !uploadDate || !sourcePostId || !thumbnailUrl;
@@ -128,6 +142,8 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
       sourcePostId =
         sourcePostId || normalizeText(scraped.source_post_id || "");
       thumbnailUrl = thumbnailUrl || normalizeText(scraped.thumbnail_url || "");
+      caption = caption || normalizeText(scraped.caption || "");
+      contentType = contentType || normalizeContentType(scraped.content_type || "");
       platform = platform || scraped.platform;
     } catch (error) {
       // Keep original candidate values and let validation below determine if enough data is available.
@@ -145,6 +161,8 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
     link,
     sourcePostId,
     thumbnailUrl,
+    caption,
+    contentType,
   };
 }
 
@@ -164,7 +182,7 @@ export async function exportScrapedContentAction(
   const failed: ExportFailure[] = [];
 
   for (const candidate of candidates) {
-    const { link, title, platform, uploadDate, sourcePostId, thumbnailUrl } =
+    const { link, title, platform, uploadDate, sourcePostId, thumbnailUrl, caption, contentType } =
       await enrichCandidate(candidate);
 
     if (!link || !title || !uploadDate) {
@@ -203,6 +221,8 @@ export async function exportScrapedContentAction(
         platform,
         upload_date: uploadDate,
         link,
+        caption: caption || null,
+        content_type: contentType || null,
         source_post_id: sourcePostId || null,
         thumbnail_url: thumbnailUrl || null,
       });
