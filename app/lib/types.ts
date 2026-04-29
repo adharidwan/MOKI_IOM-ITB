@@ -45,16 +45,28 @@ export interface CsvContact {
   created_at: string;
 }
 
-export type ContentRecordingPlatform = 'youtube' | 'x' | 'Instagram';
+export type ContentRecordingPlatform = 'youtube' | 'x' | 'Instagram' | 'Website';
+
+export type ContentRecordingType = 'video' | 'short' | 'reel' | 'post' | 'tweet' | 'article' | 'other';
+
+export interface ContentTag {
+  id: string;
+  name: string;
+  created_at?: string;
+}
 
 export interface ContentRecording {
   id: string;
   title: string;
   platform: ContentRecordingPlatform;
+  caption: string | null;
+  description: string | null;
+  content_type: ContentRecordingType | null;
   upload_date: string;
   link: string;
   source_post_id: string | null;
   thumbnail_url: string | null;
+  tags: ContentTag[];
   created_at: string;
   updated_at: string;
 }

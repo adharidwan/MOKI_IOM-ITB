@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { getSupabaseServerClient, getSupabaseAdminClient } from './supabase-server';
-import { Ticket, Reply, TicketWithReplies, CsvContact, ContentRecording, ContentRecordingPlatform } from './types';
+import { Ticket, Reply, TicketWithReplies, CsvContact, ContentRecording, ContentRecordingPlatform, ContentRecordingType, ContentTag } from './types';
 import { createTicketReplyOutboundMessage } from './whatsapp-notification-repository';
 
 interface GetTicketsParams {
@@ -33,12 +33,45 @@ export interface CsvContactGroupSyncInput {
 }
 
 export interface ContentRecordingInput {
+  id?: string | null;
   title: string;
   platform: ContentRecordingPlatform;
+  caption?: string | null;
+  description?: string | null;
+  content_type?: ContentRecordingType | null;
   upload_date: string;
   link: string;
   source_post_id?: string | null;
   thumbnail_url?: string | null;
+  tag_ids?: string[];
+}
+
+export type ContentRecordingSortKey = 'title' | 'platform' | 'content_type' | 'upload_date' | 'created_at' | 'updated_at';
+
+export interface PaginatedContentRecordingsParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  platform?: string;
+  contentType?: string;
+  tagId?: string;
+  sortBy?: string;
+  sortDir?: SortDirection;
+}
+
+export interface PaginatedContentRecordingsResponse {
+  items: ContentRecording[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface ContentRecordingsOverview {
+  totalRecords: number;
+  platformCount: number;
+  thisMonthCount: number;
+  untaggedCount: number;
 }
 
 export interface PaginatedCsvContactsParams {
@@ -68,6 +101,7 @@ export type SortDirection = 'asc' | 'desc';
 export type CsvContactSortKey = 'imported_at' | 'nama' | 'no_telp' | 'status';
 
 type TicketSortKey = 'updated_at' | 'status' | 'subject' | 'id';
+const CONTENT_RECORDING_SORT_KEYS: ContentRecordingSortKey[] = ['title', 'platform', 'content_type', 'upload_date', 'created_at', 'updated_at'];
 
 const DEFAULT_CONTACT_SORT_BY: CsvContactSortKey = 'imported_at';
 const DEFAULT_CONTACT_SORT_DIR: SortDirection = 'desc';
@@ -129,6 +163,18 @@ function toContentRecording(record: Record<string, unknown>): ContentRecording {
     id: String(record.id || ''),
     title: String(record.title || ''),
     platform: String(record.platform || '') as ContentRecordingPlatform,
+    caption:
+      record.caption === null || record.caption === undefined
+        ? null
+        : String(record.caption),
+    description:
+      record.description === null || record.description === undefined
+        ? null
+        : String(record.description),
+    content_type:
+      record.content_type === null || record.content_type === undefined
+        ? null
+        : (String(record.content_type) as ContentRecordingType),
     upload_date: String(record.upload_date || ''),
     link: String(record.link || ''),
     source_post_id:
@@ -139,9 +185,33 @@ function toContentRecording(record: Record<string, unknown>): ContentRecording {
       record.thumbnail_url === null || record.thumbnail_url === undefined
         ? null
         : String(record.thumbnail_url),
+    tags: toContentTags(record.tags),
     created_at: String(record.created_at || ''),
     updated_at: String(record.updated_at || ''),
   };
+}
+
+function toContentTags(value: unknown): ContentTag[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const record = (entry || {}) as Record<string, unknown>;
+      return {
+        id: String(record.id || ''),
+        name: String(record.name || ''),
+        created_at: record.created_at === undefined ? undefined : String(record.created_at || ''),
+      };
+    })
+    .filter((tag) => tag.id && tag.name);
+}
+
+function normalizeContentRecordingSortKey(value: string | undefined): ContentRecordingSortKey {
+  return CONTENT_RECORDING_SORT_KEYS.includes(value as ContentRecordingSortKey)
+    ? value as ContentRecordingSortKey
+    : 'upload_date';
 }
 
 function toReply(record: Record<string, unknown>): Reply {
@@ -652,7 +722,7 @@ export async function getContentRecordings(): Promise<ContentRecording[]> {
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_recordings')
-    .select('*')
+    .select('*, tags:content_recording_tags(tag:content_tags(id, name, created_at))')
     .order('upload_date', { ascending: false })
     .order('created_at', { ascending: false });
 
@@ -660,27 +730,192 @@ export async function getContentRecordings(): Promise<ContentRecording[]> {
     throw new Error(`Failed to fetch content recordings: ${error.message}`);
   }
 
-  return (data || []).map((record) => toContentRecording(record as Record<string, unknown>));
+  return (data || []).map((record) => {
+    const rawRecord = record as Record<string, unknown>;
+    const tagLinks = Array.isArray(rawRecord.tags) ? rawRecord.tags : [];
+    return toContentRecording({
+      ...rawRecord,
+      tags: tagLinks.map((entry) => (entry as { tag?: unknown }).tag).filter(Boolean),
+    });
+  });
+}
+
+export async function getPaginatedContentRecordings({
+  page = 1,
+  pageSize = 20,
+  search = '',
+  platform = '',
+  contentType = '',
+  tagId = '',
+  sortBy = 'upload_date',
+  sortDir = 'desc',
+}: PaginatedContentRecordingsParams): Promise<PaginatedContentRecordingsResponse> {
+  const supabase = getSupabaseAdminClient();
+  const safePage = Math.max(1, Math.floor(page));
+  const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
+  const normalizedSortBy = normalizeContentRecordingSortKey(sortBy);
+  const normalizedSortDir = normalizeSortDirection(sortDir, 'desc');
+
+  const { data, error } = await supabase.rpc('list_content_recordings', {
+    p_search: search.trim() || null,
+    p_platform: platform.trim() || null,
+    p_content_type: contentType.trim() || null,
+    p_tag_id: tagId.trim() || null,
+    p_page: safePage,
+    p_page_size: safePageSize,
+    p_sort_by: normalizedSortBy,
+    p_sort_dir: normalizedSortDir,
+  });
+
+  if (error) {
+    throw new Error(`Failed to fetch content recordings: ${error.message}`);
+  }
+
+  const rows = (data || []) as Array<Record<string, unknown> & { total_count?: number | string }>;
+  const total = rows.length ? Number(rows[0].total_count || 0) : 0;
+
+  return {
+    items: rows.map((record) => toContentRecording(record)),
+    total,
+    page: safePage,
+    pageSize: safePageSize,
+    totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+  };
+}
+
+export async function getContentRecordingsOverview(): Promise<ContentRecordingsOverview> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase.rpc('get_content_recordings_overview');
+
+  if (error) {
+    throw new Error(`Failed to fetch content overview: ${error.message}`);
+  }
+
+  const overview = ((data || [])[0] || {}) as Record<string, unknown>;
+
+  return {
+    totalRecords: Number(overview.total_records || 0),
+    platformCount: Number(overview.platform_count || 0),
+    thisMonthCount: Number(overview.this_month_count || 0),
+    untaggedCount: Number(overview.untagged_count || 0),
+  };
+}
+
+export async function getContentTags(): Promise<ContentTag[]> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_tags')
+    .select('id, name, created_at')
+    .order('name', { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to fetch content tags: ${error.message}`);
+  }
+
+  return (data || []).map((record) => ({
+    id: String(record.id || ''),
+    name: String(record.name || ''),
+    created_at: String(record.created_at || ''),
+  }));
+}
+
+export async function ensureContentTags(names: string[]): Promise<ContentTag[]> {
+  const normalizedNames = Array.from(
+    new Map(
+      names
+        .map((name) => String(name || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .map((name) => [name.toLowerCase(), name] as const),
+    ).values(),
+  );
+
+  if (!normalizedNames.length) {
+    return [];
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const results = await Promise.all(
+    normalizedNames.map(async (name) => {
+      const { data, error } = await supabase.rpc('ensure_content_tag', { p_name: name });
+      if (error) {
+        throw new Error(`Failed to create content tag: ${error.message}`);
+      }
+
+      const record = ((data || [])[0] || {}) as Record<string, unknown>;
+      return {
+        id: String(record.id || ''),
+        name: String(record.name || ''),
+        created_at: String(record.created_at || ''),
+      };
+    }),
+  );
+
+  return results.filter((tag) => tag.id && tag.name);
+}
+
+async function replaceContentRecordingTags(contentRecordingId: string, tagIds: string[]): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  const normalizedTagIds = Array.from(new Set(tagIds.map((id) => String(id || '').trim()).filter(Boolean)));
+
+  const { error: deleteError } = await supabase
+    .from('content_recording_tags')
+    .delete()
+    .eq('content_recording_id', contentRecordingId);
+
+  if (deleteError) {
+    throw new Error(`Failed to update content tags: ${deleteError.message}`);
+  }
+
+  if (!normalizedTagIds.length) {
+    return;
+  }
+
+  const { error: insertError } = await supabase
+    .from('content_recording_tags')
+    .insert(normalizedTagIds.map((tagId) => ({ content_recording_id: contentRecordingId, tag_id: tagId })));
+
+  if (insertError) {
+    throw new Error(`Failed to update content tags: ${insertError.message}`);
+  }
 }
 
 export async function upsertContentRecording(
   input: ContentRecordingInput,
 ): Promise<ContentRecording> {
   const supabase = getSupabaseAdminClient();
+  const payload = {
+    title: input.title.trim(),
+    platform: input.platform,
+    caption: input.caption || null,
+    description: input.description || null,
+    content_type: input.content_type || null,
+    upload_date: input.upload_date,
+    link: input.link.trim(),
+    source_post_id: input.source_post_id || null,
+    thumbnail_url: input.thumbnail_url || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (input.id) {
+    const { error } = await supabase
+      .from('content_recordings')
+      .update(payload)
+      .eq('id', input.id);
+
+    if (error) {
+      throw new Error(`Failed to save content recording: ${error.message}`);
+    }
+
+    if (input.tag_ids) {
+      await replaceContentRecordingTags(String(input.id), input.tag_ids);
+    }
+
+    return getContentRecordingById(String(input.id));
+  }
+
   const { data, error } = await supabase
     .from('content_recordings')
-    .upsert(
-      {
-        title: input.title.trim(),
-        platform: input.platform,
-        upload_date: input.upload_date,
-        link: input.link.trim(),
-        source_post_id: input.source_post_id || null,
-        thumbnail_url: input.thumbnail_url || null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'link' },
-    )
+    .upsert(payload, { onConflict: 'link' })
     .select()
     .single();
 
@@ -688,7 +923,34 @@ export async function upsertContentRecording(
     throw new Error(`Failed to save content recording: ${error.message}`);
   }
 
-  return toContentRecording(data as Record<string, unknown>);
+  const savedRecord = toContentRecording(data as Record<string, unknown>);
+
+  if (input.tag_ids) {
+    await replaceContentRecordingTags(savedRecord.id, input.tag_ids);
+    return getContentRecordingById(savedRecord.id);
+  }
+
+  return savedRecord;
+}
+
+export async function getContentRecordingById(id: string): Promise<ContentRecording> {
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_recordings')
+    .select('*, tags:content_recording_tags(tag:content_tags(id, name, created_at))')
+    .eq('id', id)
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to fetch content recording: ${error.message}`);
+  }
+
+  const rawRecord = data as Record<string, unknown>;
+  const tagLinks = Array.isArray(rawRecord.tags) ? rawRecord.tags : [];
+  return toContentRecording({
+    ...rawRecord,
+    tags: tagLinks.map((entry) => (entry as { tag?: unknown }).tag).filter(Boolean),
+  });
 }
 
 export async function deleteContentRecording(id: string): Promise<void> {
