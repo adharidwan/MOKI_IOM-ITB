@@ -18,6 +18,14 @@ interface GetTicketsResponse {
   total: number;
 }
 
+interface TicketStatusSummary {
+  total: number;
+  open: number;
+  inProgress: number;
+  resolved: number;
+  closed: number;
+}
+
 export interface CsvContactInput {
   no_telp: string;
   nama: string;
@@ -339,6 +347,31 @@ export async function getTickets({
   return {
     tickets: rows.map((row) => toTicketWithReplies(row as Record<string, unknown>)),
     total: Number(rows[0]?.total_count || 0),
+  };
+}
+
+export async function getTicketStatusSummary({
+  search = '',
+  instanceId,
+}: Pick<GetTicketsParams, 'search' | 'instanceId'> = {}): Promise<TicketStatusSummary> {
+  const supabase = getSupabaseServerClient();
+  const { data, error } = await supabase.rpc('ticket_status_summary', {
+    p_search: search.trim() || null,
+    p_instance_id: instanceId || null,
+  });
+
+  if (error) {
+    throw new Error(`Failed to fetch ticket status summary: ${error.message}`);
+  }
+
+  const summary = Array.isArray(data) ? data[0] : null;
+
+  return {
+    total: Number(summary?.total_count || 0),
+    open: Number(summary?.open_count || 0),
+    inProgress: Number(summary?.in_progress_count || 0),
+    resolved: Number(summary?.resolved_count || 0),
+    closed: Number(summary?.closed_count || 0),
   };
 }
 

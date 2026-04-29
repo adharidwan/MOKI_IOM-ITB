@@ -4,7 +4,7 @@ import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';
 
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import TicketTable from '../components/TicketTable';
-import { getTickets } from '../lib/api';
+import { getTickets, getTicketStatusSummary } from '../lib/api';
 import { adminPalette } from '../lib/adminPalette';
 
 function MetricTile({ label, value }: { label: string; value: string | number }) {
@@ -62,10 +62,11 @@ export default async function TicketDashboard({
   const sortDir = rawSortDir === 'asc' ? 'asc' : 'desc';
   const instanceId = (resolvedSearchParams.instanceId as string) || '';
 
-  const data = await getTickets({ page, search, sort, sortDir, instanceId: instanceId || undefined });
-  const openCount = data.tickets.filter((ticket) => ticket.status === 'Open').length;
-  const inProgressCount = data.tickets.filter((ticket) => ticket.status === 'In Progress').length;
-  const closedCount = data.tickets.filter((ticket) => ticket.status === 'Closed').length;
+  const filters = { search, instanceId: instanceId || undefined };
+  const [data, summary] = await Promise.all([
+    getTickets({ page, search, sort, sortDir, instanceId: instanceId || undefined }),
+    getTicketStatusSummary(filters),
+  ]);
 
   return (
     <AdminFeatureShell
@@ -116,7 +117,10 @@ export default async function TicketDashboard({
                   Ticket Desk
                 </Typography>
                 <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
-                  Dashboard tiket aktif
+                  Dashboard tiket
+                </Typography>
+                <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                  Statistik mencakup semua tiket yang cocok dengan filter saat ini.
                 </Typography>
               </Box>
 
@@ -131,10 +135,10 @@ export default async function TicketDashboard({
             </Stack>
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
-              <MetricTile label="Total tiket" value={data.total} />
-              <MetricTile label="Open di halaman ini" value={openCount} />
-              <MetricTile label="In progress" value={inProgressCount} />
-              <MetricTile label="Closed" value={closedCount} />
+              <MetricTile label="Total" value={summary.total} />
+              <MetricTile label="Open" value={summary.open} />
+              <MetricTile label="In progress" value={summary.inProgress} />
+              <MetricTile label="Closed" value={summary.closed} />
             </Stack>
           </Stack>
         </Paper>
