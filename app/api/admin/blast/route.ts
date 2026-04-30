@@ -5,7 +5,6 @@ import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
 import { resolveAllGroupRecipients } from '@/app/lib/group-directory-server';
 import {
   createDirectBlastOutboundMessages,
-  createGroupBlastOutboundMessages,
   createPersonalizedBlastOutboundMessages,
 } from '@/app/lib/whatsapp-notification-repository';
 import { normalizePhoneNumber } from '@/app/lib/whatsapp-notification-utils';
@@ -129,8 +128,8 @@ export async function POST(request: Request) {
         );
       }
 
-      const blastResult = await createGroupBlastOutboundMessages({
-        groupNames,
+      const blastResult = await createDirectBlastOutboundMessages({
+        recipientPhoneNumbers: resolvedGroupRecipients.map((recipient) => recipient.no_telp),
         content: message,
       });
 

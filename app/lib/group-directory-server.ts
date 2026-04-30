@@ -99,6 +99,37 @@ function toGroupNames(value: unknown): string[] {
     : [];
 }
 
+function isMissingGroupResolveRpc(error: { message?: string; code?: string }): boolean {
+  const message = String(error.message || '').toLowerCase();
+
+  return error.code === 'PGRST202' || message.includes('resolve_csv_contact_group_recipients');
+}
+
+async function resolveGroupRecipientsFromContacts(
+  groupNames: string[],
+  limit: number | null,
+): Promise<{ rows: CsvContact[]; total: number }> {
+  const supabase = getSupabaseAdminClient();
+  const query = supabase
+    .from('csv_contacts')
+    .select('id, no_telp, nama, jenis_kelamin, jabatan, group_names, source_file, imported_at, created_at', {
+      count: 'exact',
+    })
+    .overlaps('group_names', groupNames)
+    .order('nama', { ascending: true });
+
+  const { data, error, count } = limit === null ? await query : await query.limit(limit);
+
+  if (error) {
+    throw new Error(`Failed to resolve group recipients from contacts: ${error.message}`);
+  }
+
+  return {
+    rows: (Array.isArray(data) ? data : []).map((row) => toCsvContact(row as Record<string, unknown>)),
+    total: count || 0,
+  };
+}
+
 export async function getPaginatedContactGroups({
   page = 1,
   pageSize = 20,
@@ -197,7 +228,21 @@ export async function resolveGroupRecipientsPreview(groupNames: string[]): Promi
   });
 
   if (error) {
-    throw new Error(`Failed to resolve group preview recipients: ${error.message}`);
+    if (!isMissingGroupResolveRpc(error)) {
+      throw new Error(`Failed to resolve group preview recipients: ${error.message}`);
+    }
+
+    const fallback = await resolveGroupRecipientsFromContacts(normalizedGroupNames, 6);
+
+    return {
+      totalRecipients: fallback.total,
+      previewRecipients: fallback.rows.map((row) => ({
+        id: row.id,
+        no_telp: row.no_telp,
+        nama: row.nama,
+        group_names: row.group_names,
+      })),
+    };
   }
 
   const rows = Array.isArray(data) ? data : [];
@@ -228,7 +273,19 @@ export async function resolveAllGroupRecipients(groupNames: string[]): Promise<C
   });
 
   if (error) {
-    throw new Error(`Failed to resolve group recipients: ${error.message}`);
+    if (!isMissingGroupResolveRpc(error)) {
+      throw new Error(`Failed to resolve group recipients: ${error.message}`);
+    }
+
+    const fallback = await resolveGroupRecipientsFromContacts(normalizedGroupNames, null);
+
+    return fallback.rows.map((row) => ({
+      no_telp: row.no_telp,
+      nama: row.nama,
+      jenis_kelamin: row.jenis_kelamin,
+      jabatan: row.jabatan || undefined,
+      group_names: row.group_names,
+    }));
   }
 
   return (Array.isArray(data) ? data : []).map((row) => ({
