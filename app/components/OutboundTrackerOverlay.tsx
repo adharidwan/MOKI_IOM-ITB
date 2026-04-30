@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import ExpandLessRoundedIcon from '@mui/icons-material/ExpandLessRounded';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 
 import { adminPalette } from '../lib/adminPalette';
 import {
@@ -41,6 +42,22 @@ type TrackerRegisterDetail = {
 };
 
 const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
+const OUTBOUND_TRACKER_PILL_POSITION_KEY = 'outbound-tracker-pill-position';
+const PILL_VIEWPORT_MARGIN = 8;
+
+type PillPosition = {
+  left: number;
+  top: number;
+};
+
+type PillDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+  moved: boolean;
+};
 
 const dateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
   day: '2-digit',
@@ -155,6 +172,8 @@ export default function OutboundTrackerOverlay() {
   const [hydrated, setHydrated] = useState(false);
   const [data, setData] = useState<OutboundTrackerResponse | null>(null);
   const [open, setOpen] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  const [pillPosition, setPillPosition] = useState<PillPosition | null>(null);
   const [selectedBatchId, setSelectedBatchId] = useState<string>('all');
   const [batchListOpen, setBatchListOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -162,7 +181,26 @@ export default function OutboundTrackerOverlay() {
   const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>({ active: true, failed: true, done: true });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const previousAttentionCountRef = useRef(0);
+  const hiddenPillRef = useRef<HTMLButtonElement | null>(null);
+  const pillDragStateRef = useRef<PillDragState | null>(null);
   const trackedIds = useMemo(() => collectTrackedIds(trackedBatches), [trackedBatches]);
+
+  const clampPillPosition = (position: PillPosition): PillPosition => {
+    const rect = hiddenPillRef.current?.getBoundingClientRect();
+    const width = rect?.width || 0;
+    const height = rect?.height || 0;
+
+    return {
+      left: Math.min(
+        Math.max(position.left, PILL_VIEWPORT_MARGIN),
+        window.innerWidth - width - PILL_VIEWPORT_MARGIN,
+      ),
+      top: Math.min(
+        Math.max(position.top, PILL_VIEWPORT_MARGIN),
+        window.innerHeight - height - PILL_VIEWPORT_MARGIN,
+      ),
+    };
+  };
 
   useEffect(() => {
     const storedValue = window.sessionStorage.getItem(OUTBOUND_TRACKER_SESSION_STORAGE_KEY);
@@ -183,6 +221,25 @@ export default function OutboundTrackerOverlay() {
       window.sessionStorage.removeItem(OUTBOUND_TRACKER_SESSION_STORAGE_KEY);
       queueMicrotask(() => setHydrated(true));
       return;
+    }
+  }, []);
+
+  useEffect(() => {
+    const storedValue = window.sessionStorage.getItem(OUTBOUND_TRACKER_PILL_POSITION_KEY);
+
+    if (!storedValue) {
+      return;
+    }
+
+    try {
+      const parsedValue = JSON.parse(storedValue) as Partial<PillPosition>;
+
+      if (typeof parsedValue.left === 'number' && typeof parsedValue.top === 'number') {
+        const storedPosition = { left: parsedValue.left, top: parsedValue.top };
+        queueMicrotask(() => setPillPosition(storedPosition));
+      }
+    } catch {
+      window.sessionStorage.removeItem(OUTBOUND_TRACKER_PILL_POSITION_KEY);
     }
   }, []);
 
@@ -224,6 +281,7 @@ export default function OutboundTrackerOverlay() {
       }
 
       setOpen(true);
+      setHidden(false);
     };
 
     window.addEventListener(TRACKER_REGISTER_EVENT, handleRegister as EventListener);
@@ -330,7 +388,10 @@ export default function OutboundTrackerOverlay() {
     const attentionCount = (summary?.active || 0) + (summary?.failed || 0);
 
     if (attentionCount > previousAttentionCountRef.current) {
-      queueMicrotask(() => setOpen(true));
+      queueMicrotask(() => {
+        setOpen(true);
+        setHidden(false);
+      });
     }
 
     previousAttentionCountRef.current = attentionCount;
@@ -370,6 +431,72 @@ export default function OutboundTrackerOverlay() {
     }));
   };
 
+  const handleHiddenPillPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+
+    pillDragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
+      moved: false,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleHiddenPillPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const dragState = pillDragStateRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - dragState.startX;
+    const deltaY = event.clientY - dragState.startY;
+
+    if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+      dragState.moved = true;
+    }
+
+    setPillPosition(clampPillPosition({
+      left: dragState.startLeft + deltaX,
+      top: dragState.startTop + deltaY,
+    }));
+  };
+
+  const handleHiddenPillPointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+    const dragState = pillDragStateRef.current;
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    pillDragStateRef.current = null;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (!dragState.moved) {
+      setHidden(false);
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const nextPosition = clampPillPosition({ left: rect.left, top: rect.top });
+
+    setPillPosition(nextPosition);
+    window.sessionStorage.setItem(OUTBOUND_TRACKER_PILL_POSITION_KEY, JSON.stringify(nextPosition));
+  };
+
+  const handleHiddenPillKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      setHidden(false);
+    }
+  };
+
   const hasTrackedItems = trackedBatches.length > 0;
   const visibleSummary =
     summary ||
@@ -394,6 +521,69 @@ export default function OutboundTrackerOverlay() {
 
   if (!hasTrackedItems && !errorMessage) {
     return null;
+  }
+
+  if (hidden) {
+    return (
+      <Box
+        sx={{
+          position: 'fixed',
+          ...(pillPosition
+            ? { left: pillPosition.left, top: pillPosition.top }
+            : { right: { xs: 12, md: 16 }, bottom: { xs: 12, md: 16 } }),
+          zIndex: 1400,
+        }}
+      >
+        <Paper
+          ref={hiddenPillRef}
+          component="button"
+          elevation={0}
+          type="button"
+          aria-label="Tampilkan tracker outbound"
+          onPointerDown={handleHiddenPillPointerDown}
+          onPointerMove={handleHiddenPillPointerMove}
+          onPointerUp={handleHiddenPillPointerUp}
+          onPointerCancel={handleHiddenPillPointerUp}
+          onKeyDown={handleHiddenPillKeyDown}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.75,
+            px: 1.25,
+            py: 0.85,
+            border: `1px solid ${adminPalette.borderStrong}`,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.96)',
+            color: adminPalette.textPrimary,
+            boxShadow: '0 10px 26px rgba(2, 132, 199, 0.12)',
+            cursor: 'pointer',
+            font: 'inherit',
+            userSelect: 'none',
+            touchAction: 'none',
+            backdropFilter: 'blur(12px)',
+            '&:hover': {
+              backgroundColor: adminPalette.surfaceSoft,
+            },
+          }}
+        >
+          <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+            Outbound
+          </Typography>
+          <Chip
+            label={`${visibleSummary.active} aktif`}
+            size="small"
+            sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoftStrong, color: adminPalette.brandDark, fontWeight: 700 }}
+          />
+          {visibleSummary.failed ? (
+            <Chip
+              label={`${visibleSummary.failed} gagal`}
+              size="small"
+              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.dangerBg, color: adminPalette.dangerText, fontWeight: 700 }}
+            />
+          ) : null}
+        </Paper>
+      </Box>
+    );
   }
 
   return (
@@ -429,36 +619,53 @@ export default function OutboundTrackerOverlay() {
             backgroundColor: adminPalette.surfaceSoft,
           }}
         >
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ alignItems: 'center' }}>
-            <Typography
-              sx={{
-                fontSize: '0.68rem',
-                fontWeight: 700,
-                letterSpacing: '0.1em',
-                textTransform: 'uppercase',
-                color: adminPalette.textMuted,
-              }}
-            >
-              Outbound
-            </Typography>
-            <Chip
-              label={`${visibleSummary.active} aktif`}
-              size="small"
-              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoftStrong, color: adminPalette.brandDark, fontWeight: 700 }}
-            />
-            <Chip
-              label={`${visibleSummary.failed} gagal`}
-              size="small"
-              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.dangerBg, color: adminPalette.dangerText, fontWeight: 700 }}
-            />
-            <Chip
-              label={`ETA ${formatEta(visibleSummary.estimated_completion_seconds)}`}
-              size="small"
-              sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoft, color: adminPalette.textSecondary, fontWeight: 700 }}
-            />
-            <IconButton size="small" onClick={() => setOpen((current) => !current)} sx={{ ml: 'auto', color: adminPalette.textMuted }}>
-              {open ? <ExpandMoreRoundedIcon /> : <ExpandLessRoundedIcon />}
-            </IconButton>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ alignItems: 'center', flex: 1, minWidth: 0 }}>
+              <Typography
+                sx={{
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: adminPalette.textMuted,
+                }}
+              >
+                Outbound
+              </Typography>
+              <Chip
+                label={`${visibleSummary.active} aktif`}
+                size="small"
+                sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoftStrong, color: adminPalette.brandDark, fontWeight: 700 }}
+              />
+              <Chip
+                label={`${visibleSummary.failed} gagal`}
+                size="small"
+                sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.dangerBg, color: adminPalette.dangerText, fontWeight: 700 }}
+              />
+              <Chip
+                label={`ETA ${formatEta(visibleSummary.estimated_completion_seconds)}`}
+                size="small"
+                sx={{ height: 22, borderRadius: 1.75, backgroundColor: adminPalette.brandSoft, color: adminPalette.textSecondary, fontWeight: 700 }}
+              />
+            </Stack>
+            <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', flexShrink: 0 }}>
+              <IconButton
+                size="small"
+                aria-label={open ? 'Ciutkan tracker outbound' : 'Perluas tracker outbound'}
+                onClick={() => setOpen((current) => !current)}
+                sx={{ color: adminPalette.textMuted }}
+              >
+                {open ? <ExpandMoreRoundedIcon /> : <ExpandLessRoundedIcon />}
+              </IconButton>
+              <IconButton
+                size="small"
+                aria-label="Sembunyikan tracker outbound"
+                onClick={() => setHidden(true)}
+                sx={{ color: adminPalette.textMuted }}
+              >
+                <CloseRoundedIcon />
+              </IconButton>
+            </Stack>
           </Stack>
         </Box>
 
