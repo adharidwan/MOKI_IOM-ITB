@@ -30,9 +30,26 @@ export async function GET(request: Request): Promise<Response> {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let closed = false;
       let previousPayload = '';
 
+      const enqueue = (message: string) => {
+        if (closed) {
+          return;
+        }
+
+        try {
+          controller.enqueue(encoder.encode(message));
+        } catch {
+          closed = true;
+        }
+      };
+
       const sendUpdate = async () => {
+        if (closed) {
+          return;
+        }
+
         try {
           const payload = await getOutboundTrackerResponse(
             {
@@ -48,15 +65,11 @@ export async function GET(request: Request): Promise<Response> {
           }
 
           previousPayload = serializedPayload;
-          controller.enqueue(encoder.encode(toSseMessage(payload)));
+          enqueue(toSseMessage(payload));
         } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              toSseMessage({
-                error: error instanceof Error ? error.message : 'Gagal memuat pembaruan tracker outbound.',
-              }),
-            ),
-          );
+          enqueue(toSseMessage({
+            error: error instanceof Error ? error.message : 'Gagal memuat pembaruan tracker outbound.',
+          }));
         }
       };
 
@@ -66,7 +79,7 @@ export async function GET(request: Request): Promise<Response> {
       }, 2500);
 
       keepAliveId = setInterval(() => {
-        controller.enqueue(encoder.encode(': keep-alive\n\n'));
+        enqueue(': keep-alive\n\n');
       }, 15000);
     },
     cancel() {
