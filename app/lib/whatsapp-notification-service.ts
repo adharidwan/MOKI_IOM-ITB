@@ -280,6 +280,19 @@ export async function handleWhatsappNotificationRequest(
       );
     }
 
+    if (error instanceof NotificationRepositoryError && error.code === 'no_eligible_whatsapp_instance') {
+      return Response.json(
+        {
+          error: {
+            code: error.code,
+            message: error.message,
+            details: [],
+          },
+        },
+        { status: 503 },
+      );
+    }
+
     throw error;
   }
 }
