@@ -446,7 +446,7 @@ export default function ContentRecordingWorkspace({
 
       setDeleteTarget(null);
       setDrawerOpen(false);
-      setFlash({ severity: 'success', message: `Content record "${record.title}" berhasil dihapus.` });
+      setFlash({ severity: 'success', message: `Content record "${record.title || record.link}" berhasil dihapus.` });
       router.refresh();
     });
   }
@@ -633,10 +633,10 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Metadata</SectionLabel>
               <TextField
-                label="Title"
+                label="Title (optional)"
                 value={form.title}
                 onChange={(event) => setField('title', event.target.value)}
-                helperText="Required. For Instagram and X, add a short internal label manually."
+                helperText="Optional internal label for easier browsing."
                 fullWidth
                 disabled={isBusy}
               />

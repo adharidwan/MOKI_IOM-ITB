@@ -185,11 +185,11 @@ export async function exportScrapedContentAction(
     const { link, title, platform, uploadDate, sourcePostId, thumbnailUrl, caption, contentType } =
       await enrichCandidate(candidate);
 
-    if (!link || !title || !uploadDate) {
+    if (!link || !uploadDate) {
       failed.push({
         link,
         error:
-          "Data belum lengkap (wajib: title, link, upload_date). Ulangi scrape agar metadata lebih lengkap.",
+          "Data belum lengkap (wajib: link, upload_date). Ulangi scrape agar metadata lebih lengkap.",
       });
       continue;
     }

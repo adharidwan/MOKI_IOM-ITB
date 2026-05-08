@@ -77,10 +77,6 @@ async function normalizeInput(input: ContentRecordingFormState): Promise<Content
   const uploadDate = normalizeText(input.upload_date);
   const link = normalizeText(input.link);
 
-  if (!title) {
-    throw new Error('Title wajib diisi.');
-  }
-
   if (!PLATFORM_OPTIONS.includes(platform)) {
     throw new Error('Platform tidak valid.');
   }

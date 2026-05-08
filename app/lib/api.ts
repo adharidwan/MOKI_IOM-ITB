@@ -42,7 +42,7 @@ export interface CsvContactGroupSyncInput {
 
 export interface ContentRecordingInput {
   id?: string | null;
-  title: string;
+  title?: string | null;
   platform: ContentRecordingPlatform;
   caption?: string | null;
   description?: string | null;
@@ -916,8 +916,9 @@ export async function upsertContentRecording(
   input: ContentRecordingInput,
 ): Promise<ContentRecording> {
   const supabase = getSupabaseAdminClient();
+  const title = String(input.title || '').trim();
   const payload = {
-    title: input.title.trim(),
+    title: title || null,
     platform: input.platform,
     caption: input.caption || null,
     description: input.description || null,
