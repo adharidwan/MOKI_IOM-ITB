@@ -14,8 +14,8 @@ deploy:
   script:
     - docker system prune -f
     - cp /home/ppl/IF3250_K02_G10_IOM4/.env.local $CI_PROJECT_DIR/.env.local
-    - grep '^REDIS_PASSWORD=' $CI_PROJECT_DIR/.env.local
-    - grep '^REDIS_URL=' $CI_PROJECT_DIR/.env.local
+    - grep -q '^REDIS_PASSWORD=' $CI_PROJECT_DIR/.env.local
+    - grep -q '^REDIS_URL=' $CI_PROJECT_DIR/.env.local
     - docker compose --env-file $CI_PROJECT_DIR/.env.local -f $CI_PROJECT_DIR/docker-compose.yml down
     - docker compose --env-file $CI_PROJECT_DIR/.env.local -f $CI_PROJECT_DIR/docker-compose.yml build
         --build-arg NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
