@@ -1,6 +1,3 @@
-import Link from 'next/link';
-import { Button } from '@mui/material';
-
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import BlastComposer from '../components/BlastComposer';
 import { getPaginatedCsvContacts } from '../lib/api';
@@ -21,23 +18,6 @@ export default async function BlastMessagePage() {
       badge="Blast"
       title="Susun blast message"
       description="Pilih penerima, tulis pesan, dan tinjau hasil render tanpa keluar dari satu workspace."
-      actions={
-        <Link href="/group" style={{ textDecoration: 'none' }}>
-          <Button
-            variant="outlined"
-            size="large"
-            sx={{
-              minHeight: 52,
-              borderRadius: 2.5,
-              px: 3,
-              textTransform: 'none',
-              fontWeight: 700,
-            }}
-          >
-              Buka groups
-            </Button>
-          </Link>
-      }
     >
       <BlastComposer initialContacts={initialContacts} initialGroups={initialGroups} />
     </AdminFeatureShell>
