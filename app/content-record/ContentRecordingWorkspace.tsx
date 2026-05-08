@@ -979,8 +979,7 @@ export default function ContentRecordingWorkspace({
                         {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {!previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
-                        {instagramEmbedUrl ? <Chip size="small" label="IG embed" sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
-                        {xEmbedUrl && !previewUrls.length ? <Chip size="small" label="X preview" sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
+                        {xEmbedUrl && !previewUrls.length ? <Chip size="small" label="No X preview" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
                       </Stack>
                     </TableCell>
