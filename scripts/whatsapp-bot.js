@@ -61,6 +61,7 @@ const DEFAULT_DISPATCH_SETTINGS = {
 const DEFAULT_WHATSAPP_INSTANCE_ID = process.env.WHATSAPP_INSTANCE_ID || 'default';
 const DEFAULT_WHATSAPP_INSTANCE_LABEL = process.env.WHATSAPP_INSTANCE_LABEL || 'Primary WhatsApp';
 const HEARTBEAT_INTERVAL_MS = 15000;
+const WHATSAPP_INSTANCE_ID_PATTERN = /^[a-z0-9_-]+$/;
 
 function getRequiredEnv(name) {
   const value = process.env[name];
@@ -79,6 +80,16 @@ function getSupabaseClient() {
       autoRefreshToken: false,
     },
   });
+}
+
+function getSafeInstanceIdForAuth(instanceId) {
+  if (!WHATSAPP_INSTANCE_ID_PATTERN.test(instanceId)) {
+    throw new Error(
+      'WHATSAPP_INSTANCE_ID must contain only lowercase letters, numbers, hyphen, or underscore.',
+    );
+  }
+
+  return instanceId;
 }
 
 function createInstanceContext() {
@@ -892,12 +903,14 @@ async function main() {
     cachedDispatchSettingsFreshUntilMs: 0,
   };
   const instanceContext = createInstanceContext();
+  const authInstanceId = getSafeInstanceIdForAuth(instanceContext.instanceId);
   let selfChatId = null;
   let readyAtMs = null;
   let outboundWorkerResources = null;
 
   const client = new Client({
     authStrategy: new LocalAuth({
+      clientId: authInstanceId,
       dataPath: path.join(process.cwd(), '.wwebjs_auth'),
     }),
     puppeteer: {
