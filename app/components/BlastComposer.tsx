@@ -20,6 +20,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
@@ -290,7 +291,9 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const [contactSearch, setContactSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
   const [contactPage, setContactPage] = useState(initialContacts.page || 1);
+  const [contactPageSize, setContactPageSize] = useState(initialContacts.pageSize || 12);
   const [groupPage, setGroupPage] = useState(initialGroups.page || 1);
+  const [groupPageSize, setGroupPageSize] = useState(initialGroups.pageSize || 12);
   const [contactSortBy, setContactSortBy] = useState<ContactSortKey>('nama');
   const [contactSortDir, setContactSortDir] = useState<SortDirection>('asc');
   const [groupSortBy, setGroupSortBy] = useState<GroupSortKey>('memberCount');
@@ -372,7 +375,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
       try {
         const params = new URLSearchParams({
           page: String(contactPage),
-          pageSize: String(initialContacts.pageSize || 20),
+          pageSize: String(contactPageSize),
           sortBy: contactSortBy,
           sortDir: contactSortDir,
         });
@@ -412,7 +415,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     return () => {
       cancelled = true;
     };
-  }, [contactPage, contactSearch, contactSortBy, contactSortDir, initialContacts.pageSize, selectedSource]);
+  }, [contactPage, contactPageSize, contactSearch, contactSortBy, contactSortDir, selectedSource]);
 
   useEffect(() => {
     if (selectedSource !== 'group') {
@@ -427,7 +430,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
       try {
         const params = new URLSearchParams({
           page: String(groupPage),
-          pageSize: String(initialGroups.pageSize || 20),
+          pageSize: String(groupPageSize),
           sortBy: groupSortBy,
           sortDir: groupSortDir,
         });
@@ -467,7 +470,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     return () => {
       cancelled = true;
     };
-  }, [groupPage, groupSearch, groupSortBy, groupSortDir, initialGroups.pageSize, selectedSource]);
+  }, [groupPage, groupPageSize, groupSearch, groupSortBy, groupSortDir, selectedSource]);
 
   useEffect(() => {
     if (!selectedGroups.length) {
@@ -986,19 +989,19 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   </Table>
                 </TableContainer>
 
-                <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1} alignItems={{ xs: 'flex-start', md: 'center' }}>
-                  <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                    Halaman {contactDirectory.page} dari {contactDirectory.totalPages}{loadingContacts ? ' • memuat...' : ''}
-                  </Typography>
-                  <Stack direction="row" spacing={1}>
-                    <Button variant="outlined" onClick={() => setContactPage((previous) => Math.max(1, previous - 1))} disabled={contactDirectory.page <= 1 || loadingContacts} sx={QUIET_BUTTON_SX}>
-                      Sebelumnya
-                    </Button>
-                    <Button variant="outlined" onClick={() => setContactPage((previous) => Math.min(contactDirectory.totalPages, previous + 1))} disabled={contactDirectory.page >= contactDirectory.totalPages || loadingContacts} sx={QUIET_BUTTON_SX}>
-                      Berikutnya
-                    </Button>
-                  </Stack>
-                </Stack>
+                <TablePagination
+                  component="div"
+                  count={contactDirectory.total}
+                  page={Math.max(0, contactDirectory.page - 1)}
+                  rowsPerPage={contactDirectory.pageSize}
+                  rowsPerPageOptions={[10, 20, 50, 100]}
+                  sx={{ opacity: loadingContacts ? 0.65 : 1 }}
+                  onPageChange={(_, nextPage) => setContactPage(nextPage + 1)}
+                  onRowsPerPageChange={(event) => {
+                    setContactPageSize(Number(event.target.value));
+                    setContactPage(1);
+                  }}
+                />
               </Stack>
             ) : null}
 
@@ -1089,19 +1092,19 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                       </Table>
                     </TableContainer>
 
-                    <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1} alignItems={{ xs: 'flex-start', md: 'center' }}>
-                      <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                        Halaman {groupDirectory.page} dari {groupDirectory.totalPages}{loadingGroups ? ' • memuat...' : ''}
-                      </Typography>
-                      <Stack direction="row" spacing={1}>
-                        <Button variant="outlined" onClick={() => setGroupPage((previous) => Math.max(1, previous - 1))} disabled={groupDirectory.page <= 1 || loadingGroups} sx={QUIET_BUTTON_SX}>
-                          Sebelumnya
-                        </Button>
-                        <Button variant="outlined" onClick={() => setGroupPage((previous) => Math.min(groupDirectory.totalPages, previous + 1))} disabled={groupDirectory.page >= groupDirectory.totalPages || loadingGroups} sx={QUIET_BUTTON_SX}>
-                          Berikutnya
-                        </Button>
-                      </Stack>
-                    </Stack>
+                    <TablePagination
+                      component="div"
+                      count={groupDirectory.total}
+                      page={Math.max(0, groupDirectory.page - 1)}
+                      rowsPerPage={groupDirectory.pageSize}
+                      rowsPerPageOptions={[10, 20, 50, 100]}
+                      sx={{ opacity: loadingGroups ? 0.65 : 1 }}
+                      onPageChange={(_, nextPage) => setGroupPage(nextPage + 1)}
+                      onRowsPerPageChange={(event) => {
+                        setGroupPageSize(Number(event.target.value));
+                        setGroupPage(1);
+                      }}
+                    />
                   </>
                 )}
               </Stack>

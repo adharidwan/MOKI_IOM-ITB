@@ -8,8 +8,8 @@ export const revalidate = 0;
 
 export default async function BlastMessagePage() {
   const [initialContacts, initialGroups] = await Promise.all([
-    getPaginatedCsvContacts({ page: 1, pageSize: 12, sortBy: 'nama', sortDir: 'asc' }),
-    getPaginatedContactGroups({ page: 1, pageSize: 12, sortBy: 'memberCount', sortDir: 'desc' }),
+    getPaginatedCsvContacts({ page: 1, pageSize: 20, sortBy: 'nama', sortDir: 'asc' }),
+    getPaginatedContactGroups({ page: 1, pageSize: 20, sortBy: 'memberCount', sortDir: 'desc' }),
   ]);
 
   return (

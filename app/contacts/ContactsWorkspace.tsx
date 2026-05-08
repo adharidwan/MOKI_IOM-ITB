@@ -42,6 +42,7 @@ interface ContactsWorkspaceProps {
   contacts: CsvContact[];
   totalCount: number;
   currentPage: number;
+  pageSize: number;
   totalPages: number;
   currentSearch: string;
   currentGroupName: string;
@@ -76,6 +77,7 @@ export default function ContactsWorkspace({
   contacts,
   totalCount,
   currentPage,
+  pageSize,
   totalPages,
   currentSearch,
   currentGroupName,
@@ -165,6 +167,7 @@ export default function ContactsWorkspace({
         contacts={contacts}
         totalCount={totalCount}
         currentPage={currentPage}
+        pageSize={pageSize}
         totalPages={totalPages}
         currentSearch={currentSearch}
         currentGroupName={currentGroupName}

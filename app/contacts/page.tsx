@@ -14,6 +14,7 @@ export default async function ContactsPage({
 }) {
   const resolvedSearchParams = await searchParams;
   const page = Number(resolvedSearchParams.page) || 1;
+  const pageSize = Number(resolvedSearchParams.pageSize) || 20;
   const search = String(resolvedSearchParams.search || '');
   const groupName = String(resolvedSearchParams.groupName || '');
   const rawSortBy = String(resolvedSearchParams.sortBy || 'imported_at');
@@ -21,7 +22,7 @@ export default async function ContactsPage({
   const sortBy = rawSortBy === 'nama' || rawSortBy === 'no_telp' || rawSortBy === 'status' ? rawSortBy : 'imported_at';
   const sortDir = rawSortDir === 'asc' ? 'asc' : 'desc';
   const [contactsPage, overview, groupsPage] = await Promise.all([
-    getPaginatedCsvContacts({ page, pageSize: 20, search, groupName, sortBy, sortDir }),
+    getPaginatedCsvContacts({ page, pageSize, search, groupName, sortBy, sortDir }),
     getCsvContactsOverview(),
     getPaginatedContactGroups({ page: 1, pageSize: 100, search: '' }),
   ]);
@@ -41,6 +42,7 @@ export default async function ContactsPage({
         contacts={contactsPage.items}
         totalCount={contactsPage.total}
         currentPage={contactsPage.page}
+        pageSize={contactsPage.pageSize}
         totalPages={contactsPage.totalPages}
         currentSearch={search}
         currentGroupName={groupName}

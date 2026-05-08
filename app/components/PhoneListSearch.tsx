@@ -28,6 +28,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
@@ -47,6 +48,7 @@ interface PhoneListTableProps {
   contacts: CsvContact[];
   totalCount: number;
   currentPage: number;
+  pageSize: number;
   totalPages: number;
   currentSearch: string;
   currentGroupName: string;
@@ -136,6 +138,7 @@ export default function PhoneListTable({
   contacts,
   totalCount,
   currentPage,
+  pageSize,
   totalPages,
   currentSearch,
   currentGroupName,
@@ -204,9 +207,10 @@ export default function PhoneListTable({
     setSelectedIds(contacts.map((contact) => contact.id));
   };
 
-  const goToPage = (nextPage: number) => {
+  const updatePagination = (nextPage: number, nextPageSize = pageSize) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('page', String(nextPage));
+    params.set('pageSize', String(nextPageSize));
     const nextQuery = params.toString();
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
   };
@@ -543,35 +547,15 @@ export default function PhoneListTable({
               </Table>
             </TableContainer>
 
-            <Stack
-              direction={{ xs: 'column', md: 'row' }}
-              justifyContent="space-between"
-              spacing={1.25}
-              alignItems={{ xs: 'flex-start', md: 'center' }}
-              sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-            >
-              <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                Menampilkan {contacts.length} kontak.
-              </Typography>
-              <Stack direction="row" spacing={1}>
-                <Button
-                  variant="outlined"
-                  onClick={() => goToPage(Math.max(1, currentPage - 1))}
-                  disabled={currentPage <= 1}
-                  sx={QUIET_BUTTON_SX}
-                >
-                  Sebelumnya
-                </Button>
-                <Button
-                  variant="outlined"
-                  onClick={() => goToPage(Math.min(totalPages, currentPage + 1))}
-                  disabled={currentPage >= totalPages}
-                  sx={QUIET_BUTTON_SX}
-                >
-                  Berikutnya
-                </Button>
-              </Stack>
-            </Stack>
+            <TablePagination
+              component="div"
+              count={totalCount}
+              page={Math.max(0, currentPage - 1)}
+              rowsPerPage={pageSize}
+              rowsPerPageOptions={[10, 20, 50, 100]}
+              onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
+              onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
+            />
           </>
         )}
       </Paper>

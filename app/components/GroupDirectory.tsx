@@ -24,6 +24,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
@@ -530,49 +531,30 @@ export default function GroupDirectory({
                 </Table>
               </TableContainer>
 
-              <Stack
-                direction={{ xs: 'column', md: 'row' }}
-                justifyContent="space-between"
-                spacing={1.25}
-                alignItems={{ xs: 'flex-start', md: 'center' }}
-                sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-              >
-                <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                  Menampilkan {groups.items.length} grup pada halaman ini.
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={() =>
-                      updateQuery({
-                        page: String(Math.max(1, groups.page - 1)),
-                        group: null,
-                        memberPage: null,
-                        memberSearch: null,
-                      })
-                    }
-                    disabled={groups.page <= 1}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Sebelumnya
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() =>
-                      updateQuery({
-                        page: String(Math.min(groups.totalPages, groups.page + 1)),
-                        group: null,
-                        memberPage: null,
-                        memberSearch: null,
-                      })
-                    }
-                    disabled={groups.page >= groups.totalPages}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Berikutnya
-                  </Button>
-                </Stack>
-              </Stack>
+              <TablePagination
+                component="div"
+                count={groups.total}
+                page={Math.max(0, groups.page - 1)}
+                rowsPerPage={groups.pageSize}
+                rowsPerPageOptions={[10, 20, 50, 100]}
+                onPageChange={(_, nextPage) =>
+                  updateQuery({
+                    page: String(nextPage + 1),
+                    group: null,
+                    memberPage: null,
+                    memberSearch: null,
+                  })
+                }
+                onRowsPerPageChange={(event) =>
+                  updateQuery({
+                    pageSize: event.target.value,
+                    page: '1',
+                    group: null,
+                    memberPage: null,
+                    memberSearch: null,
+                  })
+                }
+              />
             </>
           )}
         </Paper>
@@ -733,35 +715,15 @@ export default function GroupDirectory({
                 </Table>
               </TableContainer>
 
-              <Stack
-                direction={{ xs: 'column', md: 'row' }}
-                justifyContent="space-between"
-                spacing={1.25}
-                alignItems={{ xs: 'flex-start', md: 'center' }}
-                sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-              >
-                <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                  Menampilkan {members.items.length} anggota pada halaman ini.
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={() => updateQuery({ memberPage: String(Math.max(1, members.page - 1)) })}
-                    disabled={members.page <= 1}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Sebelumnya
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() => updateQuery({ memberPage: String(Math.min(members.totalPages, members.page + 1)) })}
-                    disabled={members.page >= members.totalPages}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Berikutnya
-                  </Button>
-                </Stack>
-              </Stack>
+              <TablePagination
+                component="div"
+                count={members.total}
+                page={Math.max(0, members.page - 1)}
+                rowsPerPage={members.pageSize}
+                rowsPerPageOptions={[10, 20, 50, 100]}
+                onPageChange={(_, nextPage) => updateQuery({ memberPage: String(nextPage + 1) })}
+                onRowsPerPageChange={(event) => updateQuery({ memberPageSize: event.target.value, memberPage: '1' })}
+              />
             </>
           )}
         </Paper>
