@@ -2,7 +2,11 @@ import 'server-only';
 
 import { getSupabaseAdminClient } from './supabase-server';
 import { readWhatsappInstanceRuntime } from './whatsapp-ops-runtime';
-import type { WhatsappOpsRepository } from './whatsapp-ops-service';
+import type {
+  CreateWhatsappInstanceInput,
+  UpdateWhatsappInstanceInput,
+  WhatsappOpsRepository,
+} from './whatsapp-ops-service';
 import {
   type OutboundMessageStatus,
   type WhatsappInstanceEventRecord,
@@ -88,6 +92,7 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
       const { data, error } = await supabase
         .from('whatsapp_instances')
         .select('*')
+        .is('retired_at', null)
         .order('label', { ascending: true });
 
       if (error) {
@@ -95,6 +100,101 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
       }
 
       return (data as WhatsappInstanceRecord[]) || [];
+    },
+
+    async createInstance(input: CreateWhatsappInstanceInput): Promise<WhatsappInstanceRecord> {
+      const now = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('whatsapp_instances')
+        .insert({
+          id: input.id,
+          label: input.label,
+          is_enabled: input.is_enabled ?? true,
+          status: 'starting',
+          updated_at: now,
+        })
+        .select('*')
+        .single();
+
+      if (error) {
+        if (error.code === '23505') {
+          throw new Error('WhatsApp instance already exists.');
+        }
+
+        throw new Error(`Failed to create WhatsApp instance: ${error.message}`);
+      }
+
+      return data as WhatsappInstanceRecord;
+    },
+
+    async updateInstance(
+      instanceId: string,
+      input: UpdateWhatsappInstanceInput,
+    ): Promise<WhatsappInstanceRecord> {
+      const patch: Partial<Pick<WhatsappInstanceRecord, 'label' | 'is_enabled' | 'retired_at' | 'updated_at'>> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (input.label !== undefined) {
+        patch.label = input.label;
+      }
+
+      if (input.is_enabled !== undefined) {
+        patch.is_enabled = input.is_enabled;
+        if (input.is_enabled) {
+          patch.retired_at = null;
+        }
+      }
+
+      if (input.retired_at !== undefined) {
+        patch.retired_at = input.retired_at;
+      }
+
+      const { data, error } = await supabase
+        .from('whatsapp_instances')
+        .update(patch)
+        .eq('id', instanceId)
+        .select('*')
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Failed to update WhatsApp instance: ${error.message}`);
+      }
+
+      if (!data) {
+        throw new Error('WhatsApp instance not found.');
+      }
+
+      return data as WhatsappInstanceRecord;
+    },
+
+    async deleteInstance(instanceId: string): Promise<void> {
+      const outboundMessageCount = await countOutboundMessages(supabase, { whatsappInstanceId: instanceId });
+
+      if (outboundMessageCount > 0) {
+        throw new Error('WhatsApp instance still has related delivery history and cannot be removed completely.');
+      }
+
+      const { error } = await supabase
+        .from('whatsapp_instances')
+        .delete()
+        .eq('id', instanceId);
+
+      if (error) {
+        if (error.code === '23503') {
+          throw new Error('WhatsApp instance still has related delivery history and cannot be removed completely.');
+        }
+
+        throw new Error(`Failed to delete WhatsApp instance: ${error.message}`);
+      }
+    },
+
+    async assertInstanceCanBeDeleted(instanceId: string): Promise<void> {
+      const outboundMessageCount = await countOutboundMessages(supabase, { whatsappInstanceId: instanceId });
+
+      if (outboundMessageCount > 0) {
+        throw new Error('WhatsApp instance still has related delivery history and cannot be removed completely.');
+      }
     },
 
     async getInstanceRuntime(instanceId: string) {
