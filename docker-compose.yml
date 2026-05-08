@@ -40,6 +40,11 @@ services:
       - "3000:3000"
     env_file:
       - .env.local
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      WHATSAPP_ORCHESTRATOR_ENABLED: ${WHATSAPP_ORCHESTRATOR_ENABLED:-false}
+      WHATSAPP_ORCHESTRATOR_BASE_URL: ${WHATSAPP_ORCHESTRATOR_BASE_URL:-http://orchestrator:3099}
+      WHATSAPP_ORCHESTRATOR_TOKEN: ${WHATSAPP_ORCHESTRATOR_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -53,9 +58,35 @@ services:
     env_file:
       - .env.local
     environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       WHATSAPP_CHROMIUM_PATH: /usr/bin/chromium
     volumes:
       - bot_auth:/app/.wwebjs_auth
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    image: iom4-orchestrator:latest
+    env_file:
+      - .env.local
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      WHATSAPP_ORCHESTRATOR_PORT: 3099
+      WHATSAPP_ORCHESTRATOR_MAX_CONTAINERS: ${WHATSAPP_ORCHESTRATOR_MAX_CONTAINERS:-3}
+      WHATSAPP_ORCHESTRATOR_START_COOLDOWN_MS: ${WHATSAPP_ORCHESTRATOR_START_COOLDOWN_MS:-30000}
+      WHATSAPP_ORCHESTRATOR_RESTART_COOLDOWN_MS: ${WHATSAPP_ORCHESTRATOR_RESTART_COOLDOWN_MS:-60000}
+      WHATSAPP_BOT_IMAGE: ${WHATSAPP_BOT_IMAGE:-iom4-bot:latest}
+      WHATSAPP_BOT_NETWORK: ${WHATSAPP_BOT_NETWORK:-if3250_k02_g10_iom4_default}
+      WHATSAPP_BOT_MEMORY_LIMIT: ${WHATSAPP_BOT_MEMORY_LIMIT:-768m}
+      WHATSAPP_BOT_CPUS: ${WHATSAPP_BOT_CPUS:-1}
+      DOCKER_SOCKET_PATH: /var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       redis:
         condition: service_healthy
