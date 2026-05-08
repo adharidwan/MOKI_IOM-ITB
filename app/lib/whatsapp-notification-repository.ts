@@ -19,6 +19,7 @@ import {
   reserveApiNotificationIdempotency,
 } from './outbound-dispatch-redis';
 import { buildOutboundDispatchJobData } from './outbound-dispatch-job';
+import { readWhatsappInstanceRuntime, WHATSAPP_RUNTIME_TTL_SECONDS } from './whatsapp-ops-runtime';
 import { getSupabaseAdminClient } from './supabase-server';
 import {
   API_NOTIFICATION_PRIORITY,
@@ -80,6 +81,11 @@ export interface BlastDispatchResult {
   alreadyAcceptedCount: number;
   failedCount: number;
   trackedMessageIds: string[];
+}
+
+interface EligibleWhatsappInstance {
+  id: string;
+  queuedCount: number;
 }
 
 function normalizeList(values: string[] | null | undefined): string[] {
@@ -195,6 +201,7 @@ async function createOrReuseBlastOutboundMessage(
     requestId: string;
     recipientPhoneNumber: string;
     content: string;
+    whatsappInstanceId: string;
   },
 ): Promise<{
   outboundMessage: OutboundMessageRecord;
@@ -210,7 +217,7 @@ async function createOrReuseBlastOutboundMessage(
     source_type: 'blast',
     source_id: buildBlastSourceId(input.requestId, input.recipientPhoneNumber),
     ticket_id: null,
-    whatsapp_instance_id: DEFAULT_WHATSAPP_INSTANCE_ID,
+    whatsapp_instance_id: input.whatsappInstanceId,
     priority: BLAST_PRIORITY,
     recipient_phone_number: input.recipientPhoneNumber,
     recipient_chat_id: null,
@@ -275,6 +282,96 @@ async function createOrReuseBlastOutboundMessage(
   };
 }
 
+function isRuntimeHeartbeatStale(lastHeartbeatAt: string | null, nowMs = Date.now()): boolean {
+  if (!lastHeartbeatAt) {
+    return true;
+  }
+
+  const lastHeartbeatMs = Date.parse(lastHeartbeatAt);
+  if (!Number.isFinite(lastHeartbeatMs)) {
+    return true;
+  }
+
+  return nowMs - lastHeartbeatMs > WHATSAPP_RUNTIME_TTL_SECONDS * 1000;
+}
+
+async function countQueuedOutboundMessagesForInstance(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  whatsappInstanceId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('outbound_messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('whatsapp_instance_id', whatsappInstanceId)
+    .in('delivery_status', ['queued', 'retrying']);
+
+  if (error) {
+    throw toRepositoryError('Failed to load WhatsApp instance queue pressure.', error);
+  }
+
+  return count || 0;
+}
+
+async function listEligibleWhatsappInstances(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+): Promise<EligibleWhatsappInstance[]> {
+  const { data, error } = await supabase
+    .from('whatsapp_instances')
+    .select('*')
+    .eq('is_enabled', true)
+    .order('id', { ascending: true });
+
+  if (error) {
+    throw toRepositoryError('Failed to load WhatsApp instances for outbound assignment.', error);
+  }
+
+  const instances = ((data as WhatsappInstanceRecord[]) || []);
+  const eligibleInstances = await Promise.all(
+    instances.map(async (instance) => {
+      const runtime = await readWhatsappInstanceRuntime(instance.id);
+
+      if (
+        !runtime ||
+        runtime.status !== 'ready' ||
+        runtime.has_worker_conflict ||
+        isRuntimeHeartbeatStale(runtime.last_heartbeat_at)
+      ) {
+        return null;
+      }
+
+      return {
+        id: instance.id,
+        queuedCount: await countQueuedOutboundMessagesForInstance(supabase, instance.id),
+      };
+    }),
+  );
+
+  return eligibleInstances
+    .filter((instance): instance is EligibleWhatsappInstance => Boolean(instance))
+    .sort((left, right) => {
+      if (left.queuedCount !== right.queuedCount) {
+        return left.queuedCount - right.queuedCount;
+      }
+
+      return left.id.localeCompare(right.id);
+    });
+}
+
+async function selectWhatsappInstanceForOutbound(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+): Promise<string> {
+  const eligibleInstances = await listEligibleWhatsappInstances(supabase);
+
+  if (!eligibleInstances.length) {
+    throw new NotificationRepositoryError(
+      'No ready enabled WhatsApp instance is available.',
+      'no_eligible_whatsapp_instance',
+    );
+  }
+
+  return eligibleInstances[0].id;
+}
+
 async function dispatchBlastMessages(
   recipientPhoneNumbers: string[],
   content: string,
@@ -327,13 +424,23 @@ async function dispatchPersonalizedBlastMessages(
   let alreadyAcceptedCount = 0;
   let failedCount = 0;
   const trackedMessageIds: string[] = [];
+  const eligibleInstances = await listEligibleWhatsappInstances(supabase);
 
-  for (const recipient of normalizedRecipients) {
+  if (!eligibleInstances.length) {
+    throw new NotificationRepositoryError(
+      'No ready enabled WhatsApp instance is available.',
+      'no_eligible_whatsapp_instance',
+    );
+  }
+
+  for (const [index, recipient] of normalizedRecipients.entries()) {
+    const whatsappInstanceId = eligibleInstances[index % eligibleInstances.length].id;
     const { outboundMessage, shouldEnqueue, alreadyAccepted } =
       await createOrReuseBlastOutboundMessage(supabase, {
         requestId,
         recipientPhoneNumber: recipient.recipientPhoneNumber,
         content: recipient.content,
+        whatsappInstanceId,
       });
 
     trackedMessageIds.push(outboundMessage.id);
@@ -433,6 +540,7 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
       input: CreateOutboundMessageInput,
     ): Promise<OutboundMessageRecord> {
       await getOrCreateDefaultWhatsappInstance();
+      const whatsappInstanceId = await selectWhatsappInstanceForOutbound(supabase);
       const outboundMessage: OutboundMessageRecord = {
         id: crypto.randomUUID(),
         client_id: input.clientId,
@@ -441,7 +549,7 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         source_type: 'api_notification',
         source_id: buildApiNotificationSourceId(input.clientId, input.idempotencyKey),
         ticket_id: null,
-        whatsapp_instance_id: DEFAULT_WHATSAPP_INSTANCE_ID,
+        whatsapp_instance_id: whatsappInstanceId,
         priority: API_NOTIFICATION_PRIORITY,
         recipient_phone_number: input.recipientPhoneNumber,
         recipient_chat_id: null,

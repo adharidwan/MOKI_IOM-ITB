@@ -1,0 +1,9 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY orchestrator ./orchestrator
+
+EXPOSE 3099
+CMD ["node", "orchestrator/server.js"]

@@ -40,6 +40,7 @@ import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 
 import type {
   WhatsappDashboardOverview,
+  WhatsappContainerState,
   WhatsappInstanceEventRecord,
   WhatsappInstanceStatus,
   WhatsappInstanceSummary,
@@ -61,6 +62,7 @@ interface WhatsappDashboardProps {
 
 type OutboundFilter = 'all' | 'queued' | 'retrying' | 'failed' | 'sent';
 type DetailTab = 'ringkasan' | 'aktivitas' | 'pengiriman' | 'teknis';
+type DeleteWhatsappInstanceMode = 'stop_only' | 'remove_runtime_resources' | 'delete_db_row';
 
 interface GroupedEvent {
   id: string;
@@ -114,6 +116,16 @@ const OUTBOUND_SOURCE_COPY = {
   api_notification: { label: 'External API', chipLabel: 'External' },
   blast: { label: 'Blast', chipLabel: 'Blast' },
 } as const;
+
+const CONTAINER_STATUS_COPY: Record<WhatsappContainerState['status'], { label: string; color: 'success' | 'warning' | 'error' | 'info' | 'default' }> = {
+  not_configured: { label: 'Orchestrator belum dikonfigurasi', color: 'default' },
+  not_found: { label: 'Container belum ada', color: 'warning' },
+  created: { label: 'Container dibuat', color: 'info' },
+  running: { label: 'Container berjalan', color: 'success' },
+  stopped: { label: 'Container berhenti', color: 'default' },
+  restarting: { label: 'Container restart', color: 'warning' },
+  error: { label: 'Container error', color: 'error' },
+};
 
 function formatDateTime(value: string | null): string {
   if (!value) {
@@ -188,6 +200,10 @@ function isCriticalInstance(instance: WhatsappInstanceSummary): boolean {
 }
 
 function getPrimaryActionLabel(instance: WhatsappInstanceSummary): string {
+  if (!instance.runtime) {
+    return 'Worker belum aktif';
+  }
+
   if (instance.derived_status === 'qr_required' || instance.derived_status === 'auth_failed') {
     return 'Lihat QR';
   }
@@ -197,6 +213,18 @@ function getPrimaryActionLabel(instance: WhatsappInstanceSummary): string {
   }
 
   return 'Buka Detail';
+}
+
+function getInstanceOperationalNote(instance: WhatsappInstanceSummary): string {
+  if (!instance.runtime) {
+    return 'Konfigurasi sudah dibuat, tetapi belum ada worker yang aktif untuk instance ini.';
+  }
+
+  if (!instance.instance.is_enabled) {
+    return 'Assignment dinonaktifkan: blast/API baru tidak akan memakai instance ini.';
+  }
+
+  return getStatusPresentation(instance.derived_status).shortAction;
 }
 
 function getEventCopy(event: WhatsappInstanceEventRecord): { title: string; description: string } {
@@ -286,8 +314,8 @@ function updateOverviewWithDetail(
   };
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { cache: 'no-store' });
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { cache: 'no-store', ...init });
 
   if (!response.ok) {
     throw new Error(`Request failed for ${url}: ${response.status}`);
@@ -397,6 +425,9 @@ export default function WhatsappDashboard({
   const [eventsUpdatedAt, setEventsUpdatedAt] = useState(initialRenderedAt);
   const [outboundUpdatedAt, setOutboundUpdatedAt] = useState(initialRenderedAt);
   const [eventsInstanceId, setEventsInstanceId] = useState<string | null>(initialSelectedInstanceId);
+  const [adminActionBusy, setAdminActionBusy] = useState(false);
+  const [containerState, setContainerState] = useState<WhatsappContainerState | null>(null);
+  const [containerActionBusy, setContainerActionBusy] = useState(false);
 
   useEffect(() => {
     if (!selectedInstanceId) {
@@ -630,6 +661,48 @@ export default function WhatsappDashboard({
     setOutboundUpdatedAt(new Date().toISOString());
   };
 
+  const refreshContainerState = async (instanceId = selectedInstanceId) => {
+    if (!instanceId) {
+      return;
+    }
+
+    const nextContainerState = await fetchJson<WhatsappContainerState>(
+      `/api/admin/whatsapp/instances/${instanceId}/container`,
+    );
+    setContainerState(nextContainerState);
+  };
+
+  const runContainerAction = async (action: 'start' | 'stop' | 'restart') => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    const actionCopy = {
+      start: 'start worker container untuk instance ini',
+      stop: 'stop worker container ini. Assignment blast/API tidak otomatis dinonaktifkan',
+      restart: 'restart worker container ini. Session/auth volume tetap dipertahankan',
+    }[action];
+
+    if (!window.confirm(`Lanjutkan untuk ${actionCopy}?`)) {
+      return;
+    }
+
+    try {
+      setContainerActionBusy(true);
+      const nextContainerState = await fetchJson<WhatsappContainerState>(
+        `/api/admin/whatsapp/instances/${selectedDetail.instance.id}/${action}`,
+        { method: 'POST' },
+      );
+      setContainerState(nextContainerState);
+      setErrorMessage(null);
+      await refreshSelectedDetail(selectedDetail.instance.id);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal menjalankan aksi container worker.');
+    } finally {
+      setContainerActionBusy(false);
+    }
+  };
+
   const handleManualRefresh = async () => {
     try {
       await refreshOverview();
@@ -648,11 +721,160 @@ export default function WhatsappDashboard({
     }
   };
 
+  const handleCreateInstance = async () => {
+    const id = window.prompt('Masukkan instance ID baru, contoh: iom-wa-2');
+    if (!id) {
+      return;
+    }
+
+    const label = window.prompt('Masukkan label perangkat WhatsApp', id);
+    if (!label) {
+      return;
+    }
+
+    try {
+      setAdminActionBusy(true);
+      const createdInstance = await fetchJson<WhatsappInstanceSummary['instance']>('/api/admin/whatsapp/instances', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: id.trim(), label: label.trim(), is_enabled: true }),
+      });
+
+      await refreshOverview();
+      setSelectedInstanceId(createdInstance.id);
+      await refreshSelectedDetail(createdInstance.id);
+      setDetailTab('teknis');
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal membuat instance WhatsApp.');
+    } finally {
+      setAdminActionBusy(false);
+    }
+  };
+
+  const handleToggleSelectedInstanceEnabled = async () => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    const nextEnabled = !selectedDetail.instance.is_enabled;
+    try {
+      setAdminActionBusy(true);
+      const updatedInstance = await fetchJson<WhatsappInstanceSummary['instance']>(
+        `/api/admin/whatsapp/instances/${selectedDetail.instance.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ is_enabled: nextEnabled }),
+        },
+      );
+
+      const nextDetail = {
+        ...selectedDetail,
+        instance: updatedInstance,
+      };
+      setSelectedDetail(nextDetail);
+      setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, nextDetail));
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal mengubah status instance WhatsApp.');
+    } finally {
+      setAdminActionBusy(false);
+    }
+  };
+
+  const handleRenameSelectedInstance = async () => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    const label = window.prompt('Masukkan label baru untuk instance ini', selectedDetail.instance.label);
+    if (!label || label.trim() === selectedDetail.instance.label) {
+      return;
+    }
+
+    try {
+      setAdminActionBusy(true);
+      const updatedInstance = await fetchJson<WhatsappInstanceSummary['instance']>(
+        `/api/admin/whatsapp/instances/${selectedDetail.instance.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ label: label.trim() }),
+        },
+      );
+
+      const nextDetail = {
+        ...selectedDetail,
+        instance: updatedInstance,
+      };
+      setSelectedDetail(nextDetail);
+      setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, nextDetail));
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal mengganti label instance WhatsApp.');
+    } finally {
+      setAdminActionBusy(false);
+    }
+  };
+
+  const handleDeleteSelectedInstance = async (mode: DeleteWhatsappInstanceMode) => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    const instance = selectedDetail.instance;
+    const copy = {
+      stop_only: 'disable assignment dan stop worker untuk instance ini? Data DB dan auth volume tetap disimpan.',
+      remove_runtime_resources: 'retire instance dan hapus runtime resources? Container dan auth volume akan dihapus, tetapi row DB dan histori tetap disimpan.',
+      delete_db_row: 'hapus row DB instance ini? Ini hanya cocok untuk instance test yang belum punya histori pengiriman.',
+    }[mode];
+
+    if (!window.confirm(`Lanjutkan untuk ${copy}`)) {
+      return;
+    }
+
+    if (mode === 'delete_db_row') {
+      const confirmation = window.prompt(`Ketik ${instance.id} untuk konfirmasi hapus permanen.`);
+      if (confirmation !== instance.id) {
+        return;
+      }
+    }
+
+    try {
+      setAdminActionBusy(true);
+      setContainerActionBusy(true);
+      const response = await fetchJson<{ container: WhatsappContainerState }>(
+        `/api/admin/whatsapp/instances/${instance.id}`,
+        {
+          method: 'DELETE',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        },
+      );
+
+      setContainerState(response.container);
+      await refreshOverview();
+
+      if (mode === 'stop_only') {
+        await refreshSelectedDetail(instance.id);
+      }
+
+      setErrorMessage(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Gagal menghapus instance WhatsApp.');
+    } finally {
+      setAdminActionBusy(false);
+      setContainerActionBusy(false);
+    }
+  };
+
   const selectInstance = (instanceSummary: WhatsappInstanceSummary) => {
     setSelectedInstanceId(instanceSummary.instance.id);
     setSelectedDetail(instanceSummary);
     setShowQr(instanceSummary.derived_status === 'qr_required' || instanceSummary.derived_status === 'auth_failed');
     setShowAllEvents(false);
+    setContainerState(null);
     setDetailTab('ringkasan');
     void refreshSelectedDetail(instanceSummary.instance.id).catch((error) => {
       setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat detail perangkat.');
@@ -669,6 +891,9 @@ export default function WhatsappDashboard({
           Pantau koneksi perangkat, lihat masalah yang perlu ditangani, dan buka detail percakapan atau antrean pesan
           dengan cepat.
         </Typography>
+        <Button sx={{ mt: 2 }} variant="contained" onClick={handleCreateInstance} disabled={adminActionBusy}>
+          Tambah Instance WhatsApp
+        </Button>
       </Box>
 
       <Paper
@@ -920,7 +1145,15 @@ export default function WhatsappDashboard({
                                 Aktivitas terakhir {formatAgeWithNow(getLastActivityAt(instance), overviewNowMs)}
                               </Typography>
                             </Box>
-                            <Chip color={status.color} label={status.label} size="small" />
+                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                              <Chip color={status.color} label={status.label} size="small" />
+                              <Chip
+                                color={instance.instance.is_enabled ? 'success' : 'default'}
+                                label={instance.instance.is_enabled ? 'Enabled' : 'Disabled'}
+                                size="small"
+                                variant="outlined"
+                              />
+                            </Stack>
                           </Stack>
 
                           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -941,7 +1174,7 @@ export default function WhatsappDashboard({
 
                           <Stack direction="row" justifyContent="space-between" alignItems="center">
                             <Typography color="text.secondary" variant="caption">
-                              {status.shortAction}
+                              {getInstanceOperationalNote(instance)}
                             </Typography>
                             <Chip color={status.color} label={getPrimaryActionLabel(instance)} size="small" variant="outlined" />
                           </Stack>
@@ -1001,6 +1234,12 @@ export default function WhatsappDashboard({
                             setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat detail perangkat.');
                           });
                         }
+
+                        if (nextValue === 'teknis' && selectedInstanceId) {
+                          void refreshContainerState(selectedInstanceId).catch((error) => {
+                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat status container.');
+                          });
+                        }
                       }}
                       variant="scrollable"
                       scrollButtons="auto"
@@ -1029,9 +1268,32 @@ export default function WhatsappDashboard({
                                     size="small"
                                     sx={{ alignSelf: 'flex-start' }}
                                   />
+                                  <Chip
+                                    color={selectedDetail.instance.is_enabled ? 'success' : 'default'}
+                                    label={
+                                      selectedDetail.instance.is_enabled
+                                        ? 'Menerima blast/API baru'
+                                        : 'Tidak menerima blast/API baru'
+                                    }
+                                    size="small"
+                                    variant="outlined"
+                                    sx={{ alignSelf: 'flex-start' }}
+                                  />
                                   <Typography variant="body2">
                                     Tindakan berikutnya: <strong>{getStatusPresentation(selectedDetail.derived_status).shortAction}</strong>
                                   </Typography>
+                                  {!selectedDetail.runtime ? (
+                                    <Alert severity="warning">
+                                      Belum ada worker aktif untuk instance ini. Jalankan proses bot dengan env pada tab Teknis
+                                      agar QR dan status runtime muncul.
+                                    </Alert>
+                                  ) : null}
+                                  {!selectedDetail.instance.is_enabled ? (
+                                    <Alert severity="info">
+                                      Disable hanya mencegah assignment blast/API baru. Tiket dan pesan yang sudah terantre
+                                      tetap memakai instance asalnya.
+                                    </Alert>
+                                  ) : null}
                                   <Typography variant="body2">
                                     Dicek terakhir: <strong>{formatAgeWithNow(selectedDetail.runtime?.last_heartbeat_at || null, activePanelNowMs)}</strong>
                                   </Typography>
@@ -1066,6 +1328,34 @@ export default function WhatsappDashboard({
                                         {showQr ? 'Sembunyikan QR' : 'Tampilkan QR'}
                                       </Button>
                                     )}
+                                    <Button
+                                      color={selectedDetail.instance.is_enabled ? 'warning' : 'success'}
+                                      disabled={adminActionBusy}
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={handleToggleSelectedInstanceEnabled}
+                                    >
+                                      {selectedDetail.instance.is_enabled ? 'Disable Assignment' : 'Reactivate Assignment'}
+                                    </Button>
+                                    <Button
+                                      disabled={adminActionBusy}
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={handleRenameSelectedInstance}
+                                    >
+                                      Rename Label
+                                    </Button>
+                                    <Button
+                                      color="warning"
+                                      disabled={adminActionBusy || containerActionBusy}
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => {
+                                        void handleDeleteSelectedInstance('stop_only');
+                                      }}
+                                    >
+                                      Retire: Disable + Stop
+                                    </Button>
                                   </Stack>
                                 </Stack>
                               </CardContent>
@@ -1287,6 +1577,7 @@ export default function WhatsappDashboard({
                                     <TableHead>
                                       <TableRow>
                                         <TableCell>Status</TableCell>
+                                        <TableCell>Instance</TableCell>
                                         <TableCell>Penerima</TableCell>
                                         <TableCell>Sumber</TableCell>
                                         <TableCell>Referensi</TableCell>
@@ -1298,6 +1589,16 @@ export default function WhatsappDashboard({
                                       {filteredOutboundItems.slice(0, 8).map((item) => (
                                         <TableRow key={item.id} hover>
                                           <TableCell>{OUTBOUND_FILTER_COPY[item.delivery_status].label}</TableCell>
+                                          <TableCell>
+                                            <Stack spacing={0.5}>
+                                              <Typography variant="body2" fontWeight={600}>
+                                                {item.instance_label || item.whatsapp_instance_id}
+                                              </Typography>
+                                              <Typography color="text.secondary" variant="caption">
+                                                {item.whatsapp_instance_id}
+                                              </Typography>
+                                            </Stack>
+                                          </TableCell>
                                           <TableCell>{item.recipient_phone_number}</TableCell>
                                           <TableCell>
                                             <Chip label={OUTBOUND_SOURCE_COPY[item.source_type].chipLabel} size="small" variant="outlined" />
@@ -1311,7 +1612,7 @@ export default function WhatsappDashboard({
                                       ))}
                                       {!filteredOutboundItems.length ? (
                                         <TableRow>
-                                          <TableCell colSpan={6}>
+                                          <TableCell colSpan={7}>
                                             <Typography color="text.secondary" variant="body2">
                                               Tidak ada aktivitas pengiriman untuk filter ini.
                                             </Typography>
@@ -1356,6 +1657,140 @@ export default function WhatsappDashboard({
                               <Typography variant="body2">
                                 Error terakhir: <strong>{selectedDetail.runtime?.last_error || selectedDetail.instance.last_error || '-'}</strong>
                               </Typography>
+                              <Divider />
+                              <Typography variant="subtitle2">Env worker manual</Typography>
+                              <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', m: 0 }}>
+                                {`WHATSAPP_INSTANCE_ID=${selectedDetail.instance.id}\nWHATSAPP_INSTANCE_LABEL="${selectedDetail.instance.label}"\nWHATSAPP_WORKER_ID=${selectedDetail.instance.id}-worker`}
+                              </Typography>
+                              <Divider />
+                              <Stack spacing={1.5}>
+                                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between">
+                                  <Box>
+                                    <Typography variant="subtitle2">Docker worker lifecycle</Typography>
+                                    <Typography color="text.secondary" variant="body2">
+                                      Kontrol ini memakai private Docker orchestrator. Saat belum dikonfigurasi, gunakan env manual di atas.
+                                    </Typography>
+                                  </Box>
+                                  <Button
+                                    disabled={containerActionBusy}
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => {
+                                      void refreshContainerState().catch((error) => {
+                                        setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat status container.');
+                                      });
+                                    }}
+                                  >
+                                    Refresh Container
+                                  </Button>
+                                </Stack>
+                                {containerState ? (
+                                  <Stack spacing={1}>
+                                    <Chip
+                                      color={CONTAINER_STATUS_COPY[containerState.status].color}
+                                      label={CONTAINER_STATUS_COPY[containerState.status].label}
+                                      size="small"
+                                      sx={{ alignSelf: 'flex-start' }}
+                                    />
+                                    <Typography variant="body2">
+                                      Container: <strong>{containerState.container_name || '-'}</strong>
+                                    </Typography>
+                                    <Typography variant="body2">
+                                      Image: <strong>{containerState.image || '-'}</strong>
+                                    </Typography>
+                                    <Typography variant="body2">
+                                      Started: <strong>{formatDateTime(containerState.started_at)}</strong>
+                                    </Typography>
+                                    {containerState.last_error ? (
+                                      <Alert severity={containerState.status === 'not_configured' ? 'info' : 'warning'}>
+                                        {containerState.last_error}
+                                      </Alert>
+                                    ) : null}
+                                  </Stack>
+                                ) : (
+                                  <Alert severity="info">Klik Refresh Container untuk melihat status Docker worker.</Alert>
+                                )}
+                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                  <Button
+                                    disabled={containerActionBusy || !containerState || containerState.status === 'not_configured'}
+                                    size="small"
+                                    variant="contained"
+                                    onClick={() => {
+                                      void runContainerAction('start');
+                                    }}
+                                  >
+                                    Start Worker
+                                  </Button>
+                                  <Button
+                                    disabled={containerActionBusy || !containerState || containerState.status === 'not_configured'}
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => {
+                                      void runContainerAction('restart');
+                                    }}
+                                  >
+                                    Restart Worker
+                                  </Button>
+                                  <Button
+                                    color="warning"
+                                    disabled={containerActionBusy || !containerState || containerState.status === 'not_configured'}
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={() => {
+                                      void runContainerAction('stop');
+                                    }}
+                                  >
+                                    Stop Worker
+                                  </Button>
+                                </Stack>
+                                <Divider />
+                                <Stack spacing={1}>
+                                  <Typography variant="subtitle2">Retire / cleanup instance</Typography>
+                                  <Alert severity="warning">
+                                    Cleanup runtime menghapus container dan auth volume, tetapi tetap menyimpan row DB agar
+                                    histori tiket dan pengiriman tidak rusak. Delete DB hanya untuk instance test yang belum dipakai.
+                                  </Alert>
+                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                                    <Button
+                                      color="warning"
+                                      disabled={adminActionBusy || containerActionBusy}
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => {
+                                        void handleDeleteSelectedInstance('stop_only');
+                                      }}
+                                    >
+                                      Retire: Disable + Stop
+                                    </Button>
+                                    <Button
+                                      color="error"
+                                      disabled={adminActionBusy || containerActionBusy}
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => {
+                                        void handleDeleteSelectedInstance('remove_runtime_resources');
+                                      }}
+                                    >
+                                      Retire + Remove Runtime Resources
+                                    </Button>
+                                    <Button
+                                      color="error"
+                                      disabled={
+                                        adminActionBusy ||
+                                        containerActionBusy ||
+                                        selectedDetail.instance.id === 'default'
+                                      }
+                                      size="small"
+                                      variant="outlined"
+                                      onClick={() => {
+                                        void handleDeleteSelectedInstance('delete_db_row');
+                                      }}
+                                    >
+                                      Delete DB Row
+                                    </Button>
+                                  </Stack>
+                                </Stack>
+                              </Stack>
                             </Stack>
                           </CardContent>
                         </Card>

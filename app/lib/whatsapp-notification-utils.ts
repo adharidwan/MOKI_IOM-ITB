@@ -27,6 +27,7 @@ export const API_NOTIFICATION_PRIORITY = 100;
 export const DEFAULT_DISPATCH_SETTINGS_ID = 'default';
 export const DEFAULT_WHATSAPP_INSTANCE_ID = 'default';
 export const DEFAULT_WHATSAPP_INSTANCE_LABEL = 'Primary WhatsApp';
+export const WHATSAPP_INSTANCE_ID_PATTERN = /^[a-z0-9_-]+$/;
 
 export type ApiClientStatus = (typeof API_CLIENT_STATUSES)[number];
 export type OutboundMessageStatus = (typeof OUTBOUND_MESSAGE_STATUSES)[number];
@@ -86,6 +87,7 @@ export interface DispatchSettingsRecord {
 export interface WhatsappInstanceRecord {
   id: string;
   label: string;
+  is_enabled: boolean;
   status: WhatsappInstanceStatus;
   last_known_phone_number: string | null;
   last_known_chat_id: string | null;
@@ -94,6 +96,7 @@ export interface WhatsappInstanceRecord {
   last_disconnect_at: string | null;
   last_error: string | null;
   assigned_worker_id: string | null;
+  retired_at: string | null;
   updated_at: string;
 }
 
@@ -159,6 +162,25 @@ export interface WhatsappInstanceSummary {
   has_qr: boolean;
   queue: WhatsappInstanceQueueSummary;
   staff: WhatsappInstanceStaffSummary;
+}
+
+export type WhatsappContainerStatus =
+  | 'not_configured'
+  | 'not_found'
+  | 'created'
+  | 'running'
+  | 'stopped'
+  | 'restarting'
+  | 'error';
+
+export interface WhatsappContainerState {
+  instance_id: string;
+  status: WhatsappContainerStatus;
+  container_name: string | null;
+  image: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  last_error: string | null;
 }
 
 export interface WhatsappDashboardSummary {

@@ -3,10 +3,14 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveWhatsappInstanceStatus,
   getWhatsappDashboardOverview,
+  handleGetWhatsappInstanceContainerRequest,
   handleGetWhatsappOutboundRequest,
+  handleWhatsappInstanceContainerActionRequest,
   type WhatsappOpsRepository,
 } from '../app/lib/whatsapp-ops-service';
+import { WhatsappOrchestratorError, type WhatsappOrchestratorClient } from '../app/lib/whatsapp-orchestrator';
 import type {
+  WhatsappContainerState,
   WhatsappInstanceEventRecord,
   WhatsappInstanceRecord,
   WhatsappInstanceRuntime,
@@ -21,6 +25,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
     {
       id: 'default',
       label: 'Primary WhatsApp',
+      is_enabled: true,
       status: 'ready',
       last_known_phone_number: '6281234567890',
       last_known_chat_id: '6281234567890@c.us',
@@ -29,11 +34,13 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
       last_disconnect_at: null,
       last_error: null,
       assigned_worker_id: 'worker-a',
+      retired_at: null,
       updated_at: '2026-04-03T08:00:00.000Z',
     },
     {
       id: 'backup',
       label: 'Backup WhatsApp',
+      is_enabled: true,
       status: 'qr_required',
       last_known_phone_number: null,
       last_known_chat_id: null,
@@ -42,6 +49,7 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
       last_disconnect_at: null,
       last_error: null,
       assigned_worker_id: 'worker-b',
+      retired_at: null,
       updated_at: '2026-04-03T08:05:00.000Z',
     },
   ];
@@ -89,6 +97,55 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
 
   async listInstances(): Promise<WhatsappInstanceRecord[]> {
     return this.instances;
+  }
+
+  async createInstance(input: { id: string; label: string; is_enabled?: boolean }): Promise<WhatsappInstanceRecord> {
+    const instance: WhatsappInstanceRecord = {
+      id: input.id,
+      label: input.label,
+      is_enabled: input.is_enabled ?? true,
+      status: 'starting',
+      last_known_phone_number: null,
+      last_known_chat_id: null,
+      last_ready_at: null,
+      last_qr_at: null,
+      last_disconnect_at: null,
+      last_error: null,
+      assigned_worker_id: null,
+      retired_at: null,
+      updated_at: this.nowIso,
+    };
+
+    this.instances.push(instance);
+    return instance;
+  }
+
+  async updateInstance(instanceId: string, input: { label?: string; is_enabled?: boolean; retired_at?: string | null }): Promise<WhatsappInstanceRecord> {
+    const instance = this.instances.find((item) => item.id === instanceId);
+
+    if (!instance) {
+      throw new Error('WhatsApp instance not found.');
+    }
+
+    if (input.label !== undefined) {
+      instance.label = input.label;
+    }
+
+    if (input.is_enabled !== undefined) {
+      instance.is_enabled = input.is_enabled;
+    }
+
+    if (input.retired_at !== undefined) {
+      instance.retired_at = input.retired_at;
+    }
+
+    return instance;
+  }
+
+  async assertInstanceCanBeDeleted(): Promise<void> {}
+
+  async deleteInstance(instanceId: string): Promise<void> {
+    this.instances = this.instances.filter((instance) => instance.id !== instanceId);
   }
 
   async getInstanceRuntime(instanceId: string): Promise<WhatsappInstanceRuntime | null> {
@@ -198,11 +255,58 @@ class InMemoryWhatsappOpsRepository implements WhatsappOpsRepository {
   }
 }
 
+class NotConfiguredWhatsappOrchestrator implements WhatsappOrchestratorClient {
+  async getContainer(instanceId: string): Promise<WhatsappContainerState> {
+    return {
+      instance_id: instanceId,
+      status: 'not_configured',
+      container_name: null,
+      image: null,
+      created_at: null,
+      started_at: null,
+      last_error: 'WhatsApp Docker orchestrator is not configured.',
+    };
+  }
+
+  async startInstance(): Promise<WhatsappContainerState> {
+    throw new WhatsappOrchestratorError(
+      503,
+      'orchestrator_not_configured',
+      'WhatsApp Docker orchestrator is not configured.',
+    );
+  }
+
+  async stopInstance(): Promise<WhatsappContainerState> {
+    throw new WhatsappOrchestratorError(
+      503,
+      'orchestrator_not_configured',
+      'WhatsApp Docker orchestrator is not configured.',
+    );
+  }
+
+  async restartInstance(): Promise<WhatsappContainerState> {
+    throw new WhatsappOrchestratorError(
+      503,
+      'orchestrator_not_configured',
+      'WhatsApp Docker orchestrator is not configured.',
+    );
+  }
+
+  async removeInstance(): Promise<WhatsappContainerState> {
+    throw new WhatsappOrchestratorError(
+      503,
+      'orchestrator_not_configured',
+      'WhatsApp Docker orchestrator is not configured.',
+    );
+  }
+}
+
 describe('whatsapp ops service', () => {
   it('marks ready instances as degraded when heartbeat is stale', () => {
     const instance: WhatsappInstanceRecord = {
       id: 'default',
       label: 'Primary WhatsApp',
+      is_enabled: true,
       status: 'ready',
       last_known_phone_number: null,
       last_known_chat_id: null,
@@ -211,6 +315,7 @@ describe('whatsapp ops service', () => {
       last_disconnect_at: null,
       last_error: null,
       assigned_worker_id: 'worker-a',
+      retired_at: null,
       updated_at: '2026-04-03T08:00:00.000Z',
     };
 
@@ -286,6 +391,37 @@ describe('whatsapp ops service', () => {
           last_delivery_error: null,
         },
       ],
+    });
+  });
+
+  it('returns safe container state when orchestrator is unavailable', async () => {
+    const response = await handleGetWhatsappInstanceContainerRequest(
+      'default',
+      new InMemoryWhatsappOpsRepository(),
+      new NotConfiguredWhatsappOrchestrator(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      instance_id: 'default',
+      status: 'not_configured',
+    });
+  });
+
+  it('blocks lifecycle actions when orchestrator is unavailable', async () => {
+    const response = await handleWhatsappInstanceContainerActionRequest(
+      'start',
+      'default',
+      new InMemoryWhatsappOpsRepository(),
+      new NotConfiguredWhatsappOrchestrator(),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: {
+        code: 'orchestrator_not_configured',
+        message: 'WhatsApp Docker orchestrator is not configured.',
+      },
     });
   });
 });
