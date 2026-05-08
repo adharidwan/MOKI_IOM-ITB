@@ -21,7 +21,7 @@ deploy:
         --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
         --build-arg SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
     - docker compose --env-file $CI_PROJECT_DIR/.env.local -f $CI_PROJECT_DIR/docker-compose.yml up -d redis
-    - docker compose --env-file $CI_PROJECT_DIR/.env.local -f $CI_PROJECT_DIR/docker-compose.yml up -d web bot orchestrator
+    - docker compose --env-file $CI_PROJECT_DIR/.env.local -f $CI_PROJECT_DIR/docker-compose.yml up -d web orchestrator
     - docker image prune -f
   after_script:
     - docker builder prune -f --filter "until=24h"
