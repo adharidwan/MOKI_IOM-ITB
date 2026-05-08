@@ -168,8 +168,11 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
 }
 
 function toContentRecording(record: Record<string, unknown>): ContentRecording {
+  const displayId = Number(record.display_id || 0);
+
   return {
     id: String(record.id || ''),
+    display_id: Number.isFinite(displayId) && displayId > 0 ? displayId : null,
     title: String(record.title || ''),
     platform: String(record.platform || '') as ContentRecordingPlatform,
     caption:

@@ -57,6 +57,7 @@ export interface ContentTag {
 
 export interface ContentRecording {
   id: string;
+  display_id: number | null;
   title: string;
   platform: ContentRecordingPlatform;
   caption: string | null;

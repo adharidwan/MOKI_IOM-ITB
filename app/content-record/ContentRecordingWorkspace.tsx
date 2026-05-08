@@ -211,8 +211,8 @@ function formatContentTypeLabel(value: ContentRecordingType | null | ''): string
   return CONTENT_TYPE_OPTIONS.find((option) => option.value === value)?.label || value;
 }
 
-function formatUniqueId(value: string): string {
-  return value || '-';
+function formatDisplayId(value: number | null | undefined): string {
+  return value ? String(value) : '-';
 }
 
 function normalizeTagOption(option: TagOption | string): TagOption {
@@ -547,8 +547,8 @@ export default function ContentRecordingWorkspace({
     });
   }
 
-  async function copyUniqueId(id: string | null | undefined) {
-    const value = String(id || '').trim();
+  async function copyUniqueId(id: number | null | undefined) {
+    const value = id ? String(id) : '';
     if (!value) {
       return;
     }
@@ -593,7 +593,7 @@ export default function ContentRecordingWorkspace({
             size="small"
             value={filters.search}
             onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
-            placeholder="Search unique ID, title, caption, link, or source ID"
+            placeholder="Search nomor, title, caption, link, or source ID"
             sx={{ flex: 1, minWidth: { lg: 280 } }}
             InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }}
           />
@@ -643,7 +643,7 @@ export default function ContentRecordingWorkspace({
                     </TableSortLabel>
                   </TableCell>
                 ))}
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Unique ID</TableCell>
+                <TableCell align="center" sx={{ color: '#ffffff', fontWeight: 800 }}>Unique ID</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Metadata</TableCell>
                 <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Actions</TableCell>
@@ -675,10 +675,10 @@ export default function ContentRecordingWorkspace({
                     <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
                     <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
                     <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
-                    <TableCell sx={{ maxWidth: 230 }}>
-                      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+                    <TableCell align="center" sx={{ maxWidth: 230 }}>
+                      <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="center" sx={{ minWidth: 0 }}>
                         <Typography
-                          title={record.id}
+                          title={formatDisplayId(record.display_id)}
                           sx={{
                             minWidth: 0,
                             color: adminPalette.textSecondary,
@@ -690,10 +690,10 @@ export default function ContentRecordingWorkspace({
                             textOverflow: 'ellipsis',
                           }}
                         >
-                          {formatUniqueId(record.id)}
+                          {formatDisplayId(record.display_id)}
                         </Typography>
                         <Tooltip title="Copy Unique ID" placement="top" arrow>
-                          <IconButton size="small" onClick={() => copyUniqueId(record.id)} sx={{ color: adminPalette.textMuted }}>
+                          <IconButton size="small" onClick={() => copyUniqueId(record.display_id)} sx={{ color: adminPalette.textMuted }}>
                             <ContentCopyRoundedIcon sx={{ fontSize: 15 }} />
                           </IconButton>
                         </Tooltip>
@@ -767,32 +767,6 @@ export default function ContentRecordingWorkspace({
           <Stack spacing={2.2} sx={{ p: 2.5, flex: 1, overflowY: 'auto' }}>
             <Stack spacing={1.4}>
               <SectionLabel>Source details</SectionLabel>
-              <TextField
-                label="Unique ID"
-                value={form.id || 'Generated after save'}
-                fullWidth
-                disabled
-                helperText="Stable unique identifier for this content record."
-                InputProps={{
-                  endAdornment: form.id ? (
-                    <InputAdornment position="end">
-                      <Tooltip title="Copy Unique ID" placement="top" arrow>
-                        <span>
-                          <IconButton size="small" onClick={() => copyUniqueId(form.id)} disabled={isBusy}>
-                            <ContentCopyRoundedIcon sx={{ fontSize: 17 }} />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </InputAdornment>
-                  ) : null,
-                }}
-                inputProps={{
-                  sx: {
-                    fontFamily: 'var(--font-geist-mono), monospace',
-                    fontSize: '0.82rem',
-                  },
-                }}
-              />
               <TextField label="Link" value={form.link} onChange={(event) => { setField('link', event.target.value); setLastScrapedLink(''); }} onBlur={(event) => hydrateFromLink(event.target.value)} onPaste={handlePaste} helperText="Paste a published content URL to auto-fill available metadata." fullWidth disabled={isBusy} InputProps={{ startAdornment: <InputAdornment position="start"><LinkRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }} />
               <Button variant="outlined" startIcon={<AutoFixHighRoundedIcon />} onClick={() => hydrateFromLink(form.link)} disabled={isBusy || !form.link.trim()} sx={{ alignSelf: 'flex-start', borderRadius: 2, textTransform: 'none', fontWeight: 700 }}>{isScraping ? 'Importing metadata...' : 'Auto-fill from link'}</Button>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2}>
