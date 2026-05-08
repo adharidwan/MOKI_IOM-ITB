@@ -12,7 +12,6 @@ deploy:
   variables:
     DOCKER_BUILDKIT: "1"
   script:
-    - docker system prune -f
     - cp /home/ppl/IF3250_K02_G10_IOM4/.env.local $CI_PROJECT_DIR/.env.local
     - grep -q '^REDIS_PASSWORD=' $CI_PROJECT_DIR/.env.local
     - grep -q '^REDIS_URL=' $CI_PROJECT_DIR/.env.local
