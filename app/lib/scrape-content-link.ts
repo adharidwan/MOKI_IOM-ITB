@@ -4,6 +4,7 @@ import { chromium } from 'playwright-core';
 
 import { getPlaywrightLaunchOptions } from './chromium-path';
 import type { ContentRecordingInput } from './api';
+import { scrape_x } from './scrape-x';
 import type { ContentRecordingPlatform } from './types';
 import { createYtDlpClient } from './yt-dlp';
 
@@ -307,6 +308,21 @@ function extractSourcePostId(link: string, platform: ContentRecordingPlatform): 
   return cleanText(pathSegments[marker + 1] || '') || null;
 }
 
+function extractXUsername(link: string): string {
+  const url = tryParseUrl(link);
+  if (!url) {
+    return '';
+  }
+
+  const pathSegments = url.pathname.split('/').filter(Boolean);
+  const statusIndex = pathSegments.findIndex((segment) => segment === 'status');
+  if (statusIndex <= 0) {
+    return '';
+  }
+
+  return cleanText(pathSegments[statusIndex - 1].replace(/^@/, ''));
+}
+
 async function scrapeYoutubeLink(link: string): Promise<ScrapedContentDraft> {
   const ytDlp = createYtDlpClient();
   const stdout = await ytDlp.execPromise([
@@ -386,6 +402,31 @@ async function scrapeSocialLink(
   link: string,
   platform: Extract<ContentRecordingPlatform, 'x' | 'Instagram'>,
 ): Promise<ScrapedContentDraft> {
+  if (platform === 'x') {
+    const username = extractXUsername(link);
+    const sourcePostId = extractSourcePostId(link, platform);
+    if (username && sourcePostId) {
+      const feedResult = await scrape_x(username, { minPosts: 50 });
+      const tweet = feedResult.videos?.find((item) => item.id === sourcePostId);
+
+      if (tweet) {
+        const caption = pickFirstNonEmpty(tweet.content, tweet.title);
+
+        return {
+          title: '',
+          platform,
+          caption: caption || null,
+          content_type: 'tweet',
+          upload_date: tweet.upload_date || '',
+          link: tweet.link || link,
+          source_post_id: sourcePostId,
+          thumbnail_url: cleanText(tweet.thumbnail) || null,
+          media_urls: normalizeMediaUrls([tweet.thumbnail]),
+        };
+      }
+    }
+  }
+
   const metadata = await scrapeBrowserMetadata(link);
   const jsonLdCandidates = parseJsonLdCandidates(metadata.scripts);
 
@@ -450,7 +491,7 @@ async function scrapeSocialLink(
     : [];
 
   return {
-    title: '',
+    title: normalizePageTitle(pickFirstNonEmpty(metadata.ogTitle, metadata.twitterTitle, metadata.pageTitle), platform),
     platform,
     caption: caption || null,
     content_type: platform === 'x' ? 'tweet' : canonicalLink.includes('/reel/') ? 'reel' : 'post',

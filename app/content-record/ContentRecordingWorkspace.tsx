@@ -211,6 +211,15 @@ function getInstagramEmbedUrl(link: string): string {
   return `https://www.instagram.com/${match[1].toLowerCase()}/${match[2]}/embed`;
 }
 
+function getXEmbedUrl(link: string): string {
+  const match = String(link || '').match(/(?:x|twitter)\.com\/[^/]+\/status\/(\d+)/i);
+  if (!match) {
+    return '';
+  }
+
+  return `https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&theme=light`;
+}
+
 function formatDateLabel(value: string): string {
   if (!value) {
     return '-';
@@ -449,6 +458,39 @@ function InstagramEmbedPreview({
         }}
       />
     </Box>
+  );
+}
+
+function XEmbedPreview({
+  link,
+  compact = false,
+}: {
+  link: string;
+  compact?: boolean;
+}) {
+  const embedUrl = getXEmbedUrl(link);
+
+  if (!embedUrl) {
+    return <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />;
+  }
+
+  return (
+    <Box
+      component="iframe"
+      src={embedUrl}
+      title="X post preview"
+      loading="lazy"
+      sx={{
+        border: 0,
+        display: 'block',
+        width: compact ? 360 : '100%',
+        height: compact ? 520 : '100%',
+        transform: compact ? 'scale(0.29)' : 'none',
+        transformOrigin: 'top left',
+        pointerEvents: compact ? 'none' : 'auto',
+        backgroundColor: '#ffffff',
+      }}
+    />
   );
 }
 
@@ -812,13 +854,16 @@ export default function ContentRecordingWorkspace({
                 const hiddenTags = record.tags.slice(VISIBLE_TAG_LIMIT);
                 const previewUrls = getPreviewUrls(record);
                 const instagramEmbedUrl = record.platform === 'Instagram' ? getInstagramEmbedUrl(record.link) : '';
+                const xEmbedUrl = record.platform === 'x' ? getXEmbedUrl(record.link) : '';
 
                 return (
                   <TableRow key={record.id} hover>
                     <TableCell>
-                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: instagramEmbedUrl ? 0 : 0.5 }}>
+                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: instagramEmbedUrl || xEmbedUrl ? 0 : 0.5 }}>
                         {instagramEmbedUrl ? (
                           <InstagramEmbedPreview link={record.link} compact />
+                        ) : xEmbedUrl ? (
+                          <XEmbedPreview link={record.link} compact />
                         ) : previewUrls.length ? (
                           <PreviewCarousel urls={previewUrls} alt={record.title || 'Content preview'} emptyLabel="" />
                         ) : (
@@ -880,10 +925,11 @@ export default function ContentRecordingWorkspace({
                     <TableCell>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                         {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {!previewUrls.length && !instagramEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {!previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
                         {instagramEmbedUrl ? <Chip size="small" label="IG embed" sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
-                        {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                        {xEmbedUrl ? <Chip size="small" label="X embed" sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
+                        {record.caption && (previewUrls.length || instagramEmbedUrl || xEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
@@ -954,9 +1000,11 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Preview</SectionLabel>
               <TextField label="Thumbnail URL" value={form.thumbnail_url} onChange={(event) => setField('thumbnail_url', event.target.value)} fullWidth disabled={isBusy} />
-              <Box sx={{ ...PREVIEW_FRAME_SX, height: form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? 420 : 180, borderRadius: 2, backgroundColor: adminPalette.surface, p: form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? 0 : 0.5 }}>
+              <Box sx={{ ...PREVIEW_FRAME_SX, height: form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? 420 : form.platform === 'x' && getXEmbedUrl(form.link) ? 360 : 180, borderRadius: 2, backgroundColor: adminPalette.surface, p: (form.platform === 'Instagram' && getInstagramEmbedUrl(form.link)) || (form.platform === 'x' && getXEmbedUrl(form.link)) ? 0 : 0.5 }}>
                 {form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? (
                   <InstagramEmbedPreview link={form.link} />
+                ) : form.platform === 'x' && getXEmbedUrl(form.link) ? (
+                  <XEmbedPreview link={form.link} />
                 ) : (
                   <PreviewCarousel urls={getPreviewUrls(form)} alt={form.title || 'Thumbnail preview'} />
                 )}

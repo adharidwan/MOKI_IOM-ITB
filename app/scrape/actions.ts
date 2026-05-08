@@ -122,7 +122,7 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   let contentType = normalizeContentType(candidate.content_type);
 
   const needsHydration =
-    !title || !uploadDate || !sourcePostId || !thumbnailUrl;
+    !title || !uploadDate || !sourcePostId || !thumbnailUrl || !caption;
 
   if (link && needsHydration) {
     try {
