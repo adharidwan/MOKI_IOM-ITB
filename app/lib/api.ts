@@ -63,6 +63,7 @@ export interface PaginatedContentRecordingsParams {
   platform?: string;
   contentType?: string;
   tagId?: string;
+  tagIds?: string[];
   sortBy?: string;
   sortDir?: SortDirection;
 }
@@ -780,6 +781,7 @@ export async function getPaginatedContentRecordings({
   platform = '',
   contentType = '',
   tagId = '',
+  tagIds = [],
   sortBy = 'upload_date',
   sortDir = 'desc',
 }: PaginatedContentRecordingsParams): Promise<PaginatedContentRecordingsResponse> {
@@ -788,12 +790,15 @@ export async function getPaginatedContentRecordings({
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
   const normalizedSortBy = normalizeContentRecordingSortKey(sortBy);
   const normalizedSortDir = normalizeSortDirection(sortDir, 'desc');
+  const normalizedTagIds = Array.from(
+    new Set([...(tagIds || []), tagId].map((id) => String(id || '').trim()).filter(Boolean)),
+  );
 
   const { data, error } = await supabase.rpc('list_content_recordings', {
     p_search: search.trim() || null,
     p_platform: platform.trim() || null,
     p_content_type: contentType.trim() || null,
-    p_tag_id: tagId.trim() || null,
+    p_tag_ids: normalizedTagIds.length ? normalizedTagIds : null,
     p_page: safePage,
     p_page_size: safePageSize,
     p_sort_by: normalizedSortBy,

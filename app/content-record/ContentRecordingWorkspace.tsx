@@ -1,7 +1,7 @@
 'use client';
 
 import type { ClipboardEvent } from 'react';
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
@@ -39,6 +39,7 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
@@ -63,7 +64,7 @@ interface WorkspaceProps {
   currentSearch: string;
   currentPlatform: string;
   currentContentType: string;
-  currentTagId: string;
+  currentTagIds: string[];
   currentSortBy: ContentRecordingSortKey;
   currentSortDir: SortDirection;
   initialLoadError?: string | null;
@@ -122,6 +123,48 @@ const EMPTY_FORM: ContentRecordingFormState = {
 };
 
 const tagFilter = createFilterOptions<TagOption>();
+const VISIBLE_TAG_LIMIT = 2;
+
+const CONTENT_TAG_SX = {
+  height: 22,
+  borderRadius: 1.75,
+  backgroundColor: adminPalette.brandSoft,
+  color: adminPalette.brandDark,
+  border: `1px solid ${adminPalette.brandSoftStrong}`,
+  fontSize: '0.71rem',
+  fontWeight: 600,
+} as const;
+
+const IMAGE_PREVIEW_SX = {
+  maxWidth: '100%',
+  maxHeight: '100%',
+  width: 'auto',
+  height: 'auto',
+  objectFit: 'contain',
+  display: 'block',
+} as const;
+
+const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
+  tooltip: {
+    sx: {
+      maxWidth: 320,
+      p: 1,
+      borderRadius: 2,
+      backgroundColor: adminPalette.surface,
+      color: adminPalette.textPrimary,
+      border: `1px solid ${adminPalette.border}`,
+      boxShadow: '0 18px 45px rgba(15, 23, 42, 0.18)',
+    },
+  },
+  arrow: {
+    sx: {
+      color: adminPalette.surface,
+      '&::before': {
+        border: `1px solid ${adminPalette.border}`,
+      },
+    },
+  },
+} as const;
 
 function createEmptyForm(): ContentRecordingFormState {
   return { ...EMPTY_FORM, tag_ids: [], new_tag_names: [] };
@@ -244,7 +287,7 @@ export default function ContentRecordingWorkspace({
   currentSearch,
   currentPlatform,
   currentContentType,
-  currentTagId,
+  currentTagIds,
   currentSortBy,
   currentSortDir,
   initialLoadError,
@@ -264,7 +307,7 @@ export default function ContentRecordingWorkspace({
     search: currentSearch,
     platform: currentPlatform,
     contentType: currentContentType,
-    tagId: currentTagId,
+    tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
   const [isScraping, startScrapeTransition] = useTransition();
@@ -272,7 +315,12 @@ export default function ContentRecordingWorkspace({
   const [isDeleting, startDeleteTransition] = useTransition();
 
   const isBusy = isScraping || isSaving || isDeleting;
-  const activeFilterCount = [currentSearch, currentPlatform, currentContentType, currentTagId].filter(Boolean).length;
+  const activeFilterCount = [currentSearch, currentPlatform, currentContentType].filter(Boolean).length + currentTagIds.length;
+  const selectedFilterTags = useMemo(
+    () => tagOptions.filter((tag) => filters.tagIds.includes(tag.id)),
+    [filters.tagIds, tagOptions],
+  );
+
   useEffect(() => {
     setTagOptions(tags);
   }, [tags]);
@@ -282,9 +330,9 @@ export default function ContentRecordingWorkspace({
       search: currentSearch,
       platform: currentPlatform,
       contentType: currentContentType,
-      tagId: currentTagId,
+      tagIds: currentTagIds,
     });
-  }, [currentContentType, currentPlatform, currentSearch, currentTagId]);
+  }, [currentContentType, currentPlatform, currentSearch, currentTagIds]);
 
   useEffect(() => {
     const delay = setTimeout(() => {
@@ -292,7 +340,7 @@ export default function ContentRecordingWorkspace({
         filters.search === currentSearch &&
         filters.platform === currentPlatform &&
         filters.contentType === currentContentType &&
-        filters.tagId === currentTagId
+        filters.tagIds.join(',') === currentTagIds.join(',')
       ) {
         return;
       }
@@ -301,13 +349,14 @@ export default function ContentRecordingWorkspace({
       setOptionalParam(params, 'search', filters.search.trim());
       setOptionalParam(params, 'platform', filters.platform);
       setOptionalParam(params, 'contentType', filters.contentType);
-      setOptionalParam(params, 'tagId', filters.tagId);
+      setOptionalParam(params, 'tagIds', filters.tagIds.join(','));
+      params.delete('tagId');
       params.set('page', '1');
       router.replace(toUrl(pathname, params));
     }, 300);
 
     return () => clearTimeout(delay);
-  }, [currentContentType, currentPlatform, currentSearch, currentTagId, filters, pathname, router, searchParams]);
+  }, [currentContentType, currentPlatform, currentSearch, currentTagIds, filters, pathname, router, searchParams]);
 
   function updateQuery(mutator: (params: URLSearchParams) => void) {
     const params = new URLSearchParams(searchParams.toString());
@@ -461,11 +510,12 @@ export default function ContentRecordingWorkspace({
   }
 
   function clearFilters() {
-    setFilters({ search: '', platform: '', contentType: '', tagId: '' });
+    setFilters({ search: '', platform: '', contentType: '', tagIds: [] });
     updateQuery((params) => {
       params.delete('search');
       params.delete('platform');
       params.delete('contentType');
+      params.delete('tagIds');
       params.delete('tagId');
       params.set('page', '1');
     });
@@ -515,10 +565,22 @@ export default function ContentRecordingWorkspace({
             <MenuItem value="">All types</MenuItem>
             {CONTENT_TYPE_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
           </TextField>
-          <TextField select size="small" label="Tag" value={filters.tagId} onChange={(event) => setFilters((current) => ({ ...current, tagId: event.target.value }))} sx={{ minWidth: { xs: '100%', sm: 190 } }}>
-            <MenuItem value="">All tags</MenuItem>
-            {tagOptions.map((tag) => <MenuItem key={tag.id} value={tag.id}>{tag.name}</MenuItem>)}
-          </TextField>
+          <Autocomplete
+            multiple
+            size="small"
+            options={tagOptions}
+            value={selectedFilterTags}
+            onChange={(_, value) => setFilters((current) => ({ ...current, tagIds: value.map((tag) => tag.id) }))}
+            getOptionLabel={(option) => option.name}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            filterSelectedOptions
+            sx={{ minWidth: { xs: '100%', sm: 300 }, flex: { lg: '0 1 360px' } }}
+            renderInput={(params) => <TextField {...params} label="Tag" placeholder="All tags" />}
+            renderTags={(value, getTagProps) => value.map((option, index) => {
+              const { key, ...tagProps } = getTagProps({ index });
+              return <Chip key={key} label={option.name} size="small" sx={CONTENT_TAG_SX} {...tagProps} />;
+            })}
+          />
           {activeFilterCount > 0 ? <Button onClick={clearFilters} sx={{ color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>Clear filters</Button> : null}
         </Stack>
       </Paper>
@@ -554,42 +616,60 @@ export default function ContentRecordingWorkspace({
                     <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>{totalCount === 0 ? 'Tambahkan konten manual atau import dari workflow channel.' : 'Coba ubah pencarian atau hapus filter aktif.'}</Typography>
                   </TableCell>
                 </TableRow>
-              ) : recordings.map((record) => (
-                <TableRow key={record.id} hover>
-                  <TableCell>
-                    <Box sx={{ width: 88, height: 56, borderRadius: 1.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-                      {record.thumbnail_url ? <Box component="img" src={record.thumbnail_url} alt={record.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ maxWidth: 330 }}>
-                    <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{record.title}</Typography>
-                    <Typography sx={{ mt: 0.4, color: adminPalette.textSecondary, fontSize: '0.78rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{record.caption || record.description || 'No caption recorded yet.'}</Typography>
-                    <Typography component={Link} href={record.link} target="_blank" rel="noopener noreferrer" sx={{ mt: 0.4, display: 'block', color: adminPalette.textMuted, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.76rem', '&:hover': { color: adminPalette.brand } }}>{record.source_post_id ? `${record.source_post_id} - ` : ''}{record.link}</Typography>
-                  </TableCell>
-                  <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
-                  <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
-                  <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
-                  <TableCell sx={{ maxWidth: 220 }}>
-                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                      {record.tags.length ? record.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ height: 22, borderRadius: 1.5, backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
-                    </Stack>
-                  </TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                      {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                      {!record.thumbnail_url ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                      {record.caption && record.thumbnail_url ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
-                    </Stack>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Stack direction="row" spacing={0.75} justifyContent="flex-end">
-                      <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
-                      <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
-                      <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              ))}
+              ) : recordings.map((record) => {
+                const hiddenTags = record.tags.slice(VISIBLE_TAG_LIMIT);
+
+                return (
+                  <TableRow key={record.id} hover>
+                    <TableCell>
+                      <Box sx={{ width: 88, height: 56, borderRadius: 1.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
+                        {record.thumbnail_url ? <Box component="img" src={record.thumbnail_url} alt={record.title || 'Content preview'} sx={IMAGE_PREVIEW_SX} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 330 }}>
+                      <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{record.title}</Typography>
+                      <Typography sx={{ mt: 0.4, color: adminPalette.textSecondary, fontSize: '0.78rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{record.caption || record.description || 'No caption recorded yet.'}</Typography>
+                      <Typography component={Link} href={record.link} target="_blank" rel="noopener noreferrer" sx={{ mt: 0.4, display: 'block', color: adminPalette.textMuted, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.76rem', '&:hover': { color: adminPalette.brand } }}>{record.source_post_id ? `${record.source_post_id} - ` : ''}{record.link}</Typography>
+                    </TableCell>
+                    <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
+                    <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
+                    <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
+                    <TableCell sx={{ maxWidth: 220 }}>
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        {record.tags.length ? record.tags.slice(0, VISIBLE_TAG_LIMIT).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+                        {hiddenTags.length ? (
+                          <Tooltip
+                            title={
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                {hiddenTags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />)}
+                              </Stack>
+                            }
+                            placement="top"
+                            arrow
+                            slotProps={CONTENT_TAG_TOOLTIP_SLOT_PROPS}
+                          >
+                            <Chip size="small" label={`+${hiddenTags.length}`} variant="outlined" sx={{ height: 22, borderRadius: 1.75, borderColor: adminPalette.borderStrong, color: adminPalette.textMuted, fontSize: '0.71rem', fontWeight: 700 }} />
+                          </Tooltip>
+                        ) : null}
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {!record.thumbnail_url ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {record.caption && record.thumbnail_url ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                      </Stack>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+                        <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
+                        <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
+                        <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
@@ -648,7 +728,7 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Preview</SectionLabel>
               <TextField label="Thumbnail URL" value={form.thumbnail_url} onChange={(event) => setField('thumbnail_url', event.target.value)} fullWidth disabled={isBusy} />
-              <Box sx={{ height: 180, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>{form.thumbnail_url ? <Box component="img" src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
+              <Box sx={{ height: 180, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>{form.thumbnail_url ? <Box component="img" src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} sx={IMAGE_PREVIEW_SX} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
             </Stack>
 
             <Stack spacing={1.4}>

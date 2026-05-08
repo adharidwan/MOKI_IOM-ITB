@@ -27,7 +27,10 @@ export default async function ContentRecordPage({
   const search = String(resolvedSearchParams.search || '');
   const platform = String(resolvedSearchParams.platform || '');
   const contentType = String(resolvedSearchParams.contentType || '');
-  const tagId = String(resolvedSearchParams.tagId || '');
+  const tagIds = String(resolvedSearchParams.tagIds || resolvedSearchParams.tagId || '')
+    .split(',')
+    .map((tagId) => tagId.trim())
+    .filter(Boolean);
   const rawSortBy = String(resolvedSearchParams.sortBy || 'upload_date');
   const rawSortDir = String(resolvedSearchParams.sortDir || 'desc');
   const sortBy = SORT_KEYS.includes(rawSortBy as ContentRecordingSortKey)
@@ -53,7 +56,7 @@ export default async function ContentRecordPage({
 
   try {
     [recordingsPage, overview, tags] = await Promise.all([
-      getPaginatedContentRecordings({ page, pageSize, search, platform, contentType, tagId, sortBy, sortDir }),
+      getPaginatedContentRecordings({ page, pageSize, search, platform, contentType, tagIds, sortBy, sortDir }),
       getContentRecordingsOverview(),
       getContentTags(),
     ]);
@@ -80,7 +83,7 @@ export default async function ContentRecordPage({
         currentSearch={search}
         currentPlatform={platform}
         currentContentType={contentType}
-        currentTagId={tagId}
+        currentTagIds={tagIds}
         currentSortBy={sortBy}
         currentSortDir={sortDir}
         initialLoadError={loadError}
