@@ -31,7 +31,7 @@ import {
 
 import { adminPalette } from '../../lib/adminPalette';
 import type { ContentAsset, ContentAssetProject } from '../../lib/types';
-import { deleteContentAssetAction } from '../actions';
+import { deleteContentAssetAction, deleteContentAssetProjectAction } from '../actions';
 
 interface ContentAssetDetailWorkspaceProps {
   project: ContentAssetProject;
@@ -135,8 +135,10 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
   );
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<ContentAsset | null>(null);
+  const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [isUploading, startUploadTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
+  const [isDeletingProject, startDeleteProjectTransition] = useTransition();
 
   const imageCount = assets.filter((asset) => asset.mime_type.startsWith('image/')).length;
   const videoCount = assets.filter((asset) => asset.mime_type.startsWith('video/')).length;
@@ -235,6 +237,19 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
     });
   }
 
+  function handleDeleteProject() {
+    startDeleteProjectTransition(async () => {
+      const result = await deleteContentAssetProjectAction(project.id);
+      if (result.success) {
+        setDeleteProjectOpen(false);
+        router.push('/content-assets');
+      } else {
+        setDeleteProjectOpen(false);
+        setFlash({ severity: 'error', message: result.error || 'Gagal menghapus project asset.' });
+      }
+    });
+  }
+
   return (
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity} onClose={() => setFlash(null)}>{flash.message}</Alert> : null}
@@ -259,6 +274,15 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
             sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }}
           >
             Download ZIP
+          </Button>
+          <Button
+            color="error"
+            variant="outlined"
+            startIcon={<DeleteOutlineRoundedIcon />}
+            onClick={() => setDeleteProjectOpen(true)}
+            sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700 }}
+          >
+            Delete Project
           </Button>
         </Stack>
       </Stack>
@@ -380,6 +404,21 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
           <Button onClick={() => setDeleteTarget(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
           <Button color="error" variant="contained" onClick={handleDelete} disabled={isDeleting} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
             {isDeleting ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deleteProjectOpen} onClose={() => setDeleteProjectOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Delete project?</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: adminPalette.textSecondary }}>
+            {`Project "${project.project_name}" beserta ${assets.length} asset dan file storage terkait akan dihapus.`}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5, pt: 1 }}>
+          <Button onClick={() => setDeleteProjectOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleDeleteProject} disabled={isDeletingProject} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+            {isDeletingProject ? 'Deleting...' : 'Delete Project'}
           </Button>
         </DialogActions>
       </Dialog>

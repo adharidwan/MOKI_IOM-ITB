@@ -8,6 +8,7 @@ import {
   createContentAsset,
   createContentAssetProject,
   deleteContentAsset,
+  deleteContentAssetProject,
   getContentAssetProject,
   updateContentAsset,
 } from '../lib/content-assets';
@@ -168,6 +169,21 @@ export async function deleteContentAssetAction(id: string): Promise<ContentAsset
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Gagal menghapus asset.',
+    };
+  }
+}
+
+export async function deleteContentAssetProjectAction(id: string): Promise<ContentAssetActionResult> {
+  try {
+    await requireFeatureAccess('content-assets');
+    await deleteContentAssetProject(id);
+    revalidatePath('/content-assets');
+    revalidatePath('/content-assets/[projectId]', 'page');
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Gagal menghapus project asset.',
     };
   }
 }

@@ -416,3 +416,72 @@ export async function deleteContentAsset(id: string): Promise<void> {
     await supabase.storage.from(bucket).remove([path]);
   }
 }
+
+export async function deleteContentAssetProject(id: string): Promise<void> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) {
+    throw new Error('Project id wajib diisi.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data: project, error: projectError } = await supabase
+    .from('content_asset_projects')
+    .select('id')
+    .eq('id', normalizedId)
+    .single();
+
+  if (projectError) {
+    if (projectError.code === 'PGRST116') {
+      throw new Error('Project asset tidak ditemukan.');
+    }
+    throw new Error(`Gagal membaca project asset: ${projectError.message}`);
+  }
+
+  if (!project) {
+    throw new Error('Project asset tidak ditemukan.');
+  }
+
+  const { data: assets, error: assetLookupError } = await supabase
+    .from('content_assets')
+    .select('storage_bucket, storage_path')
+    .eq('project_id', normalizedId);
+
+  if (assetLookupError) {
+    throw new Error(`Gagal membaca asset project: ${assetLookupError.message}`);
+  }
+
+  const storagePathsByBucket = new Map<string, string[]>();
+  (assets || []).forEach((asset) => {
+    const bucket = String(asset.storage_bucket || CONTENT_ASSET_BUCKET);
+    const path = String(asset.storage_path || '');
+    if (!path) {
+      return;
+    }
+    storagePathsByBucket.set(bucket, [...(storagePathsByBucket.get(bucket) || []), path]);
+  });
+
+  const { error: deleteAssetsError } = await supabase
+    .from('content_assets')
+    .delete()
+    .eq('project_id', normalizedId);
+
+  if (deleteAssetsError) {
+    throw new Error(`Gagal menghapus metadata asset project: ${deleteAssetsError.message}`);
+  }
+
+  const { error: deleteProjectError } = await supabase
+    .from('content_asset_projects')
+    .delete()
+    .eq('id', normalizedId);
+
+  if (deleteProjectError) {
+    throw new Error(`Gagal menghapus project asset: ${deleteProjectError.message}`);
+  }
+
+  for (const [bucket, paths] of storagePathsByBucket) {
+    const { error } = await supabase.storage.from(bucket).remove(paths);
+    if (error) {
+      throw new Error(`Project terhapus, tapi gagal membersihkan storage bucket "${bucket}": ${error.message}`);
+    }
+  }
+}

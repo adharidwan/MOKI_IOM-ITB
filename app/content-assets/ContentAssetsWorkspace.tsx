@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ArchiveRoundedIcon from '@mui/icons-material/ArchiveRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
 import MovieRoundedIcon from '@mui/icons-material/MovieRounded';
@@ -13,6 +14,11 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
   Paper,
   Stack,
   Table,
@@ -27,7 +33,7 @@ import {
 
 import { adminPalette } from '../lib/adminPalette';
 import type { ContentAsset, ContentAssetProject } from '../lib/types';
-import { createContentAssetProjectAction } from './actions';
+import { createContentAssetProjectAction, deleteContentAssetProjectAction } from './actions';
 
 interface ContentAssetsWorkspaceProps {
   projects: ContentAssetProject[];
@@ -122,7 +128,9 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
   const [flash, setFlash] = useState<FlashState>(
     initialLoadError ? { severity: 'warning', message: initialLoadError } : null,
   );
+  const [deleteTarget, setDeleteTarget] = useState<ContentAssetProject | null>(null);
   const [isCreating, startCreateTransition] = useTransition();
+  const [isDeleting, startDeleteTransition] = useTransition();
 
   const totalAssets = projects.reduce((total, project) => total + project.asset_count, 0);
   const totalImages = projects.reduce((total, project) => total + project.image_count, 0);
@@ -136,6 +144,26 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
         router.push(`/content-assets/${result.projectId}`);
       } else {
         setFlash({ severity: 'error', message: result.error || 'Gagal membuat project asset.' });
+      }
+    });
+  }
+
+  function handleDeleteProject() {
+    if (!deleteTarget) {
+      return;
+    }
+
+    const targetId = deleteTarget.id;
+    startDeleteTransition(async () => {
+      const result = await deleteContentAssetProjectAction(targetId);
+      setDeleteTarget(null);
+      setFlash(
+        result.success
+          ? { severity: 'success', message: 'Project asset berhasil dihapus.' }
+          : { severity: 'error', message: result.error || 'Gagal menghapus project asset.' },
+      );
+      if (result.success) {
+        router.refresh();
       }
     });
   }
@@ -232,6 +260,9 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
                       <Button component={Link} href={`/content-assets/${project.id}`} size="small" endIcon={<ArrowForwardRoundedIcon />} sx={{ textTransform: 'none', fontWeight: 700 }}>
                         Detail
                       </Button>
+                      <IconButton size="small" color="error" onClick={() => setDeleteTarget(project)} aria-label={`Delete ${project.project_name}`}>
+                        <DeleteOutlineRoundedIcon fontSize="small" />
+                      </IconButton>
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -240,6 +271,21 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
           </Table>
         </TableContainer>
       </Paper>
+
+      <Dialog open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Delete project?</DialogTitle>
+        <DialogContent>
+          <Typography sx={{ color: adminPalette.textSecondary }}>
+            {`Project "${deleteTarget?.project_name || ''}" beserta ${deleteTarget?.asset_count || 0} asset dan file storage terkait akan dihapus.`}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5, pt: 1 }}>
+          <Button onClick={() => setDeleteTarget(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleDeleteProject} disabled={isDeleting} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+            {isDeleting ? 'Deleting...' : 'Delete Project'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }
