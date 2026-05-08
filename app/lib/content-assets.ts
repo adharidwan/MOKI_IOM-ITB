@@ -20,6 +20,7 @@ export interface ContentAssetInput {
 
 export interface UpdateContentAssetInput {
   id: string;
+  originalFilename?: string | null;
   notes?: string | null;
   tagIds?: string[];
 }
@@ -435,15 +436,21 @@ async function replaceContentAssetProjectTags(projectId: string, tagIds: string[
 
 export async function updateContentAsset(input: UpdateContentAssetInput): Promise<ContentAsset> {
   const normalizedId = String(input.id || '').trim();
+  const originalFilename = String(input.originalFilename || '').replace(/\s+/g, ' ').trim();
 
   if (!normalizedId) {
     throw new Error('Asset id wajib diisi.');
+  }
+
+  if (input.originalFilename !== undefined && !originalFilename) {
+    throw new Error('Nama asset wajib diisi.');
   }
 
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_assets')
     .update({
+      ...(input.originalFilename !== undefined ? { original_filename: originalFilename } : {}),
       notes: input.notes || null,
       updated_at: new Date().toISOString(),
     })

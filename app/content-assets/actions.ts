@@ -25,6 +25,7 @@ export interface ContentAssetActionResult {
 
 export interface ContentAssetTagFormState {
   id: string;
+  original_filename?: string;
   notes?: string;
   tag_ids: string[];
   new_tag_names: string[];
@@ -220,6 +221,7 @@ export async function saveContentAssetTagsAction(input: ContentAssetTagFormState
     const createdTags = await ensureContentTags(normalizeTagNames(input.new_tag_names));
     const asset = await updateContentAsset({
       id: input.id,
+      originalFilename: normalizeText(input.original_filename || null),
       notes: normalizeText(input.notes || null) || null,
       tagIds: normalizeTagIds([...input.tag_ids, ...createdTags.map((tag) => tag.id)]),
     });

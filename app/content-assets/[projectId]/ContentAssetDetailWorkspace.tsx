@@ -85,7 +85,7 @@ const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
   },
 } as const;
 const tagFilter = createFilterOptions<TagOption>();
-const EMPTY_ASSET_FORM: ContentAssetTagFormState = { id: '', notes: '', tag_ids: [], new_tag_names: [] };
+const EMPTY_ASSET_FORM: ContentAssetTagFormState = { id: '', original_filename: '', notes: '', tag_ids: [], new_tag_names: [] };
 
 function setOptionalParam(params: URLSearchParams, key: string, value: string) {
   if (value) {
@@ -347,6 +347,7 @@ export default function ContentAssetDetailWorkspace({
     setSelectedAssetTags(asset.tags);
     setEditAssetForm({
       id: asset.id,
+      original_filename: asset.original_filename,
       notes: asset.notes || '',
       tag_ids: asset.tags.map((tag) => tag.id),
       new_tag_names: [],
@@ -632,7 +633,7 @@ export default function ContentAssetDetailWorkspace({
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Edit asset</DialogTitle>
         <DialogContent>
           <Stack spacing={1.4} sx={{ pt: 1 }}>
-            <TextField label="File" value={editAssetTarget?.original_filename || ''} fullWidth disabled />
+            <TextField label="Nama asset" value={editAssetForm.original_filename || ''} onChange={(event) => setEditAssetForm((current) => ({ ...current, original_filename: event.target.value }))} fullWidth disabled={isSavingAsset} />
             <TextField label="Notes asset" value={editAssetForm.notes || ''} onChange={(event) => setEditAssetForm((current) => ({ ...current, notes: event.target.value }))} multiline minRows={2} fullWidth disabled={isSavingAsset} />
             <Autocomplete
               multiple
