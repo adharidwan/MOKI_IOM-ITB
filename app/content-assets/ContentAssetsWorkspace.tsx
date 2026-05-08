@@ -32,6 +32,7 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
@@ -65,7 +66,29 @@ interface TagOption {
   isNew?: boolean;
 }
 
+const VISIBLE_TAG_LIMIT = 2;
 const CONTENT_TAG_SX = { height: 22, borderRadius: 1.75, fontSize: '0.71rem', fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft };
+const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
+  tooltip: {
+    sx: {
+      maxWidth: 320,
+      p: 1,
+      borderRadius: 2,
+      backgroundColor: adminPalette.surface,
+      color: adminPalette.textPrimary,
+      border: `1px solid ${adminPalette.border}`,
+      boxShadow: '0 18px 45px rgba(15, 23, 42, 0.18)',
+    },
+  },
+  arrow: {
+    sx: {
+      color: adminPalette.surface,
+      '&::before': {
+        border: `1px solid ${adminPalette.border}`,
+      },
+    },
+  },
+} as const;
 const tagFilter = createFilterOptions<TagOption>();
 const EMPTY_PROJECT_FORM: ContentAssetProjectFormState = { id: '', project_name: '', notes: '', tag_ids: [], new_tag_names: [] };
 
@@ -90,6 +113,30 @@ function normalizeTagOption(value: TagOption | string): TagOption {
     return { ...value, name: value.inputValue, isNew: true };
   }
   return value;
+}
+
+function TagChips({ tags }: { tags: ContentTag[] }) {
+  const hiddenTags = tags.slice(VISIBLE_TAG_LIMIT);
+
+  return (
+    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+      {tags.length ? tags.slice(0, VISIBLE_TAG_LIMIT).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+      {hiddenTags.length ? (
+        <Tooltip
+          title={
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+              {hiddenTags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />)}
+            </Stack>
+          }
+          placement="top"
+          arrow
+          slotProps={CONTENT_TAG_TOOLTIP_SLOT_PROPS}
+        >
+          <Chip size="small" label={`+${hiddenTags.length}`} variant="outlined" sx={{ height: 22, borderRadius: 1.75, borderColor: adminPalette.borderStrong, color: adminPalette.textMuted, fontSize: '0.71rem', fontWeight: 700 }} />
+        </Tooltip>
+      ) : null}
+    </Stack>
+  );
 }
 
 function formatDateTime(value: string | null): string {
@@ -409,6 +456,7 @@ export default function ContentAssetsWorkspace({
               <TableRow>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Project</TableCell>
+                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Assets</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Created By</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>
@@ -422,7 +470,7 @@ export default function ContentAssetsWorkspace({
             <TableBody>
               {projects.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} sx={{ py: 6, textAlign: 'center' }}>
+                  <TableCell colSpan={7} sx={{ py: 6, textAlign: 'center' }}>
                     <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Belum ada asset project.</Typography>
                     <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Init project pertama, lalu upload file di halaman detail project.</Typography>
                   </TableCell>
@@ -437,9 +485,9 @@ export default function ContentAssetsWorkspace({
                   <TableCell>
                     <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{project.project_name}</Typography>
                     {project.notes ? <Typography sx={{ mt: 0.4, maxWidth: 360, fontSize: '0.8rem', color: adminPalette.textSecondary }}>{project.notes}</Typography> : null}
-                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.7 }}>
-                      {project.tags.length ? project.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
-                    </Stack>
+                  </TableCell>
+                  <TableCell>
+                    <TagChips tags={project.tags} />
                   </TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">

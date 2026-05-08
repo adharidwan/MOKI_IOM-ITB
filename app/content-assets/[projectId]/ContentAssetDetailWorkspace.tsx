@@ -62,6 +62,28 @@ interface TagOption {
 }
 
 const CONTENT_TAG_SX = { height: 22, borderRadius: 1.75, fontSize: '0.71rem', fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft };
+const VISIBLE_TAG_LIMIT = 2;
+const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
+  tooltip: {
+    sx: {
+      maxWidth: 320,
+      p: 1,
+      borderRadius: 2,
+      backgroundColor: adminPalette.surface,
+      color: adminPalette.textPrimary,
+      border: `1px solid ${adminPalette.border}`,
+      boxShadow: '0 18px 45px rgba(15, 23, 42, 0.18)',
+    },
+  },
+  arrow: {
+    sx: {
+      color: adminPalette.surface,
+      '&::before': {
+        border: `1px solid ${adminPalette.border}`,
+      },
+    },
+  },
+} as const;
 const tagFilter = createFilterOptions<TagOption>();
 const EMPTY_ASSET_FORM: ContentAssetTagFormState = { id: '', notes: '', tag_ids: [], new_tag_names: [] };
 
@@ -86,6 +108,30 @@ function normalizeTagOption(value: TagOption | string): TagOption {
     return { ...value, name: value.inputValue, isNew: true };
   }
   return value;
+}
+
+function TagChips({ tags }: { tags: ContentTag[] }) {
+  const hiddenTags = tags.slice(VISIBLE_TAG_LIMIT);
+
+  return (
+    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+      {tags.length ? tags.slice(0, VISIBLE_TAG_LIMIT).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+      {hiddenTags.length ? (
+        <Tooltip
+          title={
+            <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+              {hiddenTags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />)}
+            </Stack>
+          }
+          placement="top"
+          arrow
+          slotProps={CONTENT_TAG_TOOLTIP_SLOT_PROPS}
+        >
+          <Chip size="small" label={`+${hiddenTags.length}`} variant="outlined" sx={{ height: 22, borderRadius: 1.75, borderColor: adminPalette.borderStrong, color: adminPalette.textMuted, fontSize: '0.71rem', fontWeight: 700 }} />
+        </Tooltip>
+      ) : null}
+    </Stack>
+  );
 }
 
 function formatBytes(value: number): string {
@@ -415,7 +461,7 @@ export default function ContentAssetDetailWorkspace({
       </Stack>
 
       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-        {project.tags.length ? project.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged project" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+        <TagChips tags={project.tags} />
       </Stack>
 
       <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, boxShadow: 'none' }}>
@@ -558,9 +604,7 @@ export default function ContentAssetDetailWorkspace({
                     <Typography sx={{ mt: 0.2, fontSize: '0.8rem', fontWeight: 700, color: adminPalette.textSecondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asset.uploader || asset.uploader_email || '-'}</Typography>
                     {asset.uploader_email ? <Typography sx={{ fontSize: '0.72rem', color: adminPalette.textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asset.uploader_email}</Typography> : null}
                   </Box>
-                  <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                    {asset.tags.length ? asset.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
-                  </Stack>
+                  <TagChips tags={asset.tags} />
                   {asset.notes ? <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{asset.notes}</Typography> : null}
                 </Stack>
               </Paper>
