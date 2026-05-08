@@ -7,6 +7,7 @@ import { Alert, Box, Button, Chip, Paper, Stack, Typography } from '@mui/materia
 import AdminFeatureShell from '../../components/AdminFeatureShell';
 import CloseTicketButton from '../../components/CloseTicketButton';
 import ReplyBox from '../../components/ReplyBox';
+import { requireFeatureAccess } from '../../lib/access-control';
 import { adminPalette } from '../../lib/adminPalette';
 import { getTicketById } from '../../lib/api';
 import type { Reply, TicketStatus } from '../../lib/types';
@@ -140,6 +141,7 @@ function getReplyTone(reply: Reply) {
 }
 
 export default async function TicketDetail({ params }: Props) {
+  await requireFeatureAccess('ticket');
   const resolvedParams = await params;
   const id = resolvedParams.id;
   const ticket = await getTicketById(id);

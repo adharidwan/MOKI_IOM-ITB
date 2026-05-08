@@ -1,6 +1,7 @@
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import PhoneListToast from '../components/PhoneListToast';
 import { getCsvContactsOverview, getPaginatedCsvContacts } from '../lib/api';
+import { requireFeatureAccess } from '../lib/access-control';
 import { getPaginatedContactGroups } from '../lib/group-directory-server';
 import ContactsWorkspace from './ContactsWorkspace';
 
@@ -12,6 +13,7 @@ export default async function ContactsPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  await requireFeatureAccess('contacts');
   const resolvedSearchParams = await searchParams;
   const page = Number(resolvedSearchParams.page) || 1;
   const search = String(resolvedSearchParams.search || '');

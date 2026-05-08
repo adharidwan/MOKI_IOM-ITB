@@ -4,6 +4,7 @@ import { Button, Stack } from '@mui/material';
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import GroupDirectory from '../components/GroupDirectory';
 import PhoneListToast from '../components/PhoneListToast';
+import { requireFeatureAccess } from '../lib/access-control';
 import { getPaginatedContactGroups, getPaginatedGroupMembers } from '../lib/group-directory-server';
 import { adminPalette } from '../lib/adminPalette';
 
@@ -15,6 +16,7 @@ export default async function GroupPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  await requireFeatureAccess('groups');
   const resolvedSearchParams = await searchParams;
   const page = Number(resolvedSearchParams.page) || 1;
   const search = String(resolvedSearchParams.search || '');

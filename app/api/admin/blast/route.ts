@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import { renderBlastMessageTemplate } from '@/app/lib/blast-variables';
 import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
 import { resolveAllGroupRecipients } from '@/app/lib/group-directory-server';
@@ -69,6 +70,7 @@ function normalizeRecipients(recipients: BlastRecipientInput[]): CsvContactInput
 
 export async function POST(request: Request) {
   try {
+    await requireAnyFeatureFromRequest(request, ['blast']);
     const body = (await request.json()) as BlastRequestBody;
     const message = String(body.message || '').trim();
     const saveToGroup = Boolean(body.saveToGroup);
@@ -205,11 +207,12 @@ export async function POST(request: Request) {
       { status: blastResult.failedCount > 0 ? 207 : 200 },
     );
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Gagal memproses blast message.';
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : 'Gagal memproses blast message.',
+        error: errorMessage,
       },
-      { status: 500 },
+      { status: errorMessage.includes('akses') || errorMessage.includes('Sesi SSO') ? 403 : 500 },
     );
   }
 }
