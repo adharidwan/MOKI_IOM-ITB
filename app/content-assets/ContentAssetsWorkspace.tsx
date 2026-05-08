@@ -3,8 +3,6 @@
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import ArchiveRoundedIcon from '@mui/icons-material/ArchiveRounded';
-import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
@@ -458,17 +456,7 @@ export default function ContentAssetsWorkspace({
                   <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateTime(project.latest_asset_at)}</TableCell>
                   <TableCell align="right">
                     <Stack direction="row" spacing={0.75} justifyContent="flex-end">
-                      <Button
-                        component="a"
-                        href={project.asset_count ? `/api/admin/content-assets/projects/${project.id}/download` : undefined}
-                        size="small"
-                        startIcon={<ArchiveRoundedIcon />}
-                        disabled={project.asset_count === 0}
-                        sx={{ textTransform: 'none', fontWeight: 700 }}
-                      >
-                        ZIP
-                      </Button>
-                      <Button component={Link} href={`/content-assets/${project.id}`} size="small" endIcon={<ArrowForwardRoundedIcon />} sx={{ textTransform: 'none', fontWeight: 700 }}>
+                      <Button component={Link} href={`/content-assets/${project.id}`} size="small" sx={{ textTransform: 'none', fontWeight: 700 }}>
                         Detail
                       </Button>
                       <IconButton size="small" onClick={() => openEditProject(project)} aria-label={`Edit ${project.project_name}`}>

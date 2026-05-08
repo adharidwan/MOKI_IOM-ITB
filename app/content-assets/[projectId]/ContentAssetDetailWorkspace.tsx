@@ -36,10 +36,7 @@ import { adminPalette } from '../../lib/adminPalette';
 import type { ContentAsset, ContentAssetProject, ContentTag } from '../../lib/types';
 import {
   deleteContentAssetAction,
-  deleteContentAssetProjectAction,
-  saveContentAssetProjectAction,
   saveContentAssetTagsAction,
-  type ContentAssetProjectFormState,
   type ContentAssetTagFormState,
 } from '../actions';
 
@@ -67,7 +64,6 @@ interface TagOption {
 const CONTENT_TAG_SX = { height: 22, borderRadius: 1.75, fontSize: '0.71rem', fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft };
 const tagFilter = createFilterOptions<TagOption>();
 const EMPTY_ASSET_FORM: ContentAssetTagFormState = { id: '', notes: '', tag_ids: [], new_tag_names: [] };
-const EMPTY_PROJECT_FORM: ContentAssetProjectFormState = { id: '', project_name: '', notes: '', tag_ids: [], new_tag_names: [] };
 
 function setOptionalParam(params: URLSearchParams, key: string, value: string) {
   if (value) {
@@ -197,15 +193,9 @@ export default function ContentAssetDetailWorkspace({
   const [editAssetTarget, setEditAssetTarget] = useState<ContentAsset | null>(null);
   const [editAssetForm, setEditAssetForm] = useState<ContentAssetTagFormState>(EMPTY_ASSET_FORM);
   const [selectedAssetTags, setSelectedAssetTags] = useState<TagOption[]>([]);
-  const [editProjectOpen, setEditProjectOpen] = useState(false);
-  const [editProjectForm, setEditProjectForm] = useState<ContentAssetProjectFormState>(EMPTY_PROJECT_FORM);
-  const [selectedProjectTags, setSelectedProjectTags] = useState<TagOption[]>([]);
-  const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [isUploading, startUploadTransition] = useTransition();
   const [isSavingAsset, startSaveAssetTransition] = useTransition();
-  const [isSavingProject, startSaveProjectTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
-  const [isDeletingProject, startDeleteProjectTransition] = useTransition();
 
   const imageCount = assets.filter((asset) => asset.mime_type.startsWith('image/')).length;
   const videoCount = assets.filter((asset) => asset.mime_type.startsWith('video/')).length;
@@ -256,24 +246,6 @@ export default function ContentAssetDetailWorkspace({
 
     setSelectedAssetTags(normalized);
     setEditAssetForm((current) => ({
-      ...current,
-      tag_ids: normalized.filter((tag) => !tag.isNew).map((tag) => tag.id),
-      new_tag_names: normalized.filter((tag) => tag.isNew).map((tag) => tag.name),
-    }));
-  }
-
-  function syncProjectTags(nextTags: TagOption[]) {
-    const normalized = Array.from(
-      new Map(
-        nextTags
-          .map(normalizeTagOption)
-          .filter((tag) => tag.name.trim())
-          .map((tag) => [tag.isNew ? `new:${tag.name.toLowerCase()}` : tag.id, tag] as const),
-      ).values(),
-    );
-
-    setSelectedProjectTags(normalized);
-    setEditProjectForm((current) => ({
       ...current,
       tag_ids: normalized.filter((tag) => !tag.isNew).map((tag) => tag.id),
       new_tag_names: normalized.filter((tag) => tag.isNew).map((tag) => tag.name),
@@ -335,18 +307,6 @@ export default function ContentAssetDetailWorkspace({
     });
   }
 
-  function openEditProject() {
-    setSelectedProjectTags(project.tags);
-    setEditProjectForm({
-      id: project.id,
-      project_name: project.project_name,
-      notes: project.notes || '',
-      tag_ids: project.tags.map((tag) => tag.id),
-      new_tag_names: [],
-    });
-    setEditProjectOpen(true);
-  }
-
   function handleUpload(formData: FormData) {
     setFlash(null);
     startUploadTransition(async () => {
@@ -396,19 +356,6 @@ export default function ContentAssetDetailWorkspace({
     });
   }
 
-  function handleDeleteProject() {
-    startDeleteProjectTransition(async () => {
-      const result = await deleteContentAssetProjectAction(project.id);
-      if (result.success) {
-        setDeleteProjectOpen(false);
-        router.push('/content-assets');
-      } else {
-        setDeleteProjectOpen(false);
-        setFlash({ severity: 'error', message: result.error || 'Gagal menghapus project asset.' });
-      }
-    });
-  }
-
   function handleSaveAsset() {
     startSaveAssetTransition(async () => {
       const result = await saveContentAssetTagsAction(editAssetForm);
@@ -425,26 +372,6 @@ export default function ContentAssetDetailWorkspace({
       });
       setEditAssetTarget(null);
       setFlash({ severity: 'success', message: 'Asset berhasil disimpan.' });
-      router.refresh();
-    });
-  }
-
-  function handleSaveProject() {
-    startSaveProjectTransition(async () => {
-      const result = await saveContentAssetProjectAction(editProjectForm);
-
-      if (!result.success || !result.project) {
-        setFlash({ severity: 'error', message: result.error || 'Gagal menyimpan project asset.' });
-        return;
-      }
-
-      setTagOptions((current) => {
-        const byId = new Map(current.map((tag) => [tag.id, tag]));
-        result.project?.tags.forEach((tag) => byId.set(tag.id, tag));
-        return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
-      });
-      setEditProjectOpen(false);
-      setFlash({ severity: 'success', message: 'Project asset berhasil disimpan.' });
       router.refresh();
     });
   }
@@ -483,23 +410,6 @@ export default function ContentAssetDetailWorkspace({
             sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }}
           >
             Download ZIP
-          </Button>
-          <Button
-            color="error"
-            variant="outlined"
-            startIcon={<DeleteOutlineRoundedIcon />}
-            onClick={() => setDeleteProjectOpen(true)}
-            sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700 }}
-          >
-            Delete Project
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<EditRoundedIcon />}
-            onClick={openEditProject}
-            sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }}
-          >
-            Edit Project
           </Button>
         </Stack>
       </Stack>
@@ -674,21 +584,6 @@ export default function ContentAssetDetailWorkspace({
         </DialogActions>
       </Dialog>
 
-      <Dialog open={deleteProjectOpen} onClose={() => setDeleteProjectOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Delete project?</DialogTitle>
-        <DialogContent>
-          <Typography sx={{ color: adminPalette.textSecondary }}>
-            {`Project "${project.project_name}" beserta ${assets.length} asset dan file storage terkait akan dihapus.`}
-          </Typography>
-        </DialogContent>
-        <DialogActions sx={{ p: 2.5, pt: 1 }}>
-          <Button onClick={() => setDeleteProjectOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={handleDeleteProject} disabled={isDeletingProject} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
-            {isDeletingProject ? 'Deleting...' : 'Delete Project'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
       <Dialog open={Boolean(editAssetTarget)} onClose={() => setEditAssetTarget(null)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Edit asset</DialogTitle>
         <DialogContent>
@@ -731,47 +626,6 @@ export default function ContentAssetDetailWorkspace({
         </DialogActions>
       </Dialog>
 
-      <Dialog open={editProjectOpen} onClose={() => setEditProjectOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Edit project</DialogTitle>
-        <DialogContent>
-          <Stack spacing={1.4} sx={{ pt: 1 }}>
-            <TextField label="Nama project" value={editProjectForm.project_name} onChange={(event) => setEditProjectForm((current) => ({ ...current, project_name: event.target.value }))} fullWidth disabled={isSavingProject} />
-            <TextField label="Notes project" value={editProjectForm.notes || ''} onChange={(event) => setEditProjectForm((current) => ({ ...current, notes: event.target.value }))} multiline minRows={2} fullWidth disabled={isSavingProject} />
-            <Autocomplete
-              multiple
-              freeSolo
-              options={tagOptions}
-              value={selectedProjectTags}
-              filterSelectedOptions
-              filterOptions={(options, params) => {
-                const filtered = tagFilter(options, params);
-                const input = params.inputValue.replace(/\s+/g, ' ').trim();
-                const exists = options.some((option) => option.name.toLowerCase() === input.toLowerCase());
-                if (input && !exists) {
-                  filtered.push({ id: `new:${input.toLowerCase()}`, name: `Add "${input}"`, inputValue: input, isNew: true });
-                }
-                return filtered;
-              }}
-              getOptionLabel={(option) => typeof option === 'string' ? option : option.name}
-              isOptionEqualToValue={(option, value) => option.id === value.id}
-              onChange={(_, value) => syncProjectTags(value.map(normalizeTagOption))}
-              renderOption={(props, option) => <Box component="li" {...props}>{option.inputValue ? `Add "${option.inputValue}"` : option.name}</Box>}
-              renderInput={(params) => <TextField {...params} label="Tags" helperText="Select existing tags or type a new tag name and choose Add." />}
-              renderTags={(value, getTagProps) => value.map((option, index) => {
-                const { key, ...tagProps } = getTagProps({ index });
-                return <Chip key={key} label={option.inputValue || option.name} {...tagProps} />;
-              })}
-              disabled={isSavingProject}
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ p: 2.5, pt: 1 }}>
-          <Button onClick={() => setEditProjectOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
-          <Button variant="contained" onClick={handleSaveProject} disabled={isSavingProject} sx={{ backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
-            {isSavingProject ? 'Saving...' : 'Save'}
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Stack>
   );
 }
