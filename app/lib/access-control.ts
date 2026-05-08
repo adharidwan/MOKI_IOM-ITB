@@ -15,6 +15,7 @@ export const FEATURE_DEFINITIONS = [
   { key: 'whatsapp', path: '/whatsapp', label: 'WhatsApp', description: 'Pantau instance, QR, runtime, dan antrean outbound WhatsApp.' },
   { key: 'scrape', path: '/scrape', label: 'Import', description: 'Ambil konten dari channel eksternal.' },
   { key: 'content-record', path: '/content-record', label: 'Library', description: 'Kelola arsip konten publikasi.' },
+  { key: 'content-assets', path: '/content-assets', label: 'Assets', description: 'Drafting dan manajemen asset image/video konten.' },
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_DEFINITIONS)[number]['key'];

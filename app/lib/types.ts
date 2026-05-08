@@ -72,3 +72,19 @@ export interface ContentRecording {
   created_at: string;
   updated_at: string;
 }
+
+export interface ContentAsset {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  uploader: string;
+  uploader_email: string | null;
+  project_name: string;
+  original_filename: string;
+  storage_bucket: string;
+  storage_path: string;
+  mime_type: string;
+  file_size: number;
+  notes: string | null;
+  signed_url: string | null;
+}
