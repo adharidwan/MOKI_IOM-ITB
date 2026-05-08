@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { upsertContentRecording } from "../lib/api";
+import { requireFeatureAccess } from "../lib/access-control";
 import { scrapeContentFromLink } from "../lib/scrape-content-link";
 import type { ContentRecordingPlatform, ContentRecordingType } from "../lib/types";
 
@@ -162,6 +163,7 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
 export async function exportScrapedContentAction(
   items: ScrapedRecordingCandidate[],
 ): Promise<ExportScrapedContentResult> {
+  await requireFeatureAccess('scrape');
   const candidates = dedupeByLink(items || []);
   if (!candidates.length) {
     return {

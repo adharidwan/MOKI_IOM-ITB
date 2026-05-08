@@ -1,3 +1,6 @@
+import { NextResponse } from 'next/server';
+
+import { requireAnyFeatureFromRequest } from '../../../../../../lib/access-control';
 import { createWhatsappOpsRepository } from '../../../../../../lib/whatsapp-ops-repository';
 import { getWhatsappInstanceDetail } from '../../../../../../lib/whatsapp-ops-service';
 
@@ -11,7 +14,16 @@ function toSseMessage(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-export async function GET(_request: Request, { params }: Props): Promise<Response> {
+export async function GET(request: Request, { params }: Props): Promise<Response> {
+  try {
+    await requireAnyFeatureFromRequest(request, ['whatsapp']);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Akses ditolak.' },
+      { status: 403 },
+    );
+  }
+
   const resolvedParams = await params;
   const repository = createWhatsappOpsRepository();
   const encoder = new TextEncoder();

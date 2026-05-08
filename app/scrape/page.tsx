@@ -1,7 +1,10 @@
 import AdminFeatureShell from '../components/AdminFeatureShell';
+import { requireFeatureAccess } from '../lib/access-control';
 import ContentScrapingWorkspace from './content-scraping-workspace';
 
-export default function ContentManagementPage() {
+export default async function ContentManagementPage() {
+  await requireFeatureAccess('scrape');
+
   return (
     <AdminFeatureShell
       badge="Content"

@@ -9,8 +9,71 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import { useSso } from "./components/SsoProvider";
+
+const DASHBOARD_ITEMS = [
+  {
+    featureKey: "contacts",
+    title: "Kontak & Grup",
+    description: "Tambah nomor, upload CSV, lalu rapikan penerima ke dalam grup.",
+    href: "/contacts",
+    buttonLabel: "Buka kontak",
+    backgroundColor: "#fffdf8",
+    borderColor: "rgba(31, 111, 95, 0.14)",
+    buttonVariant: "contained" as const,
+    buttonColor: "#1f6f5f",
+  },
+  {
+    featureKey: "scrape",
+    title: "Scrape",
+    description: "Ambil konten dari channel YouTube, X, dan Instagram lalu pilih item yang ingin disimpan ke content recording.",
+    href: "/scrape",
+    buttonLabel: "Buka scrape",
+    backgroundColor: "#f8fbfa",
+    borderColor: "rgba(31, 111, 95, 0.14)",
+    buttonVariant: "outlined" as const,
+    buttonColor: "#1f6f5f",
+  },
+  {
+    featureKey: "blast",
+    title: "Blast Message",
+    description: "Pilih penerima, tulis pesan, cek preview, lalu kirim.",
+    href: "/blastmessage",
+    buttonLabel: "Buka blast message",
+    backgroundColor: "#f7faf8",
+    borderColor: "rgba(31, 111, 95, 0.14)",
+    buttonVariant: "outlined" as const,
+    buttonColor: "#1f6f5f",
+  },
+  {
+    featureKey: "whatsapp",
+    title: "WhatsApp Operations",
+    description: "Pantau status instance, QR, runtime worker, dan antrean outbound WhatsApp.",
+    href: "/whatsapp",
+    buttonLabel: "Buka WhatsApp",
+    backgroundColor: "#f6fbf8",
+    borderColor: "rgba(31, 111, 95, 0.14)",
+    buttonVariant: "outlined" as const,
+    buttonColor: "#1f6f5f",
+  },
+  {
+    featureKey: "content-record",
+    title: "Content Library",
+    description: "Simpan referensi konten YouTube, X, Instagram, dan website dengan auto-fill dari link.",
+    href: "/content-record",
+    buttonLabel: "Buka content library",
+    backgroundColor: "#fffaf0",
+    borderColor: "rgba(217, 167, 84, 0.2)",
+    buttonVariant: "outlined" as const,
+    buttonColor: "#9a6506",
+  },
+];
 
 export default function HomePage() {
+  const { roles, features, logout } = useSso();
+  const isAdmin = roles.includes("admin");
+  const visibleItems = DASHBOARD_ITEMS.filter((item) => isAdmin || features.includes(item.featureKey));
+
   return (
     <Box
       sx={{
@@ -45,9 +108,24 @@ export default function HomePage() {
             <Typography
               sx={{ fontSize: "1.1rem", lineHeight: 1.8, color: "#50665d" }}
             >
-              Anda bisa mulai dari mengatur kontak, masuk ke halaman kirim blast
-              message, atau membuka menu scrape dan content recording.
+              Anda bisa mulai dari fitur yang sudah diberikan untuk akun ini.
             </Typography>
+            <Button
+              variant="outlined"
+              onClick={() => {
+                void logout();
+              }}
+              sx={{
+                alignSelf: "flex-start",
+                borderRadius: 999,
+                borderColor: "rgba(31, 111, 95, 0.38)",
+                color: "#1f6f5f",
+                textTransform: "none",
+                fontWeight: 700,
+              }}
+            >
+              Logout
+            </Button>
 
             <Box
               sx={{
@@ -56,183 +134,56 @@ export default function HomePage() {
                 gap: 2,
               }}
             >
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 3,
-                  borderRadius: 3,
-                  border: "1px solid rgba(31, 111, 95, 0.14)",
-                  backgroundColor: "#fffdf8",
-                }}
-              >
-                <Stack spacing={1.5}>
-                  <Typography
+              {visibleItems.length ? (
+                visibleItems.map((item) => (
+                  <Paper
+                    key={item.href}
+                    elevation={0}
                     sx={{
-                      fontSize: "1.4rem",
-                      fontWeight: 800,
-                      color: "#163020",
+                      p: 3,
+                      borderRadius: 3,
+                      border: `1px solid ${item.borderColor}`,
+                      backgroundColor: item.backgroundColor,
                     }}
                   >
-                    Kontak & Grup
+                    <Stack spacing={1.5}>
+                      <Typography sx={{ fontSize: "1.4rem", fontWeight: 800, color: "#163020" }}>
+                        {item.title}
+                      </Typography>
+                      <Typography sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}>
+                        {item.description}
+                      </Typography>
+                      <Button
+                        component={Link}
+                        href={item.href}
+                        variant={item.buttonVariant}
+                        sx={{
+                          alignSelf: "flex-start",
+                          minHeight: 56,
+                          borderRadius: 999,
+                          px: 3.5,
+                          borderColor: item.buttonColor,
+                          color: item.buttonVariant === "contained" ? "#ffffff" : item.buttonColor,
+                          backgroundColor: item.buttonVariant === "contained" ? item.buttonColor : undefined,
+                          textTransform: "none",
+                          fontWeight: 700,
+                        }}
+                      >
+                        {item.buttonLabel}
+                      </Button>
+                    </Stack>
+                  </Paper>
+                ))
+              ) : (
+                <Paper
+                  elevation={0}
+                  sx={{ gridColumn: "1 / -1", p: 3, borderRadius: 3, border: "1px solid rgba(31, 111, 95, 0.14)" }}
+                >
+                  <Typography sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}>
+                    Belum ada fitur yang aktif untuk akun ini. Minta admin mengaktifkan akses dari menu Access Control.
                   </Typography>
-                  <Typography
-                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
-                  >
-                    Tambah nomor, upload CSV, lalu rapikan penerima ke dalam
-                    grup.
-                  </Typography>
-                  <Button
-                    component={Link}
-                    href="/contacts"
-                    variant="contained"
-                    sx={{
-                      alignSelf: "flex-start",
-                      minHeight: 56,
-                      borderRadius: 999,
-                      px: 3.5,
-                      backgroundColor: "#1f6f5f",
-                      textTransform: "none",
-                      fontWeight: 700,
-                    }}
-                  >
-                    Buka kontak
-                  </Button>
-                </Stack>
-              </Paper>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 3,
-                  borderRadius: 3,
-                  border: "1px solid rgba(31, 111, 95, 0.14)",
-                  backgroundColor: "#f8fbfa",
-                }}
-              >
-                <Stack spacing={1.5}>
-                  <Typography
-                    sx={{
-                      fontSize: "1.4rem",
-                      fontWeight: 800,
-                      color: "#163020",
-                    }}
-                  >
-                    Scrape
-                  </Typography>
-                  <Typography
-                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
-                  >
-                    Ambil konten dari channel YouTube, X, dan Instagram lalu
-                    pilih item yang ingin disimpan ke content recording.
-                  </Typography>
-                  <Button
-                    component={Link}
-                    href="/scrape"
-                    variant="outlined"
-                    sx={{
-                      alignSelf: "flex-start",
-                      minHeight: 56,
-                      borderRadius: 999,
-                      px: 3.5,
-                      borderColor: "#1f6f5f",
-                      color: "#1f6f5f",
-                      textTransform: "none",
-                      fontWeight: 700,
-                    }}
-                  >
-                    Buka scrape
-                  </Button>
-                </Stack>
-              </Paper>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 3,
-                  borderRadius: 3,
-                  border: "1px solid rgba(31, 111, 95, 0.14)",
-                  backgroundColor: "#f7faf8",
-                }}
-              >
-                <Stack spacing={1.5}>
-                  <Typography
-                    sx={{
-                      fontSize: "1.4rem",
-                      fontWeight: 800,
-                      color: "#163020",
-                    }}
-                  >
-                    Blast Message
-                  </Typography>
-                  <Typography
-                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
-                  >
-                    Pilih penerima, tulis pesan, cek preview, lalu kirim.
-                  </Typography>
-                  <Button
-                    component={Link}
-                    href="/blastmessage"
-                    variant="outlined"
-                    sx={{
-                      alignSelf: "flex-start",
-                      minHeight: 56,
-                      borderRadius: 999,
-                      px: 3.5,
-                      borderColor: "#1f6f5f",
-                      color: "#1f6f5f",
-                      textTransform: "none",
-                      fontWeight: 700,
-                    }}
-                  >
-                    Buka blast message
-                  </Button>
-                </Stack>
-              </Paper>
-
-              <Paper
-                elevation={0}
-                sx={{
-                  p: 3,
-                  borderRadius: 3,
-                  border: "1px solid rgba(217, 167, 84, 0.2)",
-                  backgroundColor: "#fffaf0",
-                }}
-              >
-                <Stack spacing={1.5}>
-                  <Typography
-                    sx={{
-                      fontSize: "1.4rem",
-                      fontWeight: 800,
-                      color: "#163020",
-                    }}
-                  >
-                    Content Library
-                  </Typography>
-                  <Typography
-                    sx={{ fontSize: "1rem", lineHeight: 1.7, color: "#50665d" }}
-                  >
-                    Simpan referensi konten YouTube, X, Instagram, dan website
-                    dengan auto-fill dari link.
-                  </Typography>
-                  <Button
-                    component={Link}
-                    href="/content-record"
-                    variant="outlined"
-                    sx={{
-                      alignSelf: "flex-start",
-                      minHeight: 56,
-                      borderRadius: 999,
-                      px: 3.5,
-                      borderColor: "#d9a754",
-                      color: "#9a6506",
-                      textTransform: "none",
-                      fontWeight: 700,
-                    }}
-                  >
-                    Buka content library
-                  </Button>
-                </Stack>
-              </Paper>
+                </Paper>
+              )}
             </Box>
           </Stack>
         </Paper>

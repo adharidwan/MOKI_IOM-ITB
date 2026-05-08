@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 
+import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import { resolveGroupRecipientsPreview } from '@/app/lib/group-directory-server';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: Request): Promise<Response> {
   try {
+    await requireAnyFeatureFromRequest(request, ['groups', 'blast']);
     const body = (await request.json()) as { groupNames?: string[] };
 
     return Response.json(

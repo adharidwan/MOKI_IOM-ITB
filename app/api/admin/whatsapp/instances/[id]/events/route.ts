@@ -1,3 +1,6 @@
+import { NextResponse } from 'next/server';
+
+import { requireAnyFeatureFromRequest } from '../../../../../../lib/access-control';
 import { createWhatsappOpsRepository } from '../../../../../../lib/whatsapp-ops-repository';
 import { handleGetWhatsappInstanceEventsRequest } from '../../../../../../lib/whatsapp-ops-service';
 
@@ -7,7 +10,15 @@ type Props = {
   params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, { params }: Props): Promise<Response> {
-  const resolvedParams = await params;
-  return handleGetWhatsappInstanceEventsRequest(resolvedParams.id, createWhatsappOpsRepository());
+export async function GET(request: Request, { params }: Props): Promise<Response> {
+  try {
+    await requireAnyFeatureFromRequest(request, ['whatsapp']);
+    const resolvedParams = await params;
+    return handleGetWhatsappInstanceEventsRequest(resolvedParams.id, createWhatsappOpsRepository());
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Akses ditolak.' },
+      { status: 403 },
+    );
+  }
 }

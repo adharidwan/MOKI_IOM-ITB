@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { getGrantedFeaturesForUser, getCurrentUserFromToken, upsertManagedUser } from '@/app/lib/access-control';
 import { SSO_SESSION_COOKIE } from '@/app/lib/sso-config';
 import { verifySsoAccessToken } from '@/app/lib/sso-server';
 
@@ -22,6 +23,9 @@ export async function POST(request: Request) {
 
   try {
     const payload = await verifySsoAccessToken(token);
+    const user = await getCurrentUserFromToken(token);
+    await upsertManagedUser(user);
+    const features = await getGrantedFeaturesForUser(user);
     const response = NextResponse.json({
       authenticated: true,
       user: {
@@ -29,6 +33,7 @@ export async function POST(request: Request) {
         name: payload.name || null,
         email: payload.email || null,
         roles: payload.realm_access?.roles || [],
+        features,
       },
     });
 

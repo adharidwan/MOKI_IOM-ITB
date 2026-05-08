@@ -8,6 +8,7 @@ import {
   upsertContentRecording,
   type ContentRecordingInput,
 } from '../lib/api';
+import { requireFeatureAccess } from '../lib/access-control';
 import { scrapeContentFromLink } from '../lib/scrape-content-link';
 import type { ContentRecording, ContentRecordingPlatform } from '../lib/types';
 
@@ -129,6 +130,7 @@ async function normalizeInput(input: ContentRecordingFormState): Promise<Content
 export async function scrapeContentRecordingAction(
   rawLink: string,
 ): Promise<ScrapeContentRecordingResult> {
+  await requireFeatureAccess('content-record');
   const link = normalizeText(rawLink);
 
   if (!link) {
@@ -171,6 +173,7 @@ export async function saveContentRecordingAction(
   input: ContentRecordingFormState,
 ): Promise<SaveContentRecordingResult> {
   try {
+    await requireFeatureAccess('content-record');
     const record = await upsertContentRecording(await normalizeInput(input));
     revalidatePath('/content-record');
 
@@ -193,6 +196,7 @@ export async function deleteContentRecordingAction(
   id: string,
 ): Promise<DeleteContentRecordingResult> {
   try {
+    await requireFeatureAccess('content-record');
     await deleteContentRecording(id);
     revalidatePath('/content-record');
 
