@@ -1,11 +1,7 @@
-import Link from 'next/link';
-import { Button, Stack } from '@mui/material';
-
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import GroupDirectory from '../components/GroupDirectory';
 import PhoneListToast from '../components/PhoneListToast';
 import { getPaginatedContactGroups, getPaginatedGroupMembers } from '../lib/group-directory-server';
-import { adminPalette } from '../lib/adminPalette';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -53,49 +49,6 @@ export default async function GroupPage({
       badge="Groups"
       title="Kelola grup penerima"
       description="Pantau grup dan anggota dalam satu dashboard agar segmentasi selalu siap dipakai untuk blast."
-      actions={
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-          <Link href="/contacts" style={{ textDecoration: 'none' }}>
-            <Button
-              variant="outlined"
-              size="large"
-              sx={{
-                textTransform: 'none',
-                fontWeight: 700,
-                borderRadius: 2.5,
-                borderColor: adminPalette.borderStrong,
-                color: adminPalette.textSecondary,
-                backgroundColor: adminPalette.surface,
-                '&:hover': {
-                  borderColor: adminPalette.brandSoftStrong,
-                  backgroundColor: adminPalette.brandSoft,
-                },
-              }}
-            >
-              Buka direktori kontak
-            </Button>
-          </Link>
-          <Link href="/blastmessage" style={{ textDecoration: 'none' }}>
-            <Button
-              variant="contained"
-              size="large"
-              sx={{
-                textTransform: 'none',
-                fontWeight: 700,
-                borderRadius: 2.5,
-                boxShadow: 'none',
-                backgroundColor: adminPalette.brand,
-                '&:hover': {
-                  backgroundColor: adminPalette.brandDark,
-                  boxShadow: 'none',
-                },
-              }}
-            >
-              Buka blast
-            </Button>
-          </Link>
-        </Stack>
-      }
     >
       <PhoneListToast />
 
