@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
-import { createCsvContact, type CsvContactInput } from '../lib/api';
+import { addCsvContactsGroups, createCsvContact, type CsvContactInput } from '../lib/api';
 import { requireFeatureAccess } from '../lib/access-control';
 
 function normalizeContactInput(formData: FormData, groupName: string): CsvContactInput {
@@ -39,6 +39,23 @@ function redirectToGroup(groupName: string, toast: string) {
 export async function createGroupWithFirstMemberAction(formData: FormData): Promise<void> {
   await requireFeatureAccess('groups');
   const groupName = String(formData.get('group_name') || '').trim();
+  const existingContactId = String(formData.get('existing_contact_id') || '').trim();
+
+  if (!groupName) {
+    redirect('/group?toast=error');
+  }
+
+  if (existingContactId) {
+    try {
+      await addCsvContactsGroups([existingContactId], [groupName]);
+      revalidateGroupPages();
+    } catch {
+      redirect('/group?toast=error');
+    }
+
+    redirectToGroup(groupName, 'group_created');
+  }
+
   const input = normalizeContactInput(formData, groupName);
 
   if (validateInput(input, groupName)) {

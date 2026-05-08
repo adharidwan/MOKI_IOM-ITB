@@ -7,6 +7,7 @@ import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -32,6 +33,7 @@ import {
 import { createGroupMemberAction, createGroupWithFirstMemberAction } from '../group/actions';
 import type { PaginatedContactGroupsResponse, PaginatedGroupMembersResponse } from '../lib/group-directory-server';
 import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import type { CsvContact } from '../lib/types';
 
 const GENDER_OPTIONS = ['Laki-laki', 'Perempuan', 'Tidak diketahui'];
 
@@ -83,6 +85,7 @@ const MEMBER_SORT_DEFAULTS: Record<GroupMemberSortKey, SortDirection> = {
 
 interface GroupDirectoryProps {
   groups: PaginatedContactGroupsResponse;
+  contactOptions: CsvContact[];
   selectedGroupName: string;
   members: PaginatedGroupMembersResponse;
   currentSearch: string;
@@ -186,6 +189,7 @@ function GroupDialogHeader({
 
 export default function GroupDirectory({
   groups,
+  contactOptions,
   selectedGroupName,
   members,
   currentSearch,
@@ -202,6 +206,7 @@ export default function GroupDirectory({
   const [memberSearch, setMemberSearch] = useState(currentMemberSearch);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [createMemberOpen, setCreateMemberOpen] = useState(false);
+  const [firstMemberContact, setFirstMemberContact] = useState<CsvContact | null>(null);
 
   useEffect(() => {
     setSearch(currentSearch);
@@ -740,7 +745,10 @@ export default function GroupDirectory({
 
       <Dialog
         open={createGroupOpen}
-        onClose={() => setCreateGroupOpen(false)}
+        onClose={() => {
+          setCreateGroupOpen(false);
+          setFirstMemberContact(null);
+        }}
         maxWidth="sm"
         fullWidth
         PaperProps={{
@@ -754,23 +762,62 @@ export default function GroupDirectory({
         <GroupDialogHeader
           eyebrow="Grup baru"
           title="Buat grup dan simpan anggota pertama"
-          description="Di halaman ini, grup baru akan terbentuk saat anggota pertama disimpan ke dalamnya."
-          onClose={() => setCreateGroupOpen(false)}
+          description="Cari kontak yang sudah ada sebagai anggota pertama, atau isi data anggota baru."
+          onClose={() => {
+            setCreateGroupOpen(false);
+            setFirstMemberContact(null);
+          }}
         />
         <DialogContent sx={{ p: 0 }}>
           <Box component="form" action={createGroupWithFirstMemberAction} sx={{ display: 'grid', gap: 1.5, px: 2.5, py: 2.5 }}>
             <TextField name="group_name" label="Nama grup" required placeholder="Contoh: Orang Tua Kelas 6A" size="small" fullWidth />
-            <TextField name="nama" label="Nama anggota pertama" required placeholder="Contoh: Ibu Rina" size="small" fullWidth />
-            <TextField name="no_telp" label="Nomor WhatsApp" required placeholder="6281234567890" size="small" fullWidth />
-            <TextField name="jenis_kelamin" label="Jenis kelamin" select defaultValue="Tidak diketahui" size="small" fullWidth>
-              {GENDER_OPTIONS.map((option) => (
-                <MenuItem key={option} value={option}>
-                  {option}
-                </MenuItem>
-              ))}
-            </TextField>
+            <input type="hidden" name="existing_contact_id" value={firstMemberContact?.id || ''} />
+            <Autocomplete
+              options={contactOptions}
+              value={firstMemberContact}
+              onChange={(_event, nextValue) => setFirstMemberContact(nextValue)}
+              getOptionLabel={(option) => `${option.nama} - ${option.no_telp}`}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Cari anggota pertama"
+                  placeholder="Cari nama atau nomor kontak"
+                  helperText="Kosongkan jika ingin membuat kontak baru sebagai anggota pertama."
+                  size="small"
+                  fullWidth
+                />
+              )}
+            />
+            {firstMemberContact ? (
+              <Paper elevation={0} sx={{ p: 1.5, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft }}>
+                <Typography sx={{ fontSize: '0.9rem', fontWeight: 800, color: adminPalette.textPrimary }}>{firstMemberContact.nama}</Typography>
+                <Typography sx={{ mt: 0.35, fontSize: '0.82rem', color: adminPalette.textSecondary }}>{firstMemberContact.no_telp}</Typography>
+                <Typography sx={{ mt: 0.35, fontSize: '0.78rem', color: adminPalette.textMuted }}>
+                  Kontak ini akan ditambahkan ke grup baru.
+                </Typography>
+              </Paper>
+            ) : (
+              <>
+                <TextField name="nama" label="Nama anggota pertama" required placeholder="Contoh: Ibu Rina" size="small" fullWidth />
+                <TextField name="no_telp" label="Nomor WhatsApp" required placeholder="6281234567890" size="small" fullWidth />
+                <TextField name="jenis_kelamin" label="Jenis kelamin" select defaultValue="Tidak diketahui" size="small" fullWidth>
+                  {GENDER_OPTIONS.map((option) => (
+                    <MenuItem key={option} value={option}>
+                      {option}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </>
+            )}
             <DialogActions sx={{ px: 0, pb: 0, pt: 1 }}>
-              <Button onClick={() => setCreateGroupOpen(false)} sx={{ textTransform: 'none', fontWeight: 700, color: adminPalette.textSecondary }}>
+              <Button
+                onClick={() => {
+                  setCreateGroupOpen(false);
+                  setFirstMemberContact(null);
+                }}
+                sx={{ textTransform: 'none', fontWeight: 700, color: adminPalette.textSecondary }}
+              >
                 Batal
               </Button>
               <Button type="submit" variant="contained" sx={PRIMARY_BUTTON_SX}>

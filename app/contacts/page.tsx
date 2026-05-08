@@ -40,6 +40,7 @@ export default async function ContactsPage({
       <ContactsWorkspace
         overview={overview}
         groupsTotal={groupsPage.total}
+        groupOptions={groupsPage.items.map((group) => group.name)}
         contacts={contactsPage.items}
         totalCount={contactsPage.total}
         currentPage={contactsPage.page}
