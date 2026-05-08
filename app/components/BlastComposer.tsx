@@ -29,6 +29,7 @@ import {
 
 import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
 import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
+import { downloadCsvContactTemplate } from '../lib/csv-template';
 import type { CsvContact } from '../lib/types';
 
 const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
@@ -1126,6 +1127,14 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                         }
                       }}
                     />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outlined"
+                    onClick={() => downloadCsvContactTemplate()}
+                    sx={{ ...QUIET_BUTTON_SX, px: 2.2, alignSelf: 'flex-start' }}
+                  >
+                    Download template CSV
                   </Button>
                   {csvFileName ? <Chip label={csvFileName} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} /> : null}
                 </Stack>
