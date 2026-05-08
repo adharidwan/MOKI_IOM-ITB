@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 
 import { upsertContentRecording } from "../lib/api";
 import { scrapeContentFromLink } from "../lib/scrape-content-link";
-import { getSupabaseAdminClient } from "../lib/supabase-server";
 import type { ContentRecordingPlatform, ContentRecordingType } from "../lib/types";
 
 export interface ScrapedRecordingCandidate {
@@ -87,30 +86,6 @@ function dedupeByLink(
   return deduped;
 }
 
-async function findExistingRecording(candidate: {
-  link: string;
-}): Promise<string | null> {
-  const supabase = getSupabaseAdminClient();
-
-  const { data: linkMatches, error: linkError } = await supabase
-    .from("content_recordings")
-    .select("id, title, link")
-    .eq("link", candidate.link)
-    .limit(1);
-
-  if (linkError) {
-    throw new Error(
-      `Gagal mengecek duplikasi berdasarkan link: ${linkError.message}`,
-    );
-  }
-
-  if (linkMatches?.length) {
-    return linkMatches[0].title || candidate.link;
-  }
-
-  return null;
-}
-
 async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   title: string;
   platform: ContentRecordingPlatform;
@@ -190,27 +165,6 @@ export async function exportScrapedContentAction(
         link,
         error:
           "Data belum lengkap (wajib: link, upload_date). Ulangi scrape agar metadata lebih lengkap.",
-      });
-      continue;
-    }
-
-    try {
-      const existing = await findExistingRecording({ link });
-
-      if (existing) {
-        failed.push({
-          link,
-          error: `Konten dengan link ini sudah ada: ${link}`,
-        });
-        continue;
-      }
-    } catch (error) {
-      failed.push({
-        link,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Gagal mengecek konten yang sudah ada.",
       });
       continue;
     }

@@ -912,11 +912,34 @@ async function replaceContentRecordingTags(contentRecordingId: string, tagIds: s
   }
 }
 
+async function findContentRecordingIdByLink(link: string): Promise<string | null> {
+  const normalizedLink = String(link || '').trim();
+  if (!normalizedLink) {
+    return null;
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_recordings')
+    .select('id')
+    .eq('link', normalizedLink)
+    .order('updated_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    throw new Error(`Failed to check existing content recording: ${error.message}`);
+  }
+
+  return data?.[0]?.id ? String(data[0].id) : null;
+}
+
 export async function upsertContentRecording(
   input: ContentRecordingInput,
 ): Promise<ContentRecording> {
   const supabase = getSupabaseAdminClient();
   const title = String(input.title || '').trim();
+  const link = input.link.trim();
   const payload = {
     title: title || null,
     platform: input.platform,
@@ -924,32 +947,53 @@ export async function upsertContentRecording(
     description: input.description || null,
     content_type: input.content_type || null,
     upload_date: input.upload_date,
-    link: input.link.trim(),
+    link,
     source_post_id: input.source_post_id || null,
     thumbnail_url: input.thumbnail_url || null,
     updated_at: new Date().toISOString(),
   };
 
-  if (input.id) {
+  const inputId = input.id ? String(input.id) : null;
+
+  if (inputId) {
     const { error } = await supabase
       .from('content_recordings')
       .update(payload)
-      .eq('id', input.id);
+      .eq('id', inputId);
 
     if (error) {
       throw new Error(`Failed to save content recording: ${error.message}`);
     }
 
     if (input.tag_ids) {
-      await replaceContentRecordingTags(String(input.id), input.tag_ids);
+      await replaceContentRecordingTags(inputId, input.tag_ids);
     }
 
-    return getContentRecordingById(String(input.id));
+    return getContentRecordingById(inputId);
+  }
+
+  const existingId = await findContentRecordingIdByLink(link);
+
+  if (existingId) {
+    const { error } = await supabase
+      .from('content_recordings')
+      .update(payload)
+      .eq('id', existingId);
+
+    if (error) {
+      throw new Error(`Failed to save content recording: ${error.message}`);
+    }
+
+    if (input.tag_ids) {
+      await replaceContentRecordingTags(existingId, input.tag_ids);
+    }
+
+    return getContentRecordingById(existingId);
   }
 
   const { data, error } = await supabase
     .from('content_recordings')
-    .upsert(payload, { onConflict: 'link' })
+    .insert(payload)
     .select()
     .single();
 
