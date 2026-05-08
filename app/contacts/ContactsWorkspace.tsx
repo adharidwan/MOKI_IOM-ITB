@@ -5,6 +5,7 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 import {
+  Autocomplete,
   Box,
   Button,
   Dialog,
@@ -32,6 +33,7 @@ interface ContactsWorkspaceProps {
     ungroupedContacts: number;
   };
   groupsTotal: number;
+  groupOptions: string[];
   contacts: CsvContact[];
   totalCount: number;
   currentPage: number;
@@ -94,6 +96,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
 export default function ContactsWorkspace({
   overview,
   groupsTotal,
+  groupOptions,
   contacts,
   totalCount,
   currentPage,
@@ -105,6 +108,7 @@ export default function ContactsWorkspace({
 }: ContactsWorkspaceProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [selectedGroupNames, setSelectedGroupNames] = useState<string[]>([]);
 
   return (
     <Stack spacing={1.25}>
@@ -255,12 +259,33 @@ export default function ContactsWorkspace({
 
               <Stack spacing={1.4}>
                 <SectionLabel>Segmentation</SectionLabel>
-                <TextField
-                  name="group_names"
-                  label="Grup"
-                  placeholder="Pisahkan dengan koma"
-                  helperText="Opsional. Contoh: Orang Tua Kelas A, Alumni 2026"
-                  fullWidth
+                <input type="hidden" name="group_names" value={selectedGroupNames.join(', ')} />
+                <Autocomplete
+                  multiple
+                  freeSolo
+                  options={groupOptions}
+                  value={selectedGroupNames}
+                  onChange={(_event, nextValue) => {
+                    const normalized = Array.from(
+                      new Map(
+                        nextValue
+                          .map((value) => String(value || '').trim())
+                          .filter(Boolean)
+                          .map((value) => [value.toLowerCase(), value]),
+                      ).values(),
+                    );
+                    setSelectedGroupNames(normalized);
+                  }}
+                  filterSelectedOptions
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Grup"
+                      placeholder="Cari atau buat grup baru"
+                      helperText="Pilih grup yang sudah ada, atau ketik nama baru lalu tekan Enter."
+                      fullWidth
+                    />
+                  )}
                 />
               </Stack>
             </Stack>
