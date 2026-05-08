@@ -242,6 +242,55 @@ export async function listContentAssetsByProject(projectId: string): Promise<Con
   );
 }
 
+export async function getContentAsset(id: string): Promise<ContentAsset | null> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) {
+    throw new Error('Asset id wajib diisi.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_assets')
+    .select('*')
+    .eq('id', normalizedId)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      return null;
+    }
+    throw new Error(`Gagal membaca asset: ${error.message}`);
+  }
+
+  const record = data as Record<string, unknown>;
+  return toContentAsset(
+    record,
+    await createSignedUrl(
+      String(record.storage_bucket || CONTENT_ASSET_BUCKET),
+      String(record.storage_path || ''),
+    ),
+  );
+}
+
+export async function downloadContentAssetObject(asset: ContentAsset): Promise<Blob> {
+  if (!asset.storage_bucket || !asset.storage_path) {
+    throw new Error('Lokasi storage asset tidak valid.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase.storage.from(asset.storage_bucket).download(asset.storage_path);
+
+  if (error) {
+    throw new Error(`Gagal download asset "${asset.original_filename}": ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error(`File asset "${asset.original_filename}" tidak ditemukan di storage.`);
+  }
+
+  return data;
+}
+
 export async function createContentAssetProject(input: ContentAssetProjectInput): Promise<ContentAssetProject> {
   const projectName = String(input.projectName || '').replace(/\s+/g, ' ').trim();
   if (!projectName) {

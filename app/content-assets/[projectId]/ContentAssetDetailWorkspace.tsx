@@ -4,9 +4,11 @@ import { useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import ArchiveRoundedIcon from '@mui/icons-material/ArchiveRounded';
 import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
 import MovieRoundedIcon from '@mui/icons-material/MovieRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -241,11 +243,23 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
         <Button component={Link} href="/content-assets" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: { xs: 'flex-start', sm: 'center' }, textTransform: 'none', fontWeight: 700 }}>
           Back to projects
         </Button>
-        <Stack direction="row" spacing={{ xs: 1, sm: 0.5 }} useFlexGap flexWrap="wrap">
-          <MetricTile label="Assets" value={assets.length} />
-          <MetricTile label="Images" value={imageCount} />
-          <MetricTile label="Videos" value={videoCount} />
-          <MetricTile label="Size" value={formatBytes(totalSize)} />
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.2} alignItems={{ xs: 'stretch', md: 'center' }}>
+          <Stack direction="row" spacing={{ xs: 1, sm: 0.5 }} useFlexGap flexWrap="wrap">
+            <MetricTile label="Assets" value={assets.length} />
+            <MetricTile label="Images" value={imageCount} />
+            <MetricTile label="Videos" value={videoCount} />
+            <MetricTile label="Size" value={formatBytes(totalSize)} />
+          </Stack>
+          <Button
+            component="a"
+            href={assets.length ? `/api/admin/content-assets/projects/${project.id}/download` : undefined}
+            variant="outlined"
+            startIcon={<ArchiveRoundedIcon />}
+            disabled={assets.length === 0}
+            sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }}
+          >
+            Download ZIP
+          </Button>
         </Stack>
       </Stack>
 
@@ -330,11 +344,18 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
                       <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asset.original_filename}</Typography>
                       <Typography sx={{ mt: 0.3, fontSize: '0.76rem', color: adminPalette.textMuted }}>{formatDateTime(asset.created_at)}</Typography>
                     </Box>
-                    <Tooltip title="Delete asset">
-                      <IconButton size="small" color="error" onClick={() => setDeleteTarget(asset)}>
-                        <DeleteOutlineRoundedIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
+                    <Stack direction="row" spacing={0.25}>
+                      <Tooltip title="Download asset">
+                        <IconButton component="a" href={`/api/admin/content-assets/${asset.id}/download`} size="small" sx={{ color: adminPalette.textMuted }}>
+                          <DownloadRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Delete asset">
+                        <IconButton size="small" color="error" onClick={() => setDeleteTarget(asset)}>
+                          <DeleteOutlineRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
                   </Stack>
                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                     <Chip size="small" label={asset.mime_type.startsWith('video/') ? 'Video' : 'Image'} sx={{ height: 22, fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} />

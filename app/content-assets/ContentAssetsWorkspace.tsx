@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import ArchiveRoundedIcon from '@mui/icons-material/ArchiveRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
@@ -196,9 +197,7 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
                 <TableRow
                   key={project.id}
                   hover
-                  component={Link}
-                  href={`/content-assets/${project.id}`}
-                  sx={{ textDecoration: 'none', cursor: 'pointer' }}
+                  sx={{ textDecoration: 'none' }}
                 >
                   <TableCell><ProjectPreview asset={project.preview_asset} /></TableCell>
                   <TableCell>
@@ -219,9 +218,21 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
                   </TableCell>
                   <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateTime(project.latest_asset_at)}</TableCell>
                   <TableCell align="right">
-                    <Button component="span" size="small" endIcon={<ArrowForwardRoundedIcon />} sx={{ textTransform: 'none', fontWeight: 700 }}>
-                      Detail
-                    </Button>
+                    <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+                      <Button
+                        component="a"
+                        href={project.asset_count ? `/api/admin/content-assets/projects/${project.id}/download` : undefined}
+                        size="small"
+                        startIcon={<ArchiveRoundedIcon />}
+                        disabled={project.asset_count === 0}
+                        sx={{ textTransform: 'none', fontWeight: 700 }}
+                      >
+                        ZIP
+                      </Button>
+                      <Button component={Link} href={`/content-assets/${project.id}`} size="small" endIcon={<ArrowForwardRoundedIcon />} sx={{ textTransform: 'none', fontWeight: 700 }}>
+                        Detail
+                      </Button>
+                    </Stack>
                   </TableCell>
                 </TableRow>
               ))}
