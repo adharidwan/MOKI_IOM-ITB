@@ -25,6 +25,7 @@ export interface ContentRecordingFormState {
   link: string;
   source_post_id: string;
   thumbnail_url: string;
+  media_urls: string[];
   tag_ids: string[];
   new_tag_names: string[];
 }
@@ -71,15 +72,24 @@ function normalizeTagNames(values: string[]): string[] {
   return Array.from(byKey.values());
 }
 
+function normalizeMediaUrls(values: string[]): string[] {
+  const byUrl = new Map<string, string>();
+
+  (values || []).forEach((value) => {
+    const url = normalizeText(value);
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
+}
+
 async function normalizeInput(input: ContentRecordingFormState): Promise<ContentRecordingInput> {
   const title = normalizeText(input.title);
   const platform = input.platform;
   const uploadDate = normalizeText(input.upload_date);
   const link = normalizeText(input.link);
-
-  if (!title) {
-    throw new Error('Title wajib diisi.');
-  }
 
   if (!PLATFORM_OPTIONS.includes(platform)) {
     throw new Error('Platform tidak valid.');
@@ -111,6 +121,7 @@ async function normalizeInput(input: ContentRecordingFormState): Promise<Content
     link,
     source_post_id: normalizeText(input.source_post_id) || null,
     thumbnail_url: normalizeText(input.thumbnail_url) || null,
+    media_urls: normalizeMediaUrls(input.media_urls),
     tag_ids: normalizeTagIds([...input.tag_ids, ...createdTags.map((tag) => tag.id)]),
   };
 }
@@ -142,6 +153,7 @@ export async function scrapeContentRecordingAction(
         link: normalizeText(scraped.link) || link,
         source_post_id: normalizeText(scraped.source_post_id || ''),
         thumbnail_url: normalizeText(scraped.thumbnail_url || ''),
+        media_urls: normalizeMediaUrls(scraped.media_urls || []),
       },
     };
   } catch (error) {

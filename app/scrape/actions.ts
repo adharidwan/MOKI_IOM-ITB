@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 
 import { upsertContentRecording } from "../lib/api";
 import { scrapeContentFromLink } from "../lib/scrape-content-link";
-import { getSupabaseAdminClient } from "../lib/supabase-server";
 import type { ContentRecordingPlatform, ContentRecordingType } from "../lib/types";
 
 export interface ScrapedRecordingCandidate {
@@ -14,6 +13,7 @@ export interface ScrapedRecordingCandidate {
   link: string;
   source_post_id?: string;
   thumbnail_url?: string;
+  media_urls?: string[];
   caption?: string;
   content_type?: ContentRecordingType;
 }
@@ -63,6 +63,19 @@ function normalizeContentType(value: string | null | undefined): ContentRecordin
     : null;
 }
 
+function normalizeMediaUrls(values: string[]): string[] {
+  const byUrl = new Map<string, string>();
+
+  (values || []).forEach((value) => {
+    const url = normalizeText(value);
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
+}
+
 function dedupeByLink(
   items: ScrapedRecordingCandidate[],
 ): ScrapedRecordingCandidate[] {
@@ -87,30 +100,6 @@ function dedupeByLink(
   return deduped;
 }
 
-async function findExistingRecording(candidate: {
-  link: string;
-}): Promise<string | null> {
-  const supabase = getSupabaseAdminClient();
-
-  const { data: linkMatches, error: linkError } = await supabase
-    .from("content_recordings")
-    .select("id, title, link")
-    .eq("link", candidate.link)
-    .limit(1);
-
-  if (linkError) {
-    throw new Error(
-      `Gagal mengecek duplikasi berdasarkan link: ${linkError.message}`,
-    );
-  }
-
-  if (linkMatches?.length) {
-    return linkMatches[0].title || candidate.link;
-  }
-
-  return null;
-}
-
 async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   title: string;
   platform: ContentRecordingPlatform;
@@ -118,6 +107,7 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   link: string;
   sourcePostId: string;
   thumbnailUrl: string;
+  mediaUrls: string[];
   caption: string;
   contentType: ContentRecordingType | null;
 }> {
@@ -127,11 +117,12 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
   let uploadDate = normalizeDate(candidate.upload_date);
   let sourcePostId = normalizeText(candidate.source_post_id);
   let thumbnailUrl = normalizeText(candidate.thumbnail_url);
+  let mediaUrls = normalizeMediaUrls(candidate.media_urls || []);
   let caption = normalizeText(candidate.caption);
   let contentType = normalizeContentType(candidate.content_type);
 
   const needsHydration =
-    !title || !uploadDate || !sourcePostId || !thumbnailUrl;
+    !title || !uploadDate || !sourcePostId || !thumbnailUrl || !caption;
 
   if (link && needsHydration) {
     try {
@@ -142,6 +133,7 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
       sourcePostId =
         sourcePostId || normalizeText(scraped.source_post_id || "");
       thumbnailUrl = thumbnailUrl || normalizeText(scraped.thumbnail_url || "");
+      mediaUrls = mediaUrls.length ? mediaUrls : normalizeMediaUrls(scraped.media_urls || []);
       caption = caption || normalizeText(scraped.caption || "");
       contentType = contentType || normalizeContentType(scraped.content_type || "");
       platform = platform || scraped.platform;
@@ -161,6 +153,7 @@ async function enrichCandidate(candidate: ScrapedRecordingCandidate): Promise<{
     link,
     sourcePostId,
     thumbnailUrl,
+    mediaUrls,
     caption,
     contentType,
   };
@@ -182,35 +175,14 @@ export async function exportScrapedContentAction(
   const failed: ExportFailure[] = [];
 
   for (const candidate of candidates) {
-    const { link, title, platform, uploadDate, sourcePostId, thumbnailUrl, caption, contentType } =
+    const { link, title, platform, uploadDate, sourcePostId, thumbnailUrl, mediaUrls, caption, contentType } =
       await enrichCandidate(candidate);
 
-    if (!link || !title || !uploadDate) {
+    if (!link || !uploadDate) {
       failed.push({
         link,
         error:
-          "Data belum lengkap (wajib: title, link, upload_date). Ulangi scrape agar metadata lebih lengkap.",
-      });
-      continue;
-    }
-
-    try {
-      const existing = await findExistingRecording({ link });
-
-      if (existing) {
-        failed.push({
-          link,
-          error: `Konten dengan link ini sudah ada: ${link}`,
-        });
-        continue;
-      }
-    } catch (error) {
-      failed.push({
-        link,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Gagal mengecek konten yang sudah ada.",
+          "Data belum lengkap (wajib: link, upload_date). Ulangi scrape agar metadata lebih lengkap.",
       });
       continue;
     }
@@ -225,6 +197,7 @@ export async function exportScrapedContentAction(
         content_type: contentType || null,
         source_post_id: sourcePostId || null,
         thumbnail_url: thumbnailUrl || null,
+        media_urls: mediaUrls,
       });
       savedCount += 1;
     } catch (error) {

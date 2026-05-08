@@ -1,12 +1,15 @@
 'use client';
 
 import type { ClipboardEvent } from 'react';
-import { useEffect, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
+import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded';
+import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import ImageNotSupportedRoundedIcon from '@mui/icons-material/ImageNotSupportedRounded';
@@ -39,6 +42,7 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
@@ -63,7 +67,7 @@ interface WorkspaceProps {
   currentSearch: string;
   currentPlatform: string;
   currentContentType: string;
-  currentTagId: string;
+  currentTagIds: string[];
   currentSortBy: ContentRecordingSortKey;
   currentSortDir: SortDirection;
   initialLoadError?: string | null;
@@ -117,14 +121,103 @@ const EMPTY_FORM: ContentRecordingFormState = {
   link: '',
   source_post_id: '',
   thumbnail_url: '',
+  media_urls: [],
   tag_ids: [],
   new_tag_names: [],
 };
 
 const tagFilter = createFilterOptions<TagOption>();
+const VISIBLE_TAG_LIMIT = 2;
+
+const CONTENT_TAG_SX = {
+  height: 22,
+  borderRadius: 1.75,
+  backgroundColor: adminPalette.brandSoft,
+  color: adminPalette.brandDark,
+  border: `1px solid ${adminPalette.brandSoftStrong}`,
+  fontSize: '0.71rem',
+  fontWeight: 600,
+} as const;
+
+const IMAGE_PREVIEW_SX = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'contain',
+  objectPosition: 'center',
+  display: 'block',
+} as const;
+
+const PREVIEW_FRAME_SX = {
+  borderRadius: 1.5,
+  border: `1px solid ${adminPalette.border}`,
+  backgroundColor: adminPalette.surfaceSoft,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  overflow: 'hidden',
+  p: 0.5,
+  boxSizing: 'border-box',
+} as const;
+
+const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
+  tooltip: {
+    sx: {
+      maxWidth: 320,
+      p: 1,
+      borderRadius: 2,
+      backgroundColor: adminPalette.surface,
+      color: adminPalette.textPrimary,
+      border: `1px solid ${adminPalette.border}`,
+      boxShadow: '0 18px 45px rgba(15, 23, 42, 0.18)',
+    },
+  },
+  arrow: {
+    sx: {
+      color: adminPalette.surface,
+      '&::before': {
+        border: `1px solid ${adminPalette.border}`,
+      },
+    },
+  },
+} as const;
 
 function createEmptyForm(): ContentRecordingFormState {
-  return { ...EMPTY_FORM, tag_ids: [], new_tag_names: [] };
+  return { ...EMPTY_FORM, media_urls: [], tag_ids: [], new_tag_names: [] };
+}
+
+function normalizeMediaUrls(values: string[]): string[] {
+  const byUrl = new Map<string, string>();
+
+  values.forEach((value) => {
+    const url = String(value || '').trim();
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
+}
+
+function getPreviewUrls(record: Pick<ContentRecording, 'thumbnail_url' | 'media_urls'>): string[] {
+  return normalizeMediaUrls([...(record.media_urls || []), record.thumbnail_url || '']);
+}
+
+function getInstagramEmbedUrl(link: string): string {
+  const match = String(link || '').match(/instagram\.com\/(p|reel|tv)\/([^/?#]+)/i);
+  if (!match) {
+    return '';
+  }
+
+  return `https://www.instagram.com/${match[1].toLowerCase()}/${match[2]}/embed`;
+}
+
+function getXEmbedUrl(link: string): string {
+  const match = String(link || '').match(/(?:x|twitter)\.com\/[^/]+\/status\/(\d+)/i);
+  if (!match) {
+    return '';
+  }
+
+  return `https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&theme=light`;
 }
 
 function formatDateLabel(value: string): string {
@@ -154,6 +247,10 @@ function formatContentTypeLabel(value: ContentRecordingType | null | ''): string
   }
 
   return CONTENT_TYPE_OPTIONS.find((option) => option.value === value)?.label || value;
+}
+
+function formatDisplayId(value: number | null | undefined): string {
+  return value ? String(value) : '-';
 }
 
 function normalizeTagOption(option: TagOption | string): TagOption {
@@ -186,6 +283,7 @@ function toForm(record: ContentRecording): ContentRecordingFormState {
     link: record.link,
     source_post_id: record.source_post_id || '',
     thumbnail_url: record.thumbnail_url || '',
+    media_urls: record.media_urls || [],
     tag_ids: record.tags.map((tag) => tag.id),
     new_tag_names: [],
   };
@@ -233,6 +331,221 @@ function toUrl(path: string, params: URLSearchParams) {
   return query ? `${path}?${query}` : path;
 }
 
+function PreviewImage({
+  src,
+  alt,
+}: {
+  src: string;
+  alt: string;
+}) {
+  return <Box component="img" src={src} alt={alt} sx={IMAGE_PREVIEW_SX} />;
+}
+
+function PreviewCarousel({
+  urls,
+  alt,
+  emptyLabel = 'No thumbnail preview',
+}: {
+  urls: string[];
+  alt: string;
+  emptyLabel?: string;
+}) {
+  const normalizedUrls = useMemo(() => normalizeMediaUrls(urls), [urls]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const hasMultiple = normalizedUrls.length > 1;
+  const safeActiveIndex = Math.min(activeIndex, Math.max(normalizedUrls.length - 1, 0));
+  const activeUrl = normalizedUrls[safeActiveIndex];
+
+  if (!activeUrl) {
+    return <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>{emptyLabel}</Typography>;
+  }
+
+  return (
+    <Box sx={{ position: 'relative', width: '100%', height: '100%' }}>
+      <PreviewImage src={activeUrl} alt={alt} />
+      {hasMultiple ? (
+        <>
+          <IconButton
+            size="small"
+            aria-label="Previous media"
+            onClick={(event) => {
+              event.stopPropagation();
+              setActiveIndex((current) => (current - 1 + normalizedUrls.length) % normalizedUrls.length);
+            }}
+            sx={{
+              position: 'absolute',
+              left: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 22,
+              height: 22,
+              color: '#ffffff',
+              backgroundColor: 'rgba(15, 23, 42, 0.62)',
+              '&:hover': { backgroundColor: 'rgba(15, 23, 42, 0.78)' },
+            }}
+          >
+            <ChevronLeftRoundedIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+          <IconButton
+            size="small"
+            aria-label="Next media"
+            onClick={(event) => {
+              event.stopPropagation();
+              setActiveIndex((current) => (current + 1) % normalizedUrls.length);
+            }}
+            sx={{
+              position: 'absolute',
+              right: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 22,
+              height: 22,
+              color: '#ffffff',
+              backgroundColor: 'rgba(15, 23, 42, 0.62)',
+              '&:hover': { backgroundColor: 'rgba(15, 23, 42, 0.78)' },
+            }}
+          >
+            <ChevronRightRoundedIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+          <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 4, display: 'flex', justifyContent: 'center', gap: 0.4 }}>
+            {normalizedUrls.map((url, index) => (
+              <Box key={`${url}-${index}`} sx={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: index === safeActiveIndex ? '#ffffff' : 'rgba(255, 255, 255, 0.55)' }} />
+            ))}
+          </Box>
+        </>
+      ) : null}
+    </Box>
+  );
+}
+
+function InstagramEmbedPreview({
+  link,
+  compact = false,
+}: {
+  link: string;
+  compact?: boolean;
+}) {
+  const embedUrl = getInstagramEmbedUrl(link);
+
+  if (!embedUrl) {
+    return <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />;
+  }
+
+  return (
+    <Box
+      sx={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        backgroundColor: '#ffffff',
+      }}
+    >
+      <Box
+        component="iframe"
+        src={embedUrl}
+        title="Instagram post preview"
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        sx={{
+          border: 0,
+          display: 'block',
+          width: compact ? 328 : '100%',
+          height: compact ? 430 : '100%',
+          transform: compact ? 'scale(0.31)' : 'none',
+          transformOrigin: 'top left',
+          pointerEvents: compact ? 'none' : 'auto',
+        }}
+      />
+    </Box>
+  );
+}
+
+function XEmbedPreview({
+  link,
+  compact = false,
+}: {
+  link: string;
+  compact?: boolean;
+}) {
+  const embedUrl = getXEmbedUrl(link);
+
+  if (!embedUrl) {
+    return <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />;
+  }
+
+  return (
+    <Box
+      component="iframe"
+      src={embedUrl}
+      title="X post preview"
+      loading="lazy"
+      sx={{
+        border: 0,
+        display: 'block',
+        width: compact ? 360 : '100%',
+        height: compact ? 520 : '100%',
+        transform: compact ? 'scale(0.29)' : 'none',
+        transformOrigin: 'top left',
+        pointerEvents: compact ? 'none' : 'auto',
+        backgroundColor: '#ffffff',
+      }}
+    />
+  );
+}
+
+function XPostFallbackPreview({
+  title,
+  caption,
+  sourcePostId,
+}: {
+  title: string;
+  caption: string | null;
+  sourcePostId: string | null;
+}) {
+  return (
+    <Stack
+      spacing={0.7}
+      sx={{
+        width: '100%',
+        height: '100%',
+        alignItems: 'stretch',
+        justifyContent: 'space-between',
+        p: 1,
+        backgroundColor: '#ffffff',
+      }}
+    >
+      <Stack direction="row" spacing={0.7} alignItems="center" sx={{ minWidth: 0 }}>
+        <Box
+          sx={{
+            width: 22,
+            height: 22,
+            borderRadius: '50%',
+            display: 'grid',
+            placeItems: 'center',
+            flex: '0 0 auto',
+            backgroundColor: '#111827',
+            color: '#ffffff',
+            fontSize: '0.75rem',
+            fontWeight: 800,
+          }}
+        >
+          X
+        </Box>
+        <Typography sx={{ minWidth: 0, color: adminPalette.textPrimary, fontSize: '0.68rem', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          X post
+        </Typography>
+      </Stack>
+      <Typography sx={{ color: adminPalette.textPrimary, fontSize: '0.68rem', fontWeight: 700, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+        {caption || title || 'No text preview'}
+      </Typography>
+      <Typography sx={{ color: adminPalette.textMuted, fontSize: '0.61rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {sourcePostId || 'x.com'}
+      </Typography>
+    </Stack>
+  );
+}
+
 export default function ContentRecordingWorkspace({
   recordings,
   totalCount,
@@ -244,7 +557,7 @@ export default function ContentRecordingWorkspace({
   currentSearch,
   currentPlatform,
   currentContentType,
-  currentTagId,
+  currentTagIds,
   currentSortBy,
   currentSortDir,
   initialLoadError,
@@ -264,7 +577,7 @@ export default function ContentRecordingWorkspace({
     search: currentSearch,
     platform: currentPlatform,
     contentType: currentContentType,
-    tagId: currentTagId,
+    tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
   const [isScraping, startScrapeTransition] = useTransition();
@@ -272,7 +585,12 @@ export default function ContentRecordingWorkspace({
   const [isDeleting, startDeleteTransition] = useTransition();
 
   const isBusy = isScraping || isSaving || isDeleting;
-  const activeFilterCount = [currentSearch, currentPlatform, currentContentType, currentTagId].filter(Boolean).length;
+  const activeFilterCount = [currentSearch, currentPlatform, currentContentType].filter(Boolean).length + currentTagIds.length;
+  const selectedFilterTags = useMemo(
+    () => tagOptions.filter((tag) => filters.tagIds.includes(tag.id)),
+    [filters.tagIds, tagOptions],
+  );
+
   useEffect(() => {
     setTagOptions(tags);
   }, [tags]);
@@ -282,9 +600,9 @@ export default function ContentRecordingWorkspace({
       search: currentSearch,
       platform: currentPlatform,
       contentType: currentContentType,
-      tagId: currentTagId,
+      tagIds: currentTagIds,
     });
-  }, [currentContentType, currentPlatform, currentSearch, currentTagId]);
+  }, [currentContentType, currentPlatform, currentSearch, currentTagIds]);
 
   useEffect(() => {
     const delay = setTimeout(() => {
@@ -292,7 +610,7 @@ export default function ContentRecordingWorkspace({
         filters.search === currentSearch &&
         filters.platform === currentPlatform &&
         filters.contentType === currentContentType &&
-        filters.tagId === currentTagId
+        filters.tagIds.join(',') === currentTagIds.join(',')
       ) {
         return;
       }
@@ -301,13 +619,14 @@ export default function ContentRecordingWorkspace({
       setOptionalParam(params, 'search', filters.search.trim());
       setOptionalParam(params, 'platform', filters.platform);
       setOptionalParam(params, 'contentType', filters.contentType);
-      setOptionalParam(params, 'tagId', filters.tagId);
+      setOptionalParam(params, 'tagIds', filters.tagIds.join(','));
+      params.delete('tagId');
       params.set('page', '1');
       router.replace(toUrl(pathname, params));
     }, 300);
 
     return () => clearTimeout(delay);
-  }, [currentContentType, currentPlatform, currentSearch, currentTagId, filters, pathname, router, searchParams]);
+  }, [currentContentType, currentPlatform, currentSearch, currentTagIds, filters, pathname, router, searchParams]);
 
   function updateQuery(mutator: (params: URLSearchParams) => void) {
     const params = new URLSearchParams(searchParams.toString());
@@ -363,6 +682,7 @@ export default function ContentRecordingWorkspace({
       link: current.link || data.link || '',
       source_post_id: current.source_post_id || data.source_post_id || '',
       thumbnail_url: current.thumbnail_url || data.thumbnail_url || '',
+      media_urls: current.media_urls.length ? current.media_urls : normalizeMediaUrls(data.media_urls || []),
     }));
   }
 
@@ -446,7 +766,7 @@ export default function ContentRecordingWorkspace({
 
       setDeleteTarget(null);
       setDrawerOpen(false);
-      setFlash({ severity: 'success', message: `Content record "${record.title}" berhasil dihapus.` });
+      setFlash({ severity: 'success', message: `Content record "${record.title || record.link}" berhasil dihapus.` });
       router.refresh();
     });
   }
@@ -461,14 +781,29 @@ export default function ContentRecordingWorkspace({
   }
 
   function clearFilters() {
-    setFilters({ search: '', platform: '', contentType: '', tagId: '' });
+    setFilters({ search: '', platform: '', contentType: '', tagIds: [] });
     updateQuery((params) => {
       params.delete('search');
       params.delete('platform');
       params.delete('contentType');
+      params.delete('tagIds');
       params.delete('tagId');
       params.set('page', '1');
     });
+  }
+
+  async function copyUniqueId(id: number | null | undefined) {
+    const value = id ? String(id) : '';
+    if (!value) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(value);
+      setFlash({ severity: 'success', message: 'Unique ID copied.' });
+    } catch {
+      setFlash({ severity: 'error', message: 'Gagal menyalin Unique ID.' });
+    }
   }
 
   return (
@@ -503,7 +838,7 @@ export default function ContentRecordingWorkspace({
             size="small"
             value={filters.search}
             onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
-            placeholder="Search title, caption, link, or source ID"
+            placeholder="Search nomor, title, caption, link, or source ID"
             sx={{ flex: 1, minWidth: { lg: 280 } }}
             InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }}
           />
@@ -515,10 +850,22 @@ export default function ContentRecordingWorkspace({
             <MenuItem value="">All types</MenuItem>
             {CONTENT_TYPE_OPTIONS.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
           </TextField>
-          <TextField select size="small" label="Tag" value={filters.tagId} onChange={(event) => setFilters((current) => ({ ...current, tagId: event.target.value }))} sx={{ minWidth: { xs: '100%', sm: 190 } }}>
-            <MenuItem value="">All tags</MenuItem>
-            {tagOptions.map((tag) => <MenuItem key={tag.id} value={tag.id}>{tag.name}</MenuItem>)}
-          </TextField>
+          <Autocomplete
+            multiple
+            size="small"
+            options={tagOptions}
+            value={selectedFilterTags}
+            onChange={(_, value) => setFilters((current) => ({ ...current, tagIds: value.map((tag) => tag.id) }))}
+            getOptionLabel={(option) => option.name}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            filterSelectedOptions
+            sx={{ minWidth: { xs: '100%', sm: 300 }, flex: { lg: '0 1 360px' } }}
+            renderInput={(params) => <TextField {...params} label="Tag" placeholder="All tags" />}
+            renderTags={(value, getTagProps) => value.map((option, index) => {
+              const { key, ...tagProps } = getTagProps({ index });
+              return <Chip key={key} label={option.name} size="small" sx={CONTENT_TAG_SX} {...tagProps} />;
+            })}
+          />
           {activeFilterCount > 0 ? <Button onClick={clearFilters} sx={{ color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>Clear filters</Button> : null}
         </Stack>
       </Paper>
@@ -530,10 +877,10 @@ export default function ContentRecordingWorkspace({
         </Box>
 
         <TableContainer sx={{ overflowX: 'auto' }}>
-          <Table size="small" sx={{ minWidth: 1120 }}>
+          <Table size="small" sx={{ minWidth: 1280 }}>
             <TableHead sx={{ backgroundColor: adminPalette.brand }}>
               <TableRow>
-                <TableCell sx={{ width: 112, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
+                <TableCell sx={{ width: 132, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
                 {(['title', 'platform', 'content_type', 'upload_date'] as ContentRecordingSortKey[]).map((sortKey) => (
                   <TableCell key={sortKey} sx={{ color: '#ffffff', fontWeight: 800 }}>
                     <TableSortLabel active={currentSortBy === sortKey} direction={currentSortBy === sortKey ? currentSortDir : 'asc'} onClick={() => handleSortChange(sortKey)} sx={adminTableSortLabelSx}>
@@ -541,6 +888,7 @@ export default function ContentRecordingWorkspace({
                     </TableSortLabel>
                   </TableCell>
                 ))}
+                <TableCell align="center" sx={{ color: '#ffffff', fontWeight: 800 }}>Unique ID</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Metadata</TableCell>
                 <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Actions</TableCell>
@@ -549,47 +897,102 @@ export default function ContentRecordingWorkspace({
             <TableBody>
               {recordings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} sx={{ py: 6, textAlign: 'center' }}>
+                  <TableCell colSpan={9} sx={{ py: 6, textAlign: 'center' }}>
                     <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{totalCount === 0 ? 'Belum ada konten yang tercatat.' : 'Tidak ada konten yang cocok.'}</Typography>
                     <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>{totalCount === 0 ? 'Tambahkan konten manual atau import dari workflow channel.' : 'Coba ubah pencarian atau hapus filter aktif.'}</Typography>
                   </TableCell>
                 </TableRow>
-              ) : recordings.map((record) => (
-                <TableRow key={record.id} hover>
-                  <TableCell>
-                    <Box sx={{ width: 88, height: 56, borderRadius: 1.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-                      {record.thumbnail_url ? <Box component="img" src={record.thumbnail_url} alt={record.title} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
-                    </Box>
-                  </TableCell>
-                  <TableCell sx={{ maxWidth: 330 }}>
-                    <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{record.title}</Typography>
-                    <Typography sx={{ mt: 0.4, color: adminPalette.textSecondary, fontSize: '0.78rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{record.caption || record.description || 'No caption recorded yet.'}</Typography>
-                    <Typography component={Link} href={record.link} target="_blank" rel="noopener noreferrer" sx={{ mt: 0.4, display: 'block', color: adminPalette.textMuted, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.76rem', '&:hover': { color: adminPalette.brand } }}>{record.source_post_id ? `${record.source_post_id} - ` : ''}{record.link}</Typography>
-                  </TableCell>
-                  <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
-                  <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
-                  <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
-                  <TableCell sx={{ maxWidth: 220 }}>
-                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                      {record.tags.length ? record.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={{ height: 22, borderRadius: 1.5, backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
-                    </Stack>
-                  </TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                      {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                      {!record.thumbnail_url ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                      {record.caption && record.thumbnail_url ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
-                    </Stack>
-                  </TableCell>
-                  <TableCell align="right">
-                    <Stack direction="row" spacing={0.75} justifyContent="flex-end">
-                      <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
-                      <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
-                      <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              ))}
+              ) : recordings.map((record) => {
+                const hiddenTags = record.tags.slice(VISIBLE_TAG_LIMIT);
+                const previewUrls = getPreviewUrls(record);
+                const instagramEmbedUrl = record.platform === 'Instagram' ? getInstagramEmbedUrl(record.link) : '';
+                const xEmbedUrl = record.platform === 'x' ? getXEmbedUrl(record.link) : '';
+
+                return (
+                  <TableRow key={record.id} hover>
+                    <TableCell>
+                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: previewUrls.length ? 0.5 : instagramEmbedUrl || xEmbedUrl ? 0 : 0.5 }}>
+                        {previewUrls.length ? (
+                          <PreviewCarousel urls={previewUrls} alt={record.title || 'Content preview'} emptyLabel="" />
+                        ) : instagramEmbedUrl ? (
+                          <InstagramEmbedPreview link={record.link} compact />
+                        ) : xEmbedUrl ? (
+                          <XPostFallbackPreview title={record.title} caption={record.caption} sourcePostId={record.source_post_id} />
+                        ) : (
+                          <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />
+                        )}
+                      </Box>
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 330 }}>
+                      <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{record.title}</Typography>
+                      <Typography sx={{ mt: 0.4, color: adminPalette.textSecondary, fontSize: '0.78rem', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{record.caption || record.description || 'No caption recorded yet.'}</Typography>
+                      <Typography component={Link} href={record.link} target="_blank" rel="noopener noreferrer" sx={{ mt: 0.4, display: 'block', color: adminPalette.textMuted, textDecoration: 'none', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '0.76rem', '&:hover': { color: adminPalette.brand } }}>{record.source_post_id ? `${record.source_post_id} - ` : ''}{record.link}</Typography>
+                    </TableCell>
+                    <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
+                    <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
+                    <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
+                    <TableCell align="center" sx={{ maxWidth: 230 }}>
+                      <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="center" sx={{ minWidth: 0 }}>
+                        <Typography
+                          title={formatDisplayId(record.display_id)}
+                          sx={{
+                            minWidth: 0,
+                            color: adminPalette.textSecondary,
+                            fontFamily: 'var(--font-geist-mono), monospace',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {formatDisplayId(record.display_id)}
+                        </Typography>
+                        <Tooltip title="Copy Unique ID" placement="top" arrow>
+                          <IconButton size="small" onClick={() => copyUniqueId(record.display_id)} sx={{ color: adminPalette.textMuted }}>
+                            <ContentCopyRoundedIcon sx={{ fontSize: 15 }} />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 220 }}>
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        {record.tags.length ? record.tags.slice(0, VISIBLE_TAG_LIMIT).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+                        {hiddenTags.length ? (
+                          <Tooltip
+                            title={
+                              <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                                {hiddenTags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />)}
+                              </Stack>
+                            }
+                            placement="top"
+                            arrow
+                            slotProps={CONTENT_TAG_TOOLTIP_SLOT_PROPS}
+                          >
+                            <Chip size="small" label={`+${hiddenTags.length}`} variant="outlined" sx={{ height: 22, borderRadius: 1.75, borderColor: adminPalette.borderStrong, color: adminPalette.textMuted, fontSize: '0.71rem', fontWeight: 700 }} />
+                          </Tooltip>
+                        ) : null}
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+                        {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {!previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
+                        {xEmbedUrl && !previewUrls.length ? <Chip size="small" label="No X preview" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                      </Stack>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Stack direction="row" spacing={0.75} justifyContent="flex-end">
+                        <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
+                        <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
+                        <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
@@ -633,10 +1036,10 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Metadata</SectionLabel>
               <TextField
-                label="Title"
+                label="Title (optional)"
                 value={form.title}
                 onChange={(event) => setField('title', event.target.value)}
-                helperText="Required. For Instagram and X, add a short internal label manually."
+                helperText="Optional internal label for easier browsing."
                 fullWidth
                 disabled={isBusy}
               />
@@ -648,7 +1051,17 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Preview</SectionLabel>
               <TextField label="Thumbnail URL" value={form.thumbnail_url} onChange={(event) => setField('thumbnail_url', event.target.value)} fullWidth disabled={isBusy} />
-              <Box sx={{ height: 180, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>{form.thumbnail_url ? <Box component="img" src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} sx={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
+              <Box sx={{ ...PREVIEW_FRAME_SX, height: form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? 420 : form.platform === 'x' && getXEmbedUrl(form.link) && !getPreviewUrls(form).length ? 360 : 180, borderRadius: 2, backgroundColor: adminPalette.surface, p: ((form.platform === 'Instagram' && getInstagramEmbedUrl(form.link)) || (form.platform === 'x' && getXEmbedUrl(form.link))) && !getPreviewUrls(form).length ? 0 : 0.5 }}>
+                {form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? (
+                  <InstagramEmbedPreview link={form.link} />
+                ) : getPreviewUrls(form).length ? (
+                  <PreviewCarousel urls={getPreviewUrls(form)} alt={form.title || 'Thumbnail preview'} />
+                ) : form.platform === 'x' && getXEmbedUrl(form.link) ? (
+                  <XEmbedPreview link={form.link} />
+                ) : (
+                  <PreviewCarousel urls={getPreviewUrls(form)} alt={form.title || 'Thumbnail preview'} />
+                )}
+              </Box>
             </Stack>
 
             <Stack spacing={1.4}>
