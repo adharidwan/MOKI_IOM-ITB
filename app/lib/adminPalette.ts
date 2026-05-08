@@ -74,6 +74,11 @@ export const adminMetricValueSx = {
   color: adminPalette.brandDark,
 } as const;
 
+export const adminTableHeaderCellSx = {
+  color: '#ffffff',
+  fontWeight: 800,
+} as const;
+
 export const adminTableSortLabelSx = {
   color: 'inherit',
   borderRadius: 999,

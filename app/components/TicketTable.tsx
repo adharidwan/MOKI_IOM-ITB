@@ -22,7 +22,7 @@ import {
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { TicketStatus, TicketWithReplies } from '../lib/types';
 
 interface TicketTableProps {
@@ -253,9 +253,9 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                 },
               }}
             >
-              <TableHead>
-                <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+              <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                <TableRow>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'id'}
                       direction={currentSort === 'id' ? currentSortDir : SORT_DEFAULTS.id}
@@ -265,7 +265,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       ID
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'subject'}
                       direction={currentSort === 'subject' ? currentSortDir : SORT_DEFAULTS.subject}
@@ -275,7 +275,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       Subjek
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'status'}
                       direction={currentSort === 'status' ? currentSortDir : SORT_DEFAULTS.status}
@@ -285,10 +285,10 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       Status
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     Kanal
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'updated_at'}
                       direction={currentSort === 'updated_at' ? currentSortDir : SORT_DEFAULTS.updated_at}
@@ -298,7 +298,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       Update terakhir
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     Balasan
                   </TableCell>
                 </TableRow>

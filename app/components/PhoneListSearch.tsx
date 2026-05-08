@@ -34,7 +34,7 @@ import {
   Typography,
 } from '@mui/material';
 
-import { adminPalette, adminPanelSx, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminPanelSx, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 import {
   assignContactGroupAction,
@@ -336,8 +336,8 @@ export default function PhoneListTable({
                   },
                 }}
               >
-                <TableHead>
-                    <TableRow sx={{ backgroundColor: adminPalette.brand }}>
+                <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                  <TableRow>
                     <TableCell sx={{ width: 46, py: 0.8 }}>
                       <Checkbox
                         checked={allVisibleSelected}
@@ -353,7 +353,7 @@ export default function PhoneListTable({
                         }}
                       />
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'nama'}
                         direction={currentSortBy === 'nama' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.nama}
@@ -363,7 +363,7 @@ export default function PhoneListTable({
                         Name
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'no_telp'}
                         direction={currentSortBy === 'no_telp' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.no_telp}
@@ -373,10 +373,10 @@ export default function PhoneListTable({
                         WhatsApp
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       Group
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'status'}
                         direction={currentSortBy === 'status' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.status}
@@ -386,7 +386,7 @@ export default function PhoneListTable({
                         Status
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'imported_at'}
                         direction={currentSortBy === 'imported_at' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.imported_at}
@@ -396,7 +396,7 @@ export default function PhoneListTable({
                         Imported
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell align="right" sx={adminTableHeaderCellSx}>
                       Actions
                     </TableCell>
                   </TableRow>

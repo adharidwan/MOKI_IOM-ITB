@@ -32,7 +32,7 @@ import {
 
 import { createGroupMemberAction, createGroupWithFirstMemberAction } from '../group/actions';
 import type { PaginatedContactGroupsResponse, PaginatedGroupMembersResponse } from '../lib/group-directory-server';
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 
 const GENDER_OPTIONS = ['Laki-laki', 'Perempuan', 'Tidak diketahui'];
 
@@ -466,9 +466,9 @@ export default function GroupDirectory({
                     },
                   }}
                 >
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                    <TableRow>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentSortBy === 'name'}
                           direction={currentSortBy === 'name' ? currentSortDir : GROUP_SORT_DEFAULTS.name}
@@ -478,7 +478,7 @@ export default function GroupDirectory({
                           Nama grup
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentSortBy === 'memberCount'}
                           direction={currentSortBy === 'memberCount' ? currentSortDir : GROUP_SORT_DEFAULTS.memberCount}
@@ -488,7 +488,7 @@ export default function GroupDirectory({
                           Jumlah anggota
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         Preview
                       </TableCell>
                     </TableRow>
@@ -663,9 +663,9 @@ export default function GroupDirectory({
                     },
                   }}
                 >
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                    <TableRow>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentMemberSortBy === 'nama'}
                           direction={currentMemberSortBy === 'nama' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.nama}
@@ -675,7 +675,7 @@ export default function GroupDirectory({
                           Nama
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentMemberSortBy === 'no_telp'}
                           direction={currentMemberSortBy === 'no_telp' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.no_telp}
@@ -685,7 +685,7 @@ export default function GroupDirectory({
                           Nomor WhatsApp
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentMemberSortBy === 'jenis_kelamin'}
                           direction={currentMemberSortBy === 'jenis_kelamin' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.jenis_kelamin}

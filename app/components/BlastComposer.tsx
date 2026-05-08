@@ -27,7 +27,7 @@ import {
 } from '@mui/material';
 
 import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 
 const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
@@ -921,12 +921,12 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                       '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` },
                     }}
                   >
-                    <TableHead>
-                      <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                      <TableRow>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           Pilih
                         </TableCell>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           <TableSortLabel
                             active={contactSortBy === 'nama'}
                             direction={contactSortBy === 'nama' ? contactSortDir : CONTACT_SORT_DEFAULTS.nama}
@@ -936,7 +936,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                             Nama
                           </TableSortLabel>
                         </TableCell>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           <TableSortLabel
                             active={contactSortBy === 'no_telp'}
                             direction={contactSortBy === 'no_telp' ? contactSortDir : CONTACT_SORT_DEFAULTS.no_telp}
@@ -946,7 +946,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                             Nomor WhatsApp
                           </TableSortLabel>
                         </TableCell>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           Grup
                         </TableCell>
                       </TableRow>
@@ -1034,12 +1034,12 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
 
                     <TableContainer>
                       <Table size="small" sx={{ minWidth: 700, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
-                        <TableHead>
-                          <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                          <TableRow>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               Pilih
                             </TableCell>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               <TableSortLabel
                                 active={groupSortBy === 'name'}
                                 direction={groupSortBy === 'name' ? groupSortDir : GROUP_SORT_DEFAULTS.name}
@@ -1049,7 +1049,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                                 Grup
                               </TableSortLabel>
                             </TableCell>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               <TableSortLabel
                                 active={groupSortBy === 'memberCount'}
                                 direction={groupSortBy === 'memberCount' ? groupSortDir : GROUP_SORT_DEFAULTS.memberCount}
@@ -1059,7 +1059,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                                 Jumlah anggota
                               </TableSortLabel>
                             </TableCell>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               Pratinjau
                             </TableCell>
                           </TableRow>
@@ -1134,10 +1134,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 {csvRecipients.length > 0 ? (
                   <TableContainer>
                     <Table size="small" sx={{ minWidth: 520, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
-                      <TableHead>
-                        <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
+                      <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                        <TableRow>
                           {['Nama', 'Nomor WhatsApp'].map((label) => (
-                            <TableCell key={label} sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell key={label} sx={adminTableHeaderCellSx}>
                               {label}
                             </TableCell>
                           ))}
@@ -1192,10 +1192,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 {manualRecipients.length > 0 ? (
                   <TableContainer>
                     <Table size="small" sx={{ minWidth: 560, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
-                      <TableHead>
-                        <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
+                      <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                        <TableRow>
                           {['Nama', 'Nomor WhatsApp', 'Aksi'].map((label) => (
-                            <TableCell key={label} sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell key={label} sx={adminTableHeaderCellSx}>
                               {label}
                             </TableCell>
                           ))}

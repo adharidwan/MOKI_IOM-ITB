@@ -9,8 +9,9 @@ import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ManageSearchRoundedIcon from "@mui/icons-material/ManageSearchRounded";
 import VideoLibraryRoundedIcon from "@mui/icons-material/VideoLibraryRounded";
+import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 
-import { adminPalette } from "../lib/adminPalette";
+import { adminPalette, adminTypographySx } from "../lib/adminPalette";
 import { useSso } from "./SsoProvider";
 
 interface AdminFeatureShellProps {
@@ -21,6 +22,7 @@ interface AdminFeatureShellProps {
     | "/group"
     | "/blastmessage"
     | "/ticket"
+    | "/whatsapp"
     | "/scrape"
     | "/content-record";
   badge?: string;
@@ -50,6 +52,11 @@ const NAV_ITEMS = [
     icon: <ConfirmationNumberRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
+    href: "/whatsapp" as const,
+    label: "WA Ops",
+    icon: <WhatsAppIcon sx={{ fontSize: 18 }} />,
+  },
+  {
     href: "/scrape" as const,
     label: "Import",
     icon: <ManageSearchRoundedIcon sx={{ fontSize: 18 }} />,
@@ -72,7 +79,7 @@ export default function AdminFeatureShell({
   const { userName, userEmail, roles, logout } = useSso();
 
   return (
-    <Box sx={{ minHeight: "100vh", backgroundColor: adminPalette.canvas }}>
+    <Box sx={{ ...adminTypographySx, minHeight: "100vh", backgroundColor: adminPalette.canvas }}>
       <Box
         sx={{
           display: "grid",
@@ -353,7 +360,7 @@ export default function AdminFeatureShell({
                 </Typography>
               </Box>
 
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ display: { xs: "flex", lg: "none" } }}>
                 {NAV_ITEMS.map((item) => {
                   const active = item.href === currentPath;
 
