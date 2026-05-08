@@ -29,6 +29,7 @@ interface InstagramPost {
   title: string;
   link: string;
   thumbnail: string;
+  media_urls?: string[];
   upload_date?: string;
 }
 
@@ -122,6 +123,7 @@ export default function InstagramScraper() {
           link: post.link,
           source_post_id: post.id,
           thumbnail_url: post.thumbnail,
+          media_urls: post.media_urls || [],
         })),
       );
 

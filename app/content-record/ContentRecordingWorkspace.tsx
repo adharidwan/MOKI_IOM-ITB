@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
+import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded';
+import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
@@ -119,6 +121,7 @@ const EMPTY_FORM: ContentRecordingFormState = {
   link: '',
   source_post_id: '',
   thumbnail_url: '',
+  media_urls: [],
   tag_ids: [],
   new_tag_names: [],
 };
@@ -179,7 +182,33 @@ const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
 } as const;
 
 function createEmptyForm(): ContentRecordingFormState {
-  return { ...EMPTY_FORM, tag_ids: [], new_tag_names: [] };
+  return { ...EMPTY_FORM, media_urls: [], tag_ids: [], new_tag_names: [] };
+}
+
+function normalizeMediaUrls(values: string[]): string[] {
+  const byUrl = new Map<string, string>();
+
+  values.forEach((value) => {
+    const url = String(value || '').trim();
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
+}
+
+function getPreviewUrls(record: Pick<ContentRecording, 'thumbnail_url' | 'media_urls'>): string[] {
+  return normalizeMediaUrls([...(record.media_urls || []), record.thumbnail_url || '']);
+}
+
+function getInstagramEmbedUrl(link: string): string {
+  const match = String(link || '').match(/instagram\.com\/(p|reel|tv)\/([^/?#]+)/i);
+  if (!match) {
+    return '';
+  }
+
+  return `https://www.instagram.com/${match[1].toLowerCase()}/${match[2]}/embed`;
 }
 
 function formatDateLabel(value: string): string {
@@ -245,6 +274,7 @@ function toForm(record: ContentRecording): ContentRecordingFormState {
     link: record.link,
     source_post_id: record.source_post_id || '',
     thumbnail_url: record.thumbnail_url || '',
+    media_urls: record.media_urls || [],
     tag_ids: record.tags.map((tag) => tag.id),
     new_tag_names: [],
   };
@@ -300,6 +330,126 @@ function PreviewImage({
   alt: string;
 }) {
   return <Box component="img" src={src} alt={alt} sx={IMAGE_PREVIEW_SX} />;
+}
+
+function PreviewCarousel({
+  urls,
+  alt,
+  emptyLabel = 'No thumbnail preview',
+}: {
+  urls: string[];
+  alt: string;
+  emptyLabel?: string;
+}) {
+  const normalizedUrls = useMemo(() => normalizeMediaUrls(urls), [urls]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const hasMultiple = normalizedUrls.length > 1;
+  const safeActiveIndex = Math.min(activeIndex, Math.max(normalizedUrls.length - 1, 0));
+  const activeUrl = normalizedUrls[safeActiveIndex];
+
+  if (!activeUrl) {
+    return <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>{emptyLabel}</Typography>;
+  }
+
+  return (
+    <Box sx={{ position: 'relative', width: '100%', height: '100%' }}>
+      <PreviewImage src={activeUrl} alt={alt} />
+      {hasMultiple ? (
+        <>
+          <IconButton
+            size="small"
+            aria-label="Previous media"
+            onClick={(event) => {
+              event.stopPropagation();
+              setActiveIndex((current) => (current - 1 + normalizedUrls.length) % normalizedUrls.length);
+            }}
+            sx={{
+              position: 'absolute',
+              left: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 22,
+              height: 22,
+              color: '#ffffff',
+              backgroundColor: 'rgba(15, 23, 42, 0.62)',
+              '&:hover': { backgroundColor: 'rgba(15, 23, 42, 0.78)' },
+            }}
+          >
+            <ChevronLeftRoundedIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+          <IconButton
+            size="small"
+            aria-label="Next media"
+            onClick={(event) => {
+              event.stopPropagation();
+              setActiveIndex((current) => (current + 1) % normalizedUrls.length);
+            }}
+            sx={{
+              position: 'absolute',
+              right: 4,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 22,
+              height: 22,
+              color: '#ffffff',
+              backgroundColor: 'rgba(15, 23, 42, 0.62)',
+              '&:hover': { backgroundColor: 'rgba(15, 23, 42, 0.78)' },
+            }}
+          >
+            <ChevronRightRoundedIcon sx={{ fontSize: 17 }} />
+          </IconButton>
+          <Box sx={{ position: 'absolute', left: 0, right: 0, bottom: 4, display: 'flex', justifyContent: 'center', gap: 0.4 }}>
+            {normalizedUrls.map((url, index) => (
+              <Box key={`${url}-${index}`} sx={{ width: 5, height: 5, borderRadius: '50%', backgroundColor: index === safeActiveIndex ? '#ffffff' : 'rgba(255, 255, 255, 0.55)' }} />
+            ))}
+          </Box>
+        </>
+      ) : null}
+    </Box>
+  );
+}
+
+function InstagramEmbedPreview({
+  link,
+  compact = false,
+}: {
+  link: string;
+  compact?: boolean;
+}) {
+  const embedUrl = getInstagramEmbedUrl(link);
+
+  if (!embedUrl) {
+    return <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />;
+  }
+
+  return (
+    <Box
+      sx={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        backgroundColor: '#ffffff',
+      }}
+    >
+      <Box
+        component="iframe"
+        src={embedUrl}
+        title="Instagram post preview"
+        loading="lazy"
+        referrerPolicy="no-referrer-when-downgrade"
+        sx={{
+          border: 0,
+          display: 'block',
+          width: compact ? 328 : '100%',
+          height: compact ? 430 : '100%',
+          transform: compact ? 'scale(0.31)' : 'none',
+          transformOrigin: 'top left',
+          pointerEvents: compact ? 'none' : 'auto',
+        }}
+      />
+    </Box>
+  );
 }
 
 export default function ContentRecordingWorkspace({
@@ -438,6 +588,7 @@ export default function ContentRecordingWorkspace({
       link: current.link || data.link || '',
       source_post_id: current.source_post_id || data.source_post_id || '',
       thumbnail_url: current.thumbnail_url || data.thumbnail_url || '',
+      media_urls: current.media_urls.length ? current.media_urls : normalizeMediaUrls(data.media_urls || []),
     }));
   }
 
@@ -635,7 +786,7 @@ export default function ContentRecordingWorkspace({
           <Table size="small" sx={{ minWidth: 1280 }}>
             <TableHead sx={{ backgroundColor: adminPalette.brand }}>
               <TableRow>
-                <TableCell sx={{ width: 112, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
+                <TableCell sx={{ width: 132, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
                 {(['title', 'platform', 'content_type', 'upload_date'] as ContentRecordingSortKey[]).map((sortKey) => (
                   <TableCell key={sortKey} sx={{ color: '#ffffff', fontWeight: 800 }}>
                     <TableSortLabel active={currentSortBy === sortKey} direction={currentSortBy === sortKey ? currentSortDir : 'asc'} onClick={() => handleSortChange(sortKey)} sx={adminTableSortLabelSx}>
@@ -659,12 +810,20 @@ export default function ContentRecordingWorkspace({
                 </TableRow>
               ) : recordings.map((record) => {
                 const hiddenTags = record.tags.slice(VISIBLE_TAG_LIMIT);
+                const previewUrls = getPreviewUrls(record);
+                const instagramEmbedUrl = record.platform === 'Instagram' ? getInstagramEmbedUrl(record.link) : '';
 
                 return (
                   <TableRow key={record.id} hover>
                     <TableCell>
-                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 88, height: 56 }}>
-                        {record.thumbnail_url ? <PreviewImage src={record.thumbnail_url} alt={record.title || 'Content preview'} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
+                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: instagramEmbedUrl ? 0 : 0.5 }}>
+                        {instagramEmbedUrl ? (
+                          <InstagramEmbedPreview link={record.link} compact />
+                        ) : previewUrls.length ? (
+                          <PreviewCarousel urls={previewUrls} alt={record.title || 'Content preview'} emptyLabel="" />
+                        ) : (
+                          <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />
+                        )}
                       </Box>
                     </TableCell>
                     <TableCell sx={{ maxWidth: 330 }}>
@@ -721,8 +880,10 @@ export default function ContentRecordingWorkspace({
                     <TableCell>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                         {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {!record.thumbnail_url ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {record.caption && record.thumbnail_url ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                        {!previewUrls.length && !instagramEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
+                        {instagramEmbedUrl ? <Chip size="small" label="IG embed" sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
+                        {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
@@ -793,7 +954,13 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Preview</SectionLabel>
               <TextField label="Thumbnail URL" value={form.thumbnail_url} onChange={(event) => setField('thumbnail_url', event.target.value)} fullWidth disabled={isBusy} />
-              <Box sx={{ ...PREVIEW_FRAME_SX, height: 180, borderRadius: 2, backgroundColor: adminPalette.surface }}>{form.thumbnail_url ? <PreviewImage src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
+              <Box sx={{ ...PREVIEW_FRAME_SX, height: form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? 420 : 180, borderRadius: 2, backgroundColor: adminPalette.surface, p: form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? 0 : 0.5 }}>
+                {form.platform === 'Instagram' && getInstagramEmbedUrl(form.link) ? (
+                  <InstagramEmbedPreview link={form.link} />
+                ) : (
+                  <PreviewCarousel urls={getPreviewUrls(form)} alt={form.title || 'Thumbnail preview'} />
+                )}
+              </Box>
             </Stack>
 
             <Stack spacing={1.4}>

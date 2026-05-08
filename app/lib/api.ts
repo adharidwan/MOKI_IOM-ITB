@@ -51,6 +51,7 @@ export interface ContentRecordingInput {
   link: string;
   source_post_id?: string | null;
   thumbnail_url?: string | null;
+  media_urls?: string[] | null;
   tag_ids?: string[];
 }
 
@@ -169,6 +170,7 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
 
 function toContentRecording(record: Record<string, unknown>): ContentRecording {
   const displayId = Number(record.display_id || 0);
+  const mediaUrls = normalizeUrlList(record.media_urls);
 
   return {
     id: String(record.id || ''),
@@ -197,10 +199,29 @@ function toContentRecording(record: Record<string, unknown>): ContentRecording {
       record.thumbnail_url === null || record.thumbnail_url === undefined
         ? null
         : String(record.thumbnail_url),
+    media_urls: mediaUrls,
     tags: toContentTags(record.tags),
     created_at: String(record.created_at || ''),
     updated_at: String(record.updated_at || ''),
   };
+}
+
+function normalizeUrlList(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/\r?\n|,/)
+      : [];
+  const byUrl = new Map<string, string>();
+
+  values.forEach((entry) => {
+    const url = String(entry || '').trim();
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
 }
 
 function toContentTags(value: unknown): ContentTag[] {
@@ -948,6 +969,7 @@ export async function upsertContentRecording(
   const supabase = getSupabaseAdminClient();
   const title = String(input.title || '').trim();
   const link = input.link.trim();
+  const mediaUrls = normalizeUrlList(input.media_urls);
   const payload = {
     title: title || null,
     platform: input.platform,
@@ -958,6 +980,7 @@ export async function upsertContentRecording(
     link,
     source_post_id: input.source_post_id || null,
     thumbnail_url: input.thumbnail_url || null,
+    media_urls: mediaUrls.length ? mediaUrls : null,
     updated_at: new Date().toISOString(),
   };
 

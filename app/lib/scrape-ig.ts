@@ -7,6 +7,7 @@ interface InstagramPost {
   title: string;
   link: string;
   thumbnail: string;
+  media_urls: string[];
   upload_date?: string;
 }
 
@@ -18,6 +19,7 @@ const FEED_URL_BUILDERS = [
 
 const INSTAGRAM_PROFILE_API =
   "https://i.instagram.com/api/v1/users/web_profile_info/";
+const INSTAGRAM_MEDIA_INFO_API = "https://i.instagram.com/api/v1/media/";
 
 function normalizeUsername(rawUsername: string): string {
   return String(rawUsername || "")
@@ -55,6 +57,116 @@ function toIsoDate(value: string | number | undefined): string {
   return "";
 }
 
+function normalizeMediaUrls(values: string[]): string[] {
+  const byUrl = new Map<string, string>();
+
+  values.forEach((value) => {
+    const url = String(value || "").trim();
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
+}
+
+function pickInstagramImageUrl(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+
+  const record = value as {
+    image_versions2?: {
+      candidates?: Array<{ url?: string; width?: number; height?: number }>;
+    };
+    display_url?: string;
+    thumbnail_src?: string;
+    video_versions?: Array<{ url?: string }>;
+  };
+
+  const candidates = record.image_versions2?.candidates || [];
+  const sortedCandidates = [...candidates].sort(
+    (left, right) => (right.width || 0) * (right.height || 0) - (left.width || 0) * (left.height || 0),
+  );
+
+  return String(
+    sortedCandidates[0]?.url ||
+      record.display_url ||
+      record.thumbnail_src ||
+      record.video_versions?.[0]?.url ||
+      "",
+  ).trim();
+}
+
+function parseInstagramMediaInfoUrls(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const root = payload as {
+    items?: Array<{
+      carousel_media?: unknown[];
+      image_versions2?: {
+        candidates?: Array<{ url?: string; width?: number; height?: number }>;
+      };
+      video_versions?: Array<{ url?: string }>;
+    }>;
+  };
+  const item = root.items?.[0];
+
+  if (!item) {
+    return [];
+  }
+
+  if (Array.isArray(item.carousel_media) && item.carousel_media.length > 0) {
+    return normalizeMediaUrls(item.carousel_media.map(pickInstagramImageUrl));
+  }
+
+  return normalizeMediaUrls([pickInstagramImageUrl(item)]);
+}
+
+async function fetchPostMediaUrls(
+  mediaId: string,
+  shortcode: string,
+  fallbackUrls: string[],
+): Promise<string[]> {
+  const normalizedMediaId = String(mediaId || "").trim();
+  if (!normalizedMediaId || normalizedMediaId.startsWith("ig-")) {
+    return normalizeMediaUrls(fallbackUrls);
+  }
+
+  const url = `${INSTAGRAM_MEDIA_INFO_API}${encodeURIComponent(normalizedMediaId)}/info/`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "x-ig-app-id": "936619743392459",
+        Referer: `https://www.instagram.com/p/${shortcode}/`,
+        Origin: "https://www.instagram.com",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return normalizeMediaUrls(fallbackUrls);
+    }
+
+    const mediaUrls = parseInstagramMediaInfoUrls(await response.json());
+    return mediaUrls.length ? mediaUrls : normalizeMediaUrls(fallbackUrls);
+  } catch (error) {
+    console.warn("[IG scrape] media info failed", {
+      mediaId: normalizedMediaId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return normalizeMediaUrls(fallbackUrls);
+  }
+}
+
 function parseXmlItems(xml: string): InstagramPost[] {
   const items = Array.from(
     xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi),
@@ -82,6 +194,7 @@ function parseXmlItems(xml: string): InstagramPost[] {
       );
       const idFromLink =
         link.match(/\/(p|reel|tv)\/([^/?#]+)/i)?.[2] || `ig-${index}`;
+      const mediaUrls = normalizeMediaUrls([mediaContent, enclosure]);
 
       return {
         id: idFromLink,
@@ -90,14 +203,15 @@ function parseXmlItems(xml: string): InstagramPost[] {
           description.substring(0, 80) ||
           `Instagram Post ${index + 1}`,
         link,
-        thumbnail: mediaContent || enclosure,
+        thumbnail: mediaUrls[0] || "",
+        media_urls: mediaUrls,
         upload_date: toIsoDate(pubDate),
       };
     })
     .filter((item) => item.link.startsWith("http"));
 }
 
-function parseInstagramProfilePosts(payload: unknown): InstagramPost[] {
+async function parseInstagramProfilePosts(payload: unknown): Promise<InstagramPost[]> {
   if (!payload || typeof payload !== "object") {
     return [];
   }
@@ -112,7 +226,17 @@ function parseInstagramProfilePosts(payload: unknown): InstagramPost[] {
               shortcode?: string;
               display_url?: string;
               thumbnail_src?: string;
+              video_url?: string;
               taken_at_timestamp?: number;
+              edge_sidecar_to_children?: {
+                edges?: Array<{
+                  node?: {
+                    display_url?: string;
+                    thumbnail_src?: string;
+                    video_url?: string;
+                  };
+                }>;
+              };
               edge_media_to_caption?: {
                 edges?: Array<{
                   node?: { text?: string };
@@ -127,7 +251,7 @@ function parseInstagramProfilePosts(payload: unknown): InstagramPost[] {
 
   const edges = root.data?.user?.edge_owner_to_timeline_media?.edges || [];
 
-  return edges
+  const posts = edges
     .map((edge, index) => {
       const node = edge.node;
       const shortcode = String(node?.shortcode || "").trim();
@@ -138,6 +262,11 @@ function parseInstagramProfilePosts(payload: unknown): InstagramPost[] {
       const thumbnail = String(
         node?.display_url || node?.thumbnail_src || "",
       ).trim();
+      const mediaUrls = normalizeMediaUrls(
+        (node?.edge_sidecar_to_children?.edges || [])
+          .map((child) => child.node?.display_url || child.node?.thumbnail_src || child.node?.video_url || "")
+          .concat(thumbnail),
+      );
       const uploadDate = toIsoDate(node?.taken_at_timestamp);
 
       if (!shortcode) {
@@ -148,11 +277,25 @@ function parseInstagramProfilePosts(payload: unknown): InstagramPost[] {
         id,
         title: caption ? caption.slice(0, 80) : `Instagram Post ${index + 1}`,
         link: `https://www.instagram.com/p/${shortcode}/`,
-        thumbnail,
+        thumbnail: mediaUrls[0] || thumbnail,
+        media_urls: mediaUrls,
         upload_date: uploadDate,
       } as InstagramPost;
     })
     .filter((item): item is InstagramPost => Boolean(item));
+
+  return Promise.all(
+    posts.map(async (post) => {
+      const shortcode = post.link.match(/\/(p|reel|tv)\/([^/?#]+)/i)?.[2] || post.id;
+      const mediaUrls = await fetchPostMediaUrls(post.id, shortcode, post.media_urls.length ? post.media_urls : [post.thumbnail]);
+
+      return {
+        ...post,
+        thumbnail: mediaUrls[0] || post.thumbnail,
+        media_urls: mediaUrls,
+      };
+    }),
+  );
 }
 
 async function fetchProfilePosts(username: string): Promise<InstagramPost[]> {
@@ -194,7 +337,7 @@ async function fetchProfilePosts(username: string): Promise<InstagramPost[]> {
   }
 
   const payload = await response.json();
-  const posts = parseInstagramProfilePosts(payload);
+  const posts = await parseInstagramProfilePosts(payload);
 
   if (posts.length === 0) {
     throw new Error(
