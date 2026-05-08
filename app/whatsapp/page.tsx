@@ -1,3 +1,4 @@
+import AdminFeatureShell from '../components/AdminFeatureShell';
 import WhatsappDashboard from '../components/WhatsappDashboard';
 import { createWhatsappOpsRepository } from '../lib/whatsapp-ops-repository';
 import { getWhatsappDashboardOverview } from '../lib/whatsapp-ops-service';
@@ -25,11 +26,18 @@ export default async function WhatsappPage() {
   ]);
 
   return (
-    <WhatsappDashboard
-      initialOverview={overview}
-      initialOutbound={outboundResponse}
-      initialEvents={initialEvents}
-      initialRenderedAt={initialRenderedAt}
-    />
+    <AdminFeatureShell
+      currentPath="/whatsapp"
+      badge="WhatsApp Ops"
+      title="WhatsApp Operations"
+      description="Monitor device health, QR login needs, queues, and delivery issues from one operational workspace."
+    >
+      <WhatsappDashboard
+        initialOverview={overview}
+        initialOutbound={outboundResponse}
+        initialEvents={initialEvents}
+        initialRenderedAt={initialRenderedAt}
+      />
+    </AdminFeatureShell>
   );
 }
