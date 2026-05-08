@@ -136,12 +136,23 @@ const CONTENT_TAG_SX = {
 } as const;
 
 const IMAGE_PREVIEW_SX = {
-  maxWidth: '100%',
-  maxHeight: '100%',
-  width: 'auto',
-  height: 'auto',
+  width: '100%',
+  height: '100%',
   objectFit: 'contain',
+  objectPosition: 'center',
   display: 'block',
+} as const;
+
+const PREVIEW_FRAME_SX = {
+  borderRadius: 1.5,
+  border: `1px solid ${adminPalette.border}`,
+  backgroundColor: adminPalette.surfaceSoft,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  overflow: 'hidden',
+  p: 0.5,
+  boxSizing: 'border-box',
 } as const;
 
 const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
@@ -274,6 +285,16 @@ function setOptionalParam(params: URLSearchParams, key: string, value: string) {
 function toUrl(path: string, params: URLSearchParams) {
   const query = params.toString();
   return query ? `${path}?${query}` : path;
+}
+
+function PreviewImage({
+  src,
+  alt,
+}: {
+  src: string;
+  alt: string;
+}) {
+  return <Box component="img" src={src} alt={alt} sx={IMAGE_PREVIEW_SX} />;
 }
 
 export default function ContentRecordingWorkspace({
@@ -622,8 +643,8 @@ export default function ContentRecordingWorkspace({
                 return (
                   <TableRow key={record.id} hover>
                     <TableCell>
-                      <Box sx={{ width: 88, height: 56, borderRadius: 1.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-                        {record.thumbnail_url ? <Box component="img" src={record.thumbnail_url} alt={record.title || 'Content preview'} sx={IMAGE_PREVIEW_SX} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
+                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 88, height: 56 }}>
+                        {record.thumbnail_url ? <PreviewImage src={record.thumbnail_url} alt={record.title || 'Content preview'} /> : <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
                       </Box>
                     </TableCell>
                     <TableCell sx={{ maxWidth: 330 }}>
@@ -728,7 +749,7 @@ export default function ContentRecordingWorkspace({
             <Stack spacing={1.4}>
               <SectionLabel>Preview</SectionLabel>
               <TextField label="Thumbnail URL" value={form.thumbnail_url} onChange={(event) => setField('thumbnail_url', event.target.value)} fullWidth disabled={isBusy} />
-              <Box sx={{ height: 180, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>{form.thumbnail_url ? <Box component="img" src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} sx={IMAGE_PREVIEW_SX} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
+              <Box sx={{ ...PREVIEW_FRAME_SX, height: 180, borderRadius: 2, backgroundColor: adminPalette.surface }}>{form.thumbnail_url ? <PreviewImage src={form.thumbnail_url} alt={form.title || 'Thumbnail preview'} /> : <Typography sx={{ color: adminPalette.textMuted, fontWeight: 700 }}>No thumbnail preview</Typography>}</Box>
             </Stack>
 
             <Stack spacing={1.4}>
