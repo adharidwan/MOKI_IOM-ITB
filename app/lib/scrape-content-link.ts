@@ -12,6 +12,7 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 const INSTAGRAM_MEDIA_INFO_API = 'https://i.instagram.com/api/v1/media/';
 const INSTAGRAM_SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+const X_TWEET_SYNDICATION_API = 'https://cdn.syndication.twimg.com/widgets/tweet';
 
 type ScrapedContentDraft = Omit<ContentRecordingInput, 'title' | 'upload_date'> &
   Partial<Pick<ContentRecordingInput, 'title' | 'upload_date'>>;
@@ -195,6 +196,48 @@ async function fetchInstagramMediaUrls(shortcode: string | null | undefined): Pr
     }
 
     return parseInstagramMediaInfoUrls(await response.json());
+  } catch {
+    return [];
+  }
+}
+
+function parseXMediaUrls(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const record = payload as {
+    photos?: Array<{ url?: string }>;
+    video?: { poster?: string };
+  };
+
+  return normalizeMediaUrls([
+    ...(record.photos || []).map((photo) => photo.url),
+    record.video?.poster,
+  ]);
+}
+
+async function fetchXMediaUrls(statusId: string | null | undefined): Promise<string[]> {
+  const cleanStatusId = cleanText(statusId || '');
+  if (!cleanStatusId) {
+    return [];
+  }
+
+  try {
+    const response = await fetch(`${X_TWEET_SYNDICATION_API}?id=${encodeURIComponent(cleanStatusId)}`, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': USER_AGENT,
+        Referer: 'https://platform.twitter.com/',
+      },
+      cache: 'no-store',
+    });
+
+    if (!response.ok) {
+      return [];
+    }
+
+    return parseXMediaUrls(await response.json());
   } catch {
     return [];
   }
@@ -405,12 +448,14 @@ async function scrapeSocialLink(
   if (platform === 'x') {
     const username = extractXUsername(link);
     const sourcePostId = extractSourcePostId(link, platform);
+    const xMediaUrls = await fetchXMediaUrls(sourcePostId);
     if (username && sourcePostId) {
       const feedResult = await scrape_x(username, { minPosts: 50 });
       const tweet = feedResult.videos?.find((item) => item.id === sourcePostId);
 
       if (tweet) {
         const caption = pickFirstNonEmpty(tweet.content, tweet.title);
+        const mediaUrls = normalizeMediaUrls([...xMediaUrls, tweet.thumbnail]);
 
         return {
           title: '',
@@ -420,8 +465,8 @@ async function scrapeSocialLink(
           upload_date: tweet.upload_date || '',
           link: tweet.link || link,
           source_post_id: sourcePostId,
-          thumbnail_url: cleanText(tweet.thumbnail) || null,
-          media_urls: normalizeMediaUrls([tweet.thumbnail]),
+          thumbnail_url: mediaUrls[0] || null,
+          media_urls: mediaUrls,
         };
       }
     }
@@ -489,6 +534,9 @@ async function scrapeSocialLink(
   const instagramMediaUrls = platform === 'Instagram'
     ? await fetchInstagramMediaUrls(sourcePostId)
     : [];
+  const xMediaUrls = platform === 'x'
+    ? await fetchXMediaUrls(sourcePostId)
+    : [];
 
   return {
     title: normalizePageTitle(pickFirstNonEmpty(metadata.ogTitle, metadata.twitterTitle, metadata.pageTitle), platform),
@@ -501,8 +549,8 @@ async function scrapeSocialLink(
       toIsoDate(metadata.timeValues[0]),
     link: canonicalLink,
     source_post_id: sourcePostId,
-    thumbnail_url: pickFirstNonEmpty(instagramMediaUrls[0], jsonLdImage, metadata.ogImage, metadata.twitterImage) || null,
-    media_urls: normalizeMediaUrls([...instagramMediaUrls, ...jsonLdImages, metadata.ogImage, metadata.twitterImage]),
+    thumbnail_url: pickFirstNonEmpty(instagramMediaUrls[0], xMediaUrls[0], jsonLdImage, metadata.ogImage, metadata.twitterImage) || null,
+    media_urls: normalizeMediaUrls([...instagramMediaUrls, ...xMediaUrls, ...jsonLdImages, metadata.ogImage, metadata.twitterImage]),
   };
 }
 
