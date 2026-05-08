@@ -13,6 +13,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -323,6 +324,12 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   >(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleName, setScheduleName] = useState('');
+  const [scheduleType, setScheduleType] = useState<'once' | 'recurring'>('once');
+  const [scheduleRunAt, setScheduleRunAt] = useState('');
+  const [scheduleRecurrence, setScheduleRecurrence] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [scheduling, setScheduling] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const messageMirrorRef = useRef<HTMLDivElement | null>(null);
@@ -667,6 +674,62 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     setPreviewOpen(true);
   };
 
+  const openScheduleDialog = () => {
+    if (!canSendBlast) {
+      setStatus({ type: 'error', message: 'Lengkapi penerima dan pesan terlebih dahulu sebelum menjadwalkan blast.' });
+      return;
+    }
+
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    tomorrow.setMinutes(0, 0, 0);
+    setScheduleName(scheduleName || `Blast ${sourceLabel(selectedSource)}`);
+    setScheduleRunAt(tomorrow.toISOString().slice(0, 16));
+    setScheduleOpen(true);
+  };
+
+  const handleScheduleBlast = async () => {
+    if (!selectedSource || !canSendBlast) {
+      setStatus({ type: 'error', message: 'Data schedule belum lengkap.' });
+      return;
+    }
+
+    if (scheduleType === 'once' && !scheduleRunAt) {
+      setStatus({ type: 'error', message: 'Isi waktu kirim schedule terlebih dahulu.' });
+      return;
+    }
+
+    setScheduling(true);
+    const response = await fetch('/api/admin/scheduled-blasts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: scheduleName.trim() || `Blast ${sourceLabel(selectedSource)}`,
+        message,
+        source: selectedSource,
+        recipients: selectedSource === 'group' ? undefined : recipients,
+        groupNames: selectedSource === 'group' ? selectedGroups : undefined,
+        sourceFile: selectedSource === 'csv' ? csvFileName || 'blast-csv' : undefined,
+        scheduleType,
+        recurrenceType: scheduleType === 'recurring' ? scheduleRecurrence : null,
+        runAt: scheduleRunAt ? new Date(scheduleRunAt).toISOString() : null,
+        saveToGroup: requiresGroupName,
+        saveGroupName: requiresGroupName ? saveGroupName.trim() : undefined,
+      }),
+    });
+
+    const result = (await response.json()) as { error?: string };
+    setScheduling(false);
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: result.error || 'Scheduled blast gagal dibuat.' });
+      return;
+    }
+
+    setScheduleOpen(false);
+    setStatus({ type: 'success', message: 'Scheduled blast berhasil dibuat.' });
+    window.dispatchEvent(new CustomEvent('scheduled-blasts-refresh'));
+  };
+
   const handleSendBlast = async () => {
     if (!selectedSource || recipientCount === 0 || !message.trim()) {
       setConfirmOpen(false);
@@ -781,6 +844,12 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     setStatus(null);
     setConfirmOpen(false);
     setPreviewOpen(false);
+    setScheduleOpen(false);
+    setScheduleName('');
+    setScheduleType('once');
+    setScheduleRunAt('');
+    setScheduleRecurrence('daily');
+    setScheduling(false);
     setPreviewIndex(0);
   };
 
@@ -1303,9 +1372,6 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   <Chip key={variable.token} clickable label={variable.token} onClick={() => handleInsertVariable(variable.token)} sx={{ backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />
                 ))}
               </Stack>
-              <Button variant="outlined" onClick={handleOpenPreview} disabled={!canPreviewMessage} sx={QUIET_BUTTON_SX}>
-                Preview pesan
-              </Button>
             </Stack>
           </Stack>
 
@@ -1442,6 +1508,9 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 <Button variant="outlined" onClick={handleOpenPreview} disabled={!canPreviewMessage} sx={QUIET_BUTTON_SX}>
                   Preview pesan
                 </Button>
+                <Button variant="outlined" onClick={openScheduleDialog} disabled={!canSendBlast || submitting || scheduling || (requiresGroupName && !saveGroupName.trim())} sx={QUIET_BUTTON_SX}>
+                  Jadwalkan
+                </Button>
                 <Button variant="contained" onClick={() => setConfirmOpen(true)} disabled={!canSendBlast || submitting || (requiresGroupName && !saveGroupName.trim())} sx={PRIMARY_BUTTON_SX}>
                   {submitting ? 'Mengirim...' : 'Kirim blast'}
                 </Button>
@@ -1504,6 +1573,68 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
         <DialogActions sx={{ p: 2.5 }}>
           <Button onClick={() => setPreviewOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
             Tutup
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={scheduleOpen} onClose={() => setScheduleOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Jadwalkan blast</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <TextField
+              label="Nama schedule"
+              value={scheduleName}
+              onChange={(event) => setScheduleName(event.target.value)}
+              size="small"
+              fullWidth
+            />
+            <TextField
+              select
+              label="Tipe schedule"
+              value={scheduleType}
+              onChange={(event) => setScheduleType(event.target.value as 'once' | 'recurring')}
+              size="small"
+              fullWidth
+            >
+              <MenuItem value="once">Sekali kirim</MenuItem>
+              <MenuItem value="recurring">Periodik</MenuItem>
+            </TextField>
+            <TextField
+              label={scheduleType === 'once' ? 'Waktu kirim' : 'Mulai kirim'}
+              type="datetime-local"
+              value={scheduleRunAt}
+              onChange={(event) => setScheduleRunAt(event.target.value)}
+              size="small"
+              fullWidth
+              InputLabelProps={{ shrink: true }}
+            />
+            {scheduleType === 'recurring' ? (
+              <TextField
+                select
+                label="Pengulangan"
+                value={scheduleRecurrence}
+                onChange={(event) => setScheduleRecurrence(event.target.value as 'daily' | 'weekly' | 'monthly')}
+                size="small"
+                fullWidth
+              >
+                <MenuItem value="daily">Setiap hari</MenuItem>
+                <MenuItem value="weekly">Setiap minggu</MenuItem>
+                <MenuItem value="monthly">Setiap bulan</MenuItem>
+              </TextField>
+            ) : null}
+            <Paper elevation={0} sx={{ p: 1.25, borderRadius: 2.5, backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
+              <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+                Schedule akan memakai pesan saat ini dan {recipientCount} penerima dari {sourceLabel(selectedSource)}.
+              </Typography>
+            </Paper>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setScheduleOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Batal
+          </Button>
+          <Button variant="contained" onClick={handleScheduleBlast} disabled={scheduling} sx={PRIMARY_BUTTON_SX}>
+            {scheduling ? 'Menyimpan...' : 'Simpan schedule'}
           </Button>
         </DialogActions>
       </Dialog>
