@@ -791,7 +791,25 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
           boxShadow: 'none',
         }}
       >
-        <Stack spacing={1.1} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.2, md: 1.35 } }}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Blast
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Susun blast message
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Pilih penerima, tulis pesan, dan tinjau hasil render tanpa keluar dari satu workspace.
+              </Typography>
+            </Box>
+
+            <Button component={Link} href="/group" variant="outlined" sx={QUIET_BUTTON_SX}>
+              Buka groups
+            </Button>
+          </Stack>
+
           <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
               <MetricTile label="Sumber aktif" value={sourceLabel(selectedSource)} />

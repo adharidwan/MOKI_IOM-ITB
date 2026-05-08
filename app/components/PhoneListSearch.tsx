@@ -34,7 +34,7 @@ import {
   Typography,
 } from '@mui/material';
 
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminPanelSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 import {
   assignContactGroupAction,
@@ -242,16 +242,7 @@ export default function PhoneListTable({
 
   return (
     <Stack spacing={2}>
-      <Paper
-        elevation={0}
-        sx={{
-          overflow: 'hidden',
-          borderRadius: 2.5,
-          border: `1px solid ${adminPalette.border}`,
-          backgroundColor: adminPalette.surface,
-          boxShadow: 'none',
-        }}
-      >
+      <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Stack
           spacing={1}
           sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}
@@ -346,7 +337,7 @@ export default function PhoneListTable({
                 }}
               >
                 <TableHead>
-                  <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
+                    <TableRow sx={{ backgroundColor: adminPalette.brand }}>
                     <TableCell sx={{ width: 46, py: 0.8 }}>
                       <Checkbox
                         checked={allVisibleSelected}
@@ -362,7 +353,7 @@ export default function PhoneListTable({
                         }}
                       />
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
                       <TableSortLabel
                         active={currentSortBy === 'nama'}
                         direction={currentSortBy === 'nama' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.nama}
@@ -372,7 +363,7 @@ export default function PhoneListTable({
                         Name
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
                       <TableSortLabel
                         active={currentSortBy === 'no_telp'}
                         direction={currentSortBy === 'no_telp' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.no_telp}
@@ -382,10 +373,10 @@ export default function PhoneListTable({
                         WhatsApp
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
                       Group
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
                       <TableSortLabel
                         active={currentSortBy === 'status'}
                         direction={currentSortBy === 'status' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.status}
@@ -395,7 +386,7 @@ export default function PhoneListTable({
                         Status
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
                       <TableSortLabel
                         active={currentSortBy === 'imported_at'}
                         direction={currentSortBy === 'imported_at' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.imported_at}
@@ -405,7 +396,7 @@ export default function PhoneListTable({
                         Imported
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
                       Actions
                     </TableCell>
                   </TableRow>
@@ -439,7 +430,7 @@ export default function PhoneListTable({
                           />
                         </TableCell>
                         <TableCell sx={{ py: 0.8 }}>
-                          <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: adminPalette.textPrimary }}>{contact.nama}</Typography>
+                          <Typography sx={{ fontSize: '0.86rem', fontWeight: 800, color: adminPalette.textPrimary }}>{contact.nama}</Typography>
                           <Typography sx={{ mt: 0.15, fontSize: '0.74rem', color: adminPalette.textSubtle }}>
                             {contact.jabatan || contact.jenis_kelamin}
                           </Typography>

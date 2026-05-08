@@ -1,15 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
-import TipsAndUpdatesRoundedIcon from '@mui/icons-material/TipsAndUpdatesRounded';
 import { Instagram, X, YouTube } from '@mui/icons-material';
 import {
   Box,
   Button,
-  Card,
-  CardContent,
-  Chip,
   Divider,
   Paper,
   Stack,
@@ -19,6 +14,7 @@ import {
 import InstagramScraper from '../components/ScrapeIG';
 import XScraper from '../components/ScrapeX';
 import YouTubeScraper from '../components/ScrapeYoutube';
+import { adminPalette, adminPanelSx } from '../lib/adminPalette';
 
 type PlatformId = 'youtube' | 'instagram' | 'x';
 
@@ -77,43 +73,22 @@ export default function ContentScrapingWorkspace() {
   );
 
   return (
-    <Stack spacing={3}>
-      <Box
-        sx={{
-          display: 'grid',
-          
-        }}
-      >
-        <Paper
-          elevation={0}
-          sx={{
-            borderRadius: 3,
-            border: '1px solid rgba(22, 48, 32, 0.1)',
-            overflow: 'hidden',
-            background:
-              'linear-gradient(180deg, rgba(255,255,255,0.96) 0%, rgba(246,250,247,0.96) 100%)',
-          }}
-        >
-          <Box
-            sx={{
-              px: { xs: 2, md: 3 },
-              py: 2.5,
-              background:
-                'linear-gradient(135deg, rgba(31,111,95,0.08) 0%, rgba(217,167,84,0.12) 100%)',
-            }}
-          >
-            <Stack spacing={1}>
-              <Typography sx={{ fontSize: '1.35rem', fontWeight: 800, color: '#163020' }}>
-                Channel Scraping Workspace
-              </Typography>
-              <Typography sx={{ color: '#50665d', lineHeight: 1.7 }}>
-                Halaman ini untuk pengambilan data keseluruhan channel. Satu kali proses scrape
-                bisa menghasilkan banyak post, lalu dipilih mana saja yang akan diteruskan.
-              </Typography>
-            </Stack>
+    <Stack spacing={1.25}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Box>
+            <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+              Content
+            </Typography>
+            <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+              Channel Content Scraping
+            </Typography>
+            <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+              Ambil data konten level channel dari YouTube, X, dan Instagram sekaligus.
+            </Typography>
           </Box>
 
-          <Stack spacing={2.25} sx={{ p: { xs: 2, md: 3 } }}>
+          <Stack spacing={1.25}>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} useFlexGap>
               {PLATFORM_OPTIONS.map((platform) => {
                 const active = platform.id === activePlatform;
@@ -131,12 +106,12 @@ export default function ContentScrapingWorkspace() {
                       justifyContent: 'flex-start',
                       textTransform: 'none',
                       fontWeight: 700,
-                      borderColor: active ? platform.color : 'rgba(22, 48, 32, 0.2)',
-                      color: active ? '#ffffff' : '#1f6f5f',
-                      backgroundColor: active ? platform.color : '#ffffff',
+                      borderColor: active ? platform.color : adminPalette.borderStrong,
+                      color: active ? '#ffffff' : adminPalette.textSecondary,
+                      backgroundColor: active ? platform.color : adminPalette.surface,
                       '&:hover': {
                         borderColor: platform.color,
-                        backgroundColor: active ? platform.color : 'rgba(31,111,95,0.04)',
+                        backgroundColor: active ? platform.color : adminPalette.brandSoft,
                       },
                     }}
                   >
@@ -151,43 +126,41 @@ export default function ContentScrapingWorkspace() {
             <Paper
               elevation={0}
               sx={{
-                p: 2,
+                p: { xs: 1.25, md: 1.5 },
                 borderRadius: 2.5,
-                border: '1px solid rgba(22, 48, 32, 0.08)',
-                backgroundColor: '#ffffff',
+                border: `1px solid ${adminPalette.border}`,
+                backgroundColor: adminPalette.surfaceSoft,
               }}
             >
               <Stack spacing={0.75}>
-                <Typography sx={{ fontWeight: 700, color: '#163020' }}>
+                <Typography sx={{ fontWeight: 700, color: adminPalette.textPrimary }}>
                   {activeOption.label}
                 </Typography>
-                <Typography sx={{ color: '#50665d' }}>{activeOption.subtitle}</Typography>
+                <Typography sx={{ color: adminPalette.textSecondary }}>{activeOption.subtitle}</Typography>
               </Stack>
             </Paper>
           </Stack>
-        </Paper>
-      </Box>
+        </Stack>
+      </Paper>
 
       <Paper
         elevation={0}
         sx={{
-          borderRadius: 3,
-          border: '1px solid rgba(22, 48, 32, 0.1)',
+          ...adminPanelSx,
           overflow: 'hidden',
-          backgroundColor: '#ffffff',
         }}
       >
-        <Box sx={{ px: { xs: 2, md: 3 }, py: 2.5, borderBottom: '1px solid rgba(22, 48, 32, 0.08)' }}>
-          <Typography sx={{ fontSize: '1.2rem', fontWeight: 800, color: '#163020' }}>
+        <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
+          <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>
             Hasil Scraping
           </Typography>
-          <Typography sx={{ mt: 0.75, color: '#50665d' }}>
+          <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
             Platform aktif: {getPlatformLabel(activePlatform)}. Output dapat berisi beberapa post
             dari channel yang sama.
           </Typography>
         </Box>
 
-        <Box sx={{ p: { xs: 2, md: 3 } }}>{getScraper(activePlatform)}</Box>
+        <Box sx={{ p: { xs: 1.5, md: 2 } }}>{getScraper(activePlatform)}</Box>
       </Paper>
     </Stack>
   );
