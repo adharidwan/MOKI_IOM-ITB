@@ -187,19 +187,28 @@ export default function ContentAssetDetailWorkspace({ project, assets, initialLo
   function handleUpload(formData: FormData) {
     setFlash(null);
     startUploadTransition(async () => {
-      const response = await fetch('/api/admin/content-assets/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      const result = (await response.json().catch(() => null)) as { success?: boolean; count?: number; error?: string } | null;
+      try {
+        const response = await fetch('/api/admin/content-assets/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const result = (await response.json().catch(() => null)) as { success?: boolean; count?: number; error?: string } | null;
 
-      if (result?.success) {
-        formRef.current?.reset();
-        updateSelectedFiles([]);
-        setFlash({ severity: 'success', message: `${result.count ?? 0} asset berhasil diupload.` });
-        router.refresh();
-      } else {
-        setFlash({ severity: 'error', message: result?.error || 'Gagal upload asset.' });
+        if (response.ok && result?.success) {
+          formRef.current?.reset();
+          updateSelectedFiles([]);
+          setFlash({ severity: 'success', message: `${result.count ?? 0} asset berhasil diupload.` });
+          router.refresh();
+        } else {
+          setFlash({ severity: 'error', message: result?.error || 'Gagal upload asset. Coba lagi beberapa saat.' });
+        }
+      } catch (error) {
+        setFlash({
+          severity: 'error',
+          message: error instanceof Error
+            ? `Gagal menghubungi backend upload: ${error.message}`
+            : 'Gagal menghubungi backend upload. Coba lagi beberapa saat.',
+        });
       }
     });
   }
