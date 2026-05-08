@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { getSupabaseAdminClient } from './supabase-server';
-import type { ContentAsset, ContentAssetProject } from './types';
+import type { ContentAsset, ContentAssetProject, ContentTag } from './types';
 
 export const CONTENT_ASSET_BUCKET = 'content-assets';
 
@@ -20,8 +20,15 @@ export interface ContentAssetInput {
 
 export interface UpdateContentAssetInput {
   id: string;
+  notes?: string | null;
+  tagIds?: string[];
+}
+
+export interface UpdateContentAssetProjectInput {
+  id: string;
   projectName: string;
   notes?: string | null;
+  tagIds?: string[];
 }
 
 export interface ContentAssetProjectInput {
@@ -29,6 +36,28 @@ export interface ContentAssetProjectInput {
   createdByEmail?: string | null;
   projectName: string;
   notes?: string | null;
+}
+
+function toContentTags(value: unknown): ContentTag[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((tag) => {
+      const record = tag as Record<string, unknown>;
+      return {
+        id: String(record.id || ''),
+        name: String(record.name || ''),
+        created_at: record.created_at === null || record.created_at === undefined ? undefined : String(record.created_at),
+      };
+    })
+    .filter((tag) => tag.id && tag.name);
+}
+
+function extractTags(record: Record<string, unknown>): ContentTag[] {
+  const tagLinks = Array.isArray(record.tags) ? record.tags : [];
+  return toContentTags(tagLinks.map((entry) => (entry as { tag?: unknown }).tag).filter(Boolean));
 }
 
 function toContentAsset(record: Record<string, unknown>, signedUrl: string | null = null): ContentAsset {
@@ -52,6 +81,7 @@ function toContentAsset(record: Record<string, unknown>, signedUrl: string | nul
     mime_type: String(record.mime_type || ''),
     file_size: Number(record.file_size || 0),
     notes: record.notes === null || record.notes === undefined ? null : String(record.notes),
+    tags: toContentTags(record.tags),
     signed_url: signedUrl,
   };
 }
@@ -76,6 +106,7 @@ function toContentAssetProject(record: Record<string, unknown>, previewAsset: Co
       record.latest_asset_at === null || record.latest_asset_at === undefined
         ? null
         : String(record.latest_asset_at),
+    tags: toContentTags(record.tags),
     preview_asset: previewAsset,
   };
 }
@@ -99,7 +130,7 @@ export async function listContentAssets(): Promise<ContentAsset[]> {
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_assets')
-    .select('*')
+    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
     .order('created_at', { ascending: false })
     .limit(200);
 
@@ -115,7 +146,7 @@ export async function listContentAssets(): Promise<ContentAsset[]> {
         String(rawRecord.storage_path || ''),
       );
 
-      return toContentAsset(rawRecord, signedUrl);
+      return toContentAsset({ ...rawRecord, tags: extractTags(rawRecord) }, signedUrl);
     }),
   );
 }
@@ -124,7 +155,7 @@ export async function listContentAssetProjects(): Promise<ContentAssetProject[]>
   const supabase = getSupabaseAdminClient();
   const { data: projects, error: projectError } = await supabase
     .from('content_asset_projects')
-    .select('*')
+    .select('*, tags:content_asset_project_tags(tag:content_tags(id, name, created_at))')
     .order('updated_at', { ascending: false })
     .limit(200);
 
@@ -134,7 +165,7 @@ export async function listContentAssetProjects(): Promise<ContentAssetProject[]>
 
   const { data: assets, error: assetError } = await supabase
     .from('content_assets')
-    .select('*')
+    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
     .order('created_at', { ascending: false })
     .limit(1000);
 
@@ -150,7 +181,7 @@ export async function listContentAssetProjects(): Promise<ContentAssetProject[]>
         String(rawRecord.storage_path || ''),
       );
 
-      return toContentAsset(rawRecord, signedUrl);
+      return toContentAsset({ ...rawRecord, tags: extractTags(rawRecord) }, signedUrl);
     }),
   );
 
@@ -163,6 +194,7 @@ export async function listContentAssetProjects(): Promise<ContentAssetProject[]>
     return toContentAssetProject(
       {
         ...rawProject,
+        tags: extractTags(rawProject),
         asset_count: projectAssets.length,
         image_count: projectAssets.filter((asset) => asset.mime_type.startsWith('image/')).length,
         video_count: projectAssets.filter((asset) => asset.mime_type.startsWith('video/')).length,
@@ -183,7 +215,7 @@ export async function getContentAssetProject(id: string): Promise<ContentAssetPr
   const supabase = getSupabaseAdminClient();
   const { data: project, error: projectError } = await supabase
     .from('content_asset_projects')
-    .select('*')
+    .select('*, tags:content_asset_project_tags(tag:content_tags(id, name, created_at))')
     .eq('id', normalizedId)
     .single();
 
@@ -201,6 +233,7 @@ export async function getContentAssetProject(id: string): Promise<ContentAssetPr
   return toContentAssetProject(
     {
       ...rawProject,
+      tags: extractTags(rawProject),
       asset_count: assets.length,
       image_count: assets.filter((asset) => asset.mime_type.startsWith('image/')).length,
       video_count: assets.filter((asset) => asset.mime_type.startsWith('video/')).length,
@@ -220,7 +253,7 @@ export async function listContentAssetsByProject(projectId: string): Promise<Con
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_assets')
-    .select('*')
+    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
     .eq('project_id', normalizedProjectId)
     .order('created_at', { ascending: false })
     .limit(500);
@@ -237,7 +270,7 @@ export async function listContentAssetsByProject(projectId: string): Promise<Con
         String(rawRecord.storage_path || ''),
       );
 
-      return toContentAsset(rawRecord, signedUrl);
+      return toContentAsset({ ...rawRecord, tags: extractTags(rawRecord) }, signedUrl);
     }),
   );
 }
@@ -251,7 +284,7 @@ export async function getContentAsset(id: string): Promise<ContentAsset | null> 
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_assets')
-    .select('*')
+    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
     .eq('id', normalizedId)
     .single();
 
@@ -264,7 +297,7 @@ export async function getContentAsset(id: string): Promise<ContentAsset | null> 
 
   const record = data as Record<string, unknown>;
   return toContentAsset(
-    record,
+    { ...record, tags: extractTags(record) },
     await createSignedUrl(
       String(record.storage_bucket || CONTENT_ASSET_BUCKET),
       String(record.storage_path || ''),
@@ -341,26 +374,76 @@ export async function createContentAsset(input: ContentAssetInput): Promise<Cont
     throw new Error(`Gagal menyimpan metadata asset: ${error.message}`);
   }
 
-  return toContentAsset(data as Record<string, unknown>, await createSignedUrl(input.storageBucket, input.storagePath));
+  return toContentAsset({ ...(data as Record<string, unknown>), tags: [] }, await createSignedUrl(input.storageBucket, input.storagePath));
+}
+
+function normalizeTagIds(tagIds: string[] | undefined): string[] {
+  return Array.from(new Set((tagIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+}
+
+async function replaceContentAssetTags(assetId: string, tagIds: string[]): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  const normalizedTagIds = normalizeTagIds(tagIds);
+
+  const { error: deleteError } = await supabase
+    .from('content_asset_tags')
+    .delete()
+    .eq('content_asset_id', assetId);
+
+  if (deleteError) {
+    throw new Error(`Gagal memperbarui tag asset: ${deleteError.message}`);
+  }
+
+  if (!normalizedTagIds.length) {
+    return;
+  }
+
+  const { error: insertError } = await supabase
+    .from('content_asset_tags')
+    .insert(normalizedTagIds.map((tagId) => ({ content_asset_id: assetId, tag_id: tagId })));
+
+  if (insertError) {
+    throw new Error(`Gagal memperbarui tag asset: ${insertError.message}`);
+  }
+}
+
+async function replaceContentAssetProjectTags(projectId: string, tagIds: string[]): Promise<void> {
+  const supabase = getSupabaseAdminClient();
+  const normalizedTagIds = normalizeTagIds(tagIds);
+
+  const { error: deleteError } = await supabase
+    .from('content_asset_project_tags')
+    .delete()
+    .eq('content_asset_project_id', projectId);
+
+  if (deleteError) {
+    throw new Error(`Gagal memperbarui tag project: ${deleteError.message}`);
+  }
+
+  if (!normalizedTagIds.length) {
+    return;
+  }
+
+  const { error: insertError } = await supabase
+    .from('content_asset_project_tags')
+    .insert(normalizedTagIds.map((tagId) => ({ content_asset_project_id: projectId, tag_id: tagId })));
+
+  if (insertError) {
+    throw new Error(`Gagal memperbarui tag project: ${insertError.message}`);
+  }
 }
 
 export async function updateContentAsset(input: UpdateContentAssetInput): Promise<ContentAsset> {
   const normalizedId = String(input.id || '').trim();
-  const projectName = String(input.projectName || '').trim();
 
   if (!normalizedId) {
     throw new Error('Asset id wajib diisi.');
-  }
-
-  if (!projectName) {
-    throw new Error('Nama project wajib diisi.');
   }
 
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_assets')
     .update({
-      project_name: projectName,
       notes: input.notes || null,
       updated_at: new Date().toISOString(),
     })
@@ -372,14 +455,60 @@ export async function updateContentAsset(input: UpdateContentAssetInput): Promis
     throw new Error(`Gagal mengubah metadata asset: ${error.message}`);
   }
 
+  if (input.tagIds) {
+    await replaceContentAssetTags(normalizedId, input.tagIds);
+  }
+
   const record = data as Record<string, unknown>;
-  return toContentAsset(
-    record,
-    await createSignedUrl(
-      String(record.storage_bucket || CONTENT_ASSET_BUCKET),
-      String(record.storage_path || ''),
-    ),
-  );
+  return getContentAsset(normalizedId)
+    .then((asset) => asset || toContentAsset(record, null));
+}
+
+export async function updateContentAssetProject(input: UpdateContentAssetProjectInput): Promise<ContentAssetProject> {
+  const normalizedId = String(input.id || '').trim();
+  const projectName = String(input.projectName || '').replace(/\s+/g, ' ').trim();
+
+  if (!normalizedId) {
+    throw new Error('Project id wajib diisi.');
+  }
+
+  if (!projectName) {
+    throw new Error('Nama project wajib diisi.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { error } = await supabase
+    .from('content_asset_projects')
+    .update({
+      project_name: projectName,
+      notes: input.notes || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', normalizedId);
+
+  if (error) {
+    throw new Error(`Gagal mengubah project asset: ${error.message}`);
+  }
+
+  const { error: assetError } = await supabase
+    .from('content_assets')
+    .update({ project_name: projectName, updated_at: new Date().toISOString() })
+    .eq('project_id', normalizedId);
+
+  if (assetError) {
+    throw new Error(`Gagal menyamakan nama project di asset: ${assetError.message}`);
+  }
+
+  if (input.tagIds) {
+    await replaceContentAssetProjectTags(normalizedId, input.tagIds);
+  }
+
+  const project = await getContentAssetProject(normalizedId);
+  if (!project) {
+    throw new Error('Project asset tidak ditemukan.');
+  }
+
+  return project;
 }
 
 export async function deleteContentAsset(id: string): Promise<void> {

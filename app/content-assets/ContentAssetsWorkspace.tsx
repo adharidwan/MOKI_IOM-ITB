@@ -1,14 +1,17 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import ArchiveRoundedIcon from '@mui/icons-material/ArchiveRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
 import MovieRoundedIcon from '@mui/icons-material/MovieRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import Autocomplete, { createFilterOptions } from '@mui/material/Autocomplete';
 import {
   Alert,
   Box,
@@ -19,6 +22,8 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  InputAdornment,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -27,22 +32,67 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from '@mui/material';
 
-import { adminPalette } from '../lib/adminPalette';
-import type { ContentAsset, ContentAssetProject } from '../lib/types';
-import { createContentAssetProjectAction, deleteContentAssetProjectAction } from './actions';
+import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import type { ContentAsset, ContentAssetProject, ContentTag } from '../lib/types';
+import {
+  createContentAssetProjectAction,
+  deleteContentAssetProjectAction,
+  saveContentAssetProjectAction,
+  type ContentAssetProjectFormState,
+} from './actions';
 
 interface ContentAssetsWorkspaceProps {
   projects: ContentAssetProject[];
+  tags: ContentTag[];
+  currentSearch: string;
+  currentAssetFilter: string;
+  currentTagIds: string[];
+  currentSortDir: 'asc' | 'desc';
   initialLoadError?: string | null;
 }
 
 type FlashState =
   | { severity: 'success' | 'info' | 'warning' | 'error'; message: string }
   | null;
+
+interface TagOption {
+  id: string;
+  name: string;
+  inputValue?: string;
+  isNew?: boolean;
+}
+
+const CONTENT_TAG_SX = { height: 22, borderRadius: 1.75, fontSize: '0.71rem', fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft };
+const tagFilter = createFilterOptions<TagOption>();
+const EMPTY_PROJECT_FORM: ContentAssetProjectFormState = { id: '', project_name: '', notes: '', tag_ids: [], new_tag_names: [] };
+
+function setOptionalParam(params: URLSearchParams, key: string, value: string) {
+  if (value) {
+    params.set(key, value);
+  } else {
+    params.delete(key);
+  }
+}
+
+function toUrl(path: string, params: URLSearchParams) {
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function normalizeTagOption(value: TagOption | string): TagOption {
+  if (typeof value === 'string') {
+    return { id: `new:${value.toLowerCase()}`, name: value, inputValue: value, isNew: true };
+  }
+  if (value.inputValue) {
+    return { ...value, name: value.inputValue, isNew: true };
+  }
+  return value;
+}
 
 function formatDateTime(value: string | null): string {
   if (!value) {
@@ -123,18 +173,103 @@ function ProjectPreview({ asset }: { asset: ContentAsset | null }) {
   );
 }
 
-export default function ContentAssetsWorkspace({ projects, initialLoadError }: ContentAssetsWorkspaceProps) {
+export default function ContentAssetsWorkspace({
+  projects,
+  tags,
+  currentSearch,
+  currentAssetFilter,
+  currentTagIds,
+  currentSortDir,
+  initialLoadError,
+}: ContentAssetsWorkspaceProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [flash, setFlash] = useState<FlashState>(
     initialLoadError ? { severity: 'warning', message: initialLoadError } : null,
   );
+  const [tagOptions, setTagOptions] = useState<TagOption[]>(tags);
+  const [filters, setFilters] = useState({ search: currentSearch, assetFilter: currentAssetFilter, tagIds: currentTagIds });
+  const [editTarget, setEditTarget] = useState<ContentAssetProject | null>(null);
+  const [editForm, setEditForm] = useState<ContentAssetProjectFormState>(EMPTY_PROJECT_FORM);
+  const [selectedEditTags, setSelectedEditTags] = useState<TagOption[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<ContentAssetProject | null>(null);
   const [isCreating, startCreateTransition] = useTransition();
+  const [isSavingProject, startSaveProjectTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
 
   const totalAssets = projects.reduce((total, project) => total + project.asset_count, 0);
   const totalImages = projects.reduce((total, project) => total + project.image_count, 0);
   const totalVideos = projects.reduce((total, project) => total + project.video_count, 0);
+  const selectedFilterTags = useMemo(
+    () => tagOptions.filter((tag) => filters.tagIds.includes(tag.id)),
+    [filters.tagIds, tagOptions],
+  );
+
+  useEffect(() => {
+    setTagOptions(tags);
+  }, [tags]);
+
+  useEffect(() => {
+    setFilters({ search: currentSearch, assetFilter: currentAssetFilter, tagIds: currentTagIds });
+  }, [currentAssetFilter, currentSearch, currentTagIds]);
+
+  useEffect(() => {
+    const delay = setTimeout(() => {
+      if (
+        filters.search === currentSearch &&
+        filters.assetFilter === currentAssetFilter &&
+        filters.tagIds.join(',') === currentTagIds.join(',')
+      ) {
+        return;
+      }
+
+      const params = new URLSearchParams(searchParams.toString());
+      setOptionalParam(params, 'search', filters.search.trim());
+      setOptionalParam(params, 'assetFilter', filters.assetFilter);
+      setOptionalParam(params, 'tagIds', filters.tagIds.join(','));
+      params.delete('tagId');
+      router.replace(toUrl(pathname, params));
+    }, 300);
+
+    return () => clearTimeout(delay);
+  }, [currentAssetFilter, currentSearch, currentTagIds, filters, pathname, router, searchParams]);
+
+  function updateQuery(mutator: (params: URLSearchParams) => void) {
+    const params = new URLSearchParams(searchParams.toString());
+    mutator(params);
+    router.replace(toUrl(pathname, params));
+  }
+
+  function syncEditTags(nextTags: TagOption[]) {
+    const normalized = Array.from(
+      new Map(
+        nextTags
+          .map(normalizeTagOption)
+          .filter((tag) => tag.name.trim())
+          .map((tag) => [tag.isNew ? `new:${tag.name.toLowerCase()}` : tag.id, tag] as const),
+      ).values(),
+    );
+
+    setSelectedEditTags(normalized);
+    setEditForm((current) => ({
+      ...current,
+      tag_ids: normalized.filter((tag) => !tag.isNew).map((tag) => tag.id),
+      new_tag_names: normalized.filter((tag) => tag.isNew).map((tag) => tag.name),
+    }));
+  }
+
+  function openEditProject(project: ContentAssetProject) {
+    setEditTarget(project);
+    setSelectedEditTags(project.tags);
+    setEditForm({
+      id: project.id,
+      project_name: project.project_name,
+      notes: project.notes || '',
+      tag_ids: project.tags.map((tag) => tag.id),
+      new_tag_names: [],
+    });
+  }
 
   function handleCreateProject(formData: FormData) {
     setFlash(null);
@@ -168,6 +303,42 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
     });
   }
 
+  function handleSaveProject() {
+    startSaveProjectTransition(async () => {
+      const result = await saveContentAssetProjectAction(editForm);
+
+      if (!result.success || !result.project) {
+        setFlash({ severity: 'error', message: result.error || 'Gagal menyimpan project asset.' });
+        return;
+      }
+
+      setTagOptions((current) => {
+        const byId = new Map(current.map((tag) => [tag.id, tag]));
+        result.project?.tags.forEach((tag) => byId.set(tag.id, tag));
+        return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
+      });
+      setEditTarget(null);
+      setFlash({ severity: 'success', message: 'Project asset berhasil disimpan.' });
+      router.refresh();
+    });
+  }
+
+  function handleSortLatestAsset() {
+    updateQuery((params) => {
+      params.set('sortDir', currentSortDir === 'asc' ? 'desc' : 'asc');
+    });
+  }
+
+  function clearFilters() {
+    setFilters({ search: '', assetFilter: '', tagIds: [] });
+    updateQuery((params) => {
+      params.delete('search');
+      params.delete('assetFilter');
+      params.delete('tagIds');
+      params.delete('tagId');
+    });
+  }
+
   return (
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity} onClose={() => setFlash(null)}>{flash.message}</Alert> : null}
@@ -196,6 +367,39 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
       </Paper>
 
       <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, overflow: 'hidden', backgroundColor: adminPalette.surface }}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 }, borderBottom: `1px solid ${adminPalette.border}` }}>
+          <TextField
+            size="small"
+            value={filters.search}
+            onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+            placeholder="Search project, creator, notes, or tag"
+            sx={{ flex: 1, minWidth: { lg: 280 } }}
+            InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }}
+          />
+          <TextField select size="small" label="Asset" value={filters.assetFilter} onChange={(event) => setFilters((current) => ({ ...current, assetFilter: event.target.value }))} sx={{ minWidth: { xs: '100%', sm: 180 } }}>
+            <MenuItem value="">All projects</MenuItem>
+            <MenuItem value="image">Has image</MenuItem>
+            <MenuItem value="video">Has video</MenuItem>
+            <MenuItem value="empty">Empty project</MenuItem>
+          </TextField>
+          <Autocomplete
+            multiple
+            size="small"
+            options={tagOptions}
+            value={selectedFilterTags}
+            onChange={(_, value) => setFilters((current) => ({ ...current, tagIds: value.map((tag) => tag.id) }))}
+            getOptionLabel={(option) => option.name}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            filterSelectedOptions
+            sx={{ minWidth: { xs: '100%', sm: 300 }, flex: { lg: '0 1 360px' } }}
+            renderInput={(params) => <TextField {...params} label="Tag" placeholder="All tags" />}
+            renderTags={(value, getTagProps) => value.map((option, index) => {
+              const { key, ...tagProps } = getTagProps({ index });
+              return <Chip key={key} label={option.name} size="small" sx={CONTENT_TAG_SX} {...tagProps} />;
+            })}
+          />
+          {[currentSearch, currentAssetFilter].filter(Boolean).length + currentTagIds.length > 0 ? <Button onClick={clearFilters} sx={{ color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>Clear filters</Button> : null}
+        </Stack>
         <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
           <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Asset Projects</Typography>
           <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>Klik project untuk membuka detail dan upload kumpulan asset.</Typography>
@@ -209,7 +413,11 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Project</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Assets</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Created By</TableCell>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Latest Asset</TableCell>
+                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>
+                  <TableSortLabel active direction={currentSortDir} onClick={handleSortLatestAsset} sx={adminTableSortLabelSx}>
+                    Latest Asset
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Action</TableCell>
               </TableRow>
             </TableHead>
@@ -231,6 +439,9 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
                   <TableCell>
                     <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{project.project_name}</Typography>
                     {project.notes ? <Typography sx={{ mt: 0.4, maxWidth: 360, fontSize: '0.8rem', color: adminPalette.textSecondary }}>{project.notes}</Typography> : null}
+                    <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap" sx={{ mt: 0.7 }}>
+                      {project.tags.length ? project.tags.map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
+                    </Stack>
                   </TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
@@ -260,6 +471,9 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
                       <Button component={Link} href={`/content-assets/${project.id}`} size="small" endIcon={<ArrowForwardRoundedIcon />} sx={{ textTransform: 'none', fontWeight: 700 }}>
                         Detail
                       </Button>
+                      <IconButton size="small" onClick={() => openEditProject(project)} aria-label={`Edit ${project.project_name}`}>
+                        <EditRoundedIcon fontSize="small" />
+                      </IconButton>
                       <IconButton size="small" color="error" onClick={() => setDeleteTarget(project)} aria-label={`Delete ${project.project_name}`}>
                         <DeleteOutlineRoundedIcon fontSize="small" />
                       </IconButton>
@@ -283,6 +497,48 @@ export default function ContentAssetsWorkspace({ projects, initialLoadError }: C
           <Button onClick={() => setDeleteTarget(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
           <Button color="error" variant="contained" onClick={handleDeleteProject} disabled={isDeleting} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
             {isDeleting ? 'Deleting...' : 'Delete Project'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(editTarget)} onClose={() => setEditTarget(null)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Edit project</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.4} sx={{ pt: 1 }}>
+            <TextField label="Nama project" value={editForm.project_name} onChange={(event) => setEditForm((current) => ({ ...current, project_name: event.target.value }))} fullWidth disabled={isSavingProject} />
+            <TextField label="Notes project" value={editForm.notes || ''} onChange={(event) => setEditForm((current) => ({ ...current, notes: event.target.value }))} multiline minRows={2} fullWidth disabled={isSavingProject} />
+            <Autocomplete
+              multiple
+              freeSolo
+              options={tagOptions}
+              value={selectedEditTags}
+              filterSelectedOptions
+              filterOptions={(options, params) => {
+                const filtered = tagFilter(options, params);
+                const input = params.inputValue.replace(/\s+/g, ' ').trim();
+                const exists = options.some((option) => option.name.toLowerCase() === input.toLowerCase());
+                if (input && !exists) {
+                  filtered.push({ id: `new:${input.toLowerCase()}`, name: `Add "${input}"`, inputValue: input, isNew: true });
+                }
+                return filtered;
+              }}
+              getOptionLabel={(option) => typeof option === 'string' ? option : option.name}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+              onChange={(_, value) => syncEditTags(value.map(normalizeTagOption))}
+              renderOption={(props, option) => <Box component="li" {...props}>{option.inputValue ? `Add "${option.inputValue}"` : option.name}</Box>}
+              renderInput={(params) => <TextField {...params} label="Tags" helperText="Select existing tags or type a new tag name and choose Add." />}
+              renderTags={(value, getTagProps) => value.map((option, index) => {
+                const { key, ...tagProps } = getTagProps({ index });
+                return <Chip key={key} label={option.inputValue || option.name} {...tagProps} />;
+              })}
+              disabled={isSavingProject}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5, pt: 1 }}>
+          <Button onClick={() => setEditTarget(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
+          <Button variant="contained" onClick={handleSaveProject} disabled={isSavingProject} sx={{ backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+            {isSavingProject ? 'Saving...' : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>

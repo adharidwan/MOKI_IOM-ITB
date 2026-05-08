@@ -11,13 +11,39 @@ import {
   deleteContentAssetProject,
   getContentAssetProject,
   updateContentAsset,
+  updateContentAssetProject,
 } from '../lib/content-assets';
+import { ensureContentTags } from '../lib/api';
 import { getSupabaseAdminClient } from '../lib/supabase-server';
+import type { ContentAsset, ContentAssetProject } from '../lib/types';
 
 export interface ContentAssetActionResult {
   success: boolean;
   error?: string;
   count?: number;
+}
+
+export interface ContentAssetTagFormState {
+  id: string;
+  notes?: string;
+  tag_ids: string[];
+  new_tag_names: string[];
+}
+
+export interface ContentAssetProjectFormState {
+  id: string;
+  project_name: string;
+  notes?: string;
+  tag_ids: string[];
+  new_tag_names: string[];
+}
+
+export interface SaveContentAssetResult extends ContentAssetActionResult {
+  asset?: ContentAsset;
+}
+
+export interface SaveContentAssetProjectResult extends ContentAssetActionResult {
+  project?: ContentAssetProject;
 }
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -30,6 +56,23 @@ function normalizeText(value: FormDataEntryValue | null): string {
 function sanitizeFileName(value: string): string {
   const normalized = value.replace(/[^\w.\- ]+/g, '').replace(/\s+/g, '-').trim();
   return normalized || 'asset';
+}
+
+function normalizeTagIds(values: string[]): string[] {
+  return Array.from(new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function normalizeTagNames(values: string[]): string[] {
+  const byKey = new Map<string, string>();
+
+  (values || []).forEach((value) => {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (normalized) {
+      byKey.set(normalized.toLowerCase(), normalized);
+    }
+  });
+
+  return Array.from(byKey.values());
 }
 
 export async function createContentAssetProjectAction(formData: FormData): Promise<ContentAssetActionResult & { projectId?: string }> {
@@ -139,12 +182,10 @@ export async function updateContentAssetAction(formData: FormData): Promise<Cont
   try {
     await requireFeatureAccess('content-assets');
     const id = normalizeText(formData.get('id'));
-    const projectName = normalizeText(formData.get('project_name'));
     const notes = normalizeText(formData.get('notes'));
 
     await updateContentAsset({
       id,
-      projectName,
       notes: notes || null,
     });
 
@@ -169,6 +210,49 @@ export async function deleteContentAssetAction(id: string): Promise<ContentAsset
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Gagal menghapus asset.',
+    };
+  }
+}
+
+export async function saveContentAssetTagsAction(input: ContentAssetTagFormState): Promise<SaveContentAssetResult> {
+  try {
+    await requireFeatureAccess('content-assets');
+    const createdTags = await ensureContentTags(normalizeTagNames(input.new_tag_names));
+    const asset = await updateContentAsset({
+      id: input.id,
+      notes: normalizeText(input.notes || null) || null,
+      tagIds: normalizeTagIds([...input.tag_ids, ...createdTags.map((tag) => tag.id)]),
+    });
+
+    revalidatePath('/content-assets');
+    revalidatePath('/content-assets/[projectId]', 'page');
+    return { success: true, asset };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Gagal menyimpan tag asset.',
+    };
+  }
+}
+
+export async function saveContentAssetProjectAction(input: ContentAssetProjectFormState): Promise<SaveContentAssetProjectResult> {
+  try {
+    await requireFeatureAccess('content-assets');
+    const createdTags = await ensureContentTags(normalizeTagNames(input.new_tag_names));
+    const project = await updateContentAssetProject({
+      id: input.id,
+      projectName: normalizeText(input.project_name),
+      notes: normalizeText(input.notes || null) || null,
+      tagIds: normalizeTagIds([...input.tag_ids, ...createdTags.map((tag) => tag.id)]),
+    });
+
+    revalidatePath('/content-assets');
+    revalidatePath(`/content-assets/${input.id}`);
+    return { success: true, project };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Gagal menyimpan project asset.',
     };
   }
 }
