@@ -1,11 +1,12 @@
 import 'server-only';
 
 import { getSupabaseAdminClient } from './supabase-server';
-import type { ContentAsset } from './types';
+import type { ContentAsset, ContentAssetProject } from './types';
 
 export const CONTENT_ASSET_BUCKET = 'content-assets';
 
 export interface ContentAssetInput {
+  projectId?: string | null;
   uploader: string;
   uploaderEmail?: string | null;
   projectName: string;
@@ -23,6 +24,13 @@ export interface UpdateContentAssetInput {
   notes?: string | null;
 }
 
+export interface ContentAssetProjectInput {
+  createdBy: string;
+  createdByEmail?: string | null;
+  projectName: string;
+  notes?: string | null;
+}
+
 function toContentAsset(record: Record<string, unknown>, signedUrl: string | null = null): ContentAsset {
   return {
     id: String(record.id || ''),
@@ -33,6 +41,10 @@ function toContentAsset(record: Record<string, unknown>, signedUrl: string | nul
       record.uploader_email === null || record.uploader_email === undefined
         ? null
         : String(record.uploader_email),
+    project_id:
+      record.project_id === null || record.project_id === undefined
+        ? null
+        : String(record.project_id),
     project_name: String(record.project_name || ''),
     original_filename: String(record.original_filename || ''),
     storage_bucket: String(record.storage_bucket || CONTENT_ASSET_BUCKET),
@@ -41,6 +53,30 @@ function toContentAsset(record: Record<string, unknown>, signedUrl: string | nul
     file_size: Number(record.file_size || 0),
     notes: record.notes === null || record.notes === undefined ? null : String(record.notes),
     signed_url: signedUrl,
+  };
+}
+
+function toContentAssetProject(record: Record<string, unknown>, previewAsset: ContentAsset | null = null): ContentAssetProject {
+  return {
+    id: String(record.id || ''),
+    created_at: String(record.created_at || ''),
+    updated_at: String(record.updated_at || ''),
+    created_by: String(record.created_by || ''),
+    created_by_email:
+      record.created_by_email === null || record.created_by_email === undefined
+        ? null
+        : String(record.created_by_email),
+    project_name: String(record.project_name || ''),
+    notes: record.notes === null || record.notes === undefined ? null : String(record.notes),
+    asset_count: Number(record.asset_count || 0),
+    image_count: Number(record.image_count || 0),
+    video_count: Number(record.video_count || 0),
+    total_file_size: Number(record.total_file_size || 0),
+    latest_asset_at:
+      record.latest_asset_at === null || record.latest_asset_at === undefined
+        ? null
+        : String(record.latest_asset_at),
+    preview_asset: previewAsset,
   };
 }
 
@@ -84,11 +120,160 @@ export async function listContentAssets(): Promise<ContentAsset[]> {
   );
 }
 
+export async function listContentAssetProjects(): Promise<ContentAssetProject[]> {
+  const supabase = getSupabaseAdminClient();
+  const { data: projects, error: projectError } = await supabase
+    .from('content_asset_projects')
+    .select('*')
+    .order('updated_at', { ascending: false })
+    .limit(200);
+
+  if (projectError) {
+    throw new Error(`Gagal memuat project asset: ${projectError.message}`);
+  }
+
+  const { data: assets, error: assetError } = await supabase
+    .from('content_assets')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(1000);
+
+  if (assetError) {
+    throw new Error(`Gagal memuat assets: ${assetError.message}`);
+  }
+
+  const assetsWithUrls = await Promise.all(
+    (assets || []).map(async (record) => {
+      const rawRecord = record as Record<string, unknown>;
+      const signedUrl = await createSignedUrl(
+        String(rawRecord.storage_bucket || CONTENT_ASSET_BUCKET),
+        String(rawRecord.storage_path || ''),
+      );
+
+      return toContentAsset(rawRecord, signedUrl);
+    }),
+  );
+
+  return (projects || []).map((project) => {
+    const rawProject = project as Record<string, unknown>;
+    const projectId = String(rawProject.id || '');
+    const projectAssets = assetsWithUrls.filter((asset) => asset.project_id === projectId);
+    const latestAsset = projectAssets[0] || null;
+
+    return toContentAssetProject(
+      {
+        ...rawProject,
+        asset_count: projectAssets.length,
+        image_count: projectAssets.filter((asset) => asset.mime_type.startsWith('image/')).length,
+        video_count: projectAssets.filter((asset) => asset.mime_type.startsWith('video/')).length,
+        total_file_size: projectAssets.reduce((total, asset) => total + asset.file_size, 0),
+        latest_asset_at: latestAsset?.created_at || null,
+      },
+      latestAsset,
+    );
+  });
+}
+
+export async function getContentAssetProject(id: string): Promise<ContentAssetProject | null> {
+  const normalizedId = String(id || '').trim();
+  if (!normalizedId) {
+    throw new Error('Project id wajib diisi.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data: project, error: projectError } = await supabase
+    .from('content_asset_projects')
+    .select('*')
+    .eq('id', normalizedId)
+    .single();
+
+  if (projectError) {
+    if (projectError.code === 'PGRST116') {
+      return null;
+    }
+    throw new Error(`Gagal memuat project asset: ${projectError.message}`);
+  }
+
+  const assets = await listContentAssetsByProject(normalizedId);
+  const rawProject = project as Record<string, unknown>;
+  const latestAsset = assets[0] || null;
+
+  return toContentAssetProject(
+    {
+      ...rawProject,
+      asset_count: assets.length,
+      image_count: assets.filter((asset) => asset.mime_type.startsWith('image/')).length,
+      video_count: assets.filter((asset) => asset.mime_type.startsWith('video/')).length,
+      total_file_size: assets.reduce((total, asset) => total + asset.file_size, 0),
+      latest_asset_at: latestAsset?.created_at || null,
+    },
+    latestAsset,
+  );
+}
+
+export async function listContentAssetsByProject(projectId: string): Promise<ContentAsset[]> {
+  const normalizedProjectId = String(projectId || '').trim();
+  if (!normalizedProjectId) {
+    throw new Error('Project id wajib diisi.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_assets')
+    .select('*')
+    .eq('project_id', normalizedProjectId)
+    .order('created_at', { ascending: false })
+    .limit(500);
+
+  if (error) {
+    throw new Error(`Gagal memuat assets project: ${error.message}`);
+  }
+
+  return Promise.all(
+    (data || []).map(async (record) => {
+      const rawRecord = record as Record<string, unknown>;
+      const signedUrl = await createSignedUrl(
+        String(rawRecord.storage_bucket || CONTENT_ASSET_BUCKET),
+        String(rawRecord.storage_path || ''),
+      );
+
+      return toContentAsset(rawRecord, signedUrl);
+    }),
+  );
+}
+
+export async function createContentAssetProject(input: ContentAssetProjectInput): Promise<ContentAssetProject> {
+  const projectName = String(input.projectName || '').replace(/\s+/g, ' ').trim();
+  if (!projectName) {
+    throw new Error('Nama project wajib diisi.');
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_asset_projects')
+    .insert({
+      created_by: input.createdBy,
+      created_by_email: input.createdByEmail || null,
+      project_name: projectName,
+      notes: input.notes || null,
+      updated_at: new Date().toISOString(),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Gagal membuat project asset: ${error.message}`);
+  }
+
+  return toContentAssetProject(data as Record<string, unknown>);
+}
+
 export async function createContentAsset(input: ContentAssetInput): Promise<ContentAsset> {
   const supabase = getSupabaseAdminClient();
   const { data, error } = await supabase
     .from('content_assets')
     .insert({
+      project_id: input.projectId || null,
       uploader: input.uploader,
       uploader_email: input.uploaderEmail || null,
       project_name: input.projectName,

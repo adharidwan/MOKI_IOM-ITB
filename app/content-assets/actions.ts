@@ -6,7 +6,9 @@ import { requireFeatureAccess } from '../lib/access-control';
 import {
   CONTENT_ASSET_BUCKET,
   createContentAsset,
+  createContentAssetProject,
   deleteContentAsset,
+  getContentAssetProject,
   updateContentAsset,
 } from '../lib/content-assets';
 import { getSupabaseAdminClient } from '../lib/supabase-server';
@@ -29,17 +31,42 @@ function sanitizeFileName(value: string): string {
   return normalized || 'asset';
 }
 
-export async function uploadContentAssetAction(formData: FormData): Promise<ContentAssetActionResult> {
+export async function createContentAssetProjectAction(formData: FormData): Promise<ContentAssetActionResult & { projectId?: string }> {
   try {
     const user = await requireFeatureAccess('content-assets');
     const projectName = normalizeText(formData.get('project_name'));
+    const notes = normalizeText(formData.get('notes'));
+
+    const project = await createContentAssetProject({
+      createdBy: user.name || user.email || user.sub,
+      createdByEmail: user.email,
+      projectName,
+      notes: notes || null,
+    });
+
+    revalidatePath('/content-assets');
+    return { success: true, projectId: project.id };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Gagal membuat project asset.',
+    };
+  }
+}
+
+export async function uploadContentAssetAction(formData: FormData): Promise<ContentAssetActionResult> {
+  try {
+    const user = await requireFeatureAccess('content-assets');
+    const projectId = normalizeText(formData.get('project_id'));
+    const project = await getContentAssetProject(projectId);
+    const projectName = project?.project_name || '';
     const notes = normalizeText(formData.get('notes'));
     const files = formData
       .getAll('asset_files')
       .filter((value): value is File => value instanceof File && value.size > 0);
 
     if (!projectName) {
-      return { success: false, error: 'Nama project wajib diisi.' };
+      return { success: false, error: 'Project asset tidak ditemukan.' };
     }
 
     if (!files.length) {
@@ -76,6 +103,7 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
 
         uploadedObjects.push(objectPath);
         await createContentAsset({
+          projectId,
           uploader: user.name || user.email || user.sub,
           uploaderEmail: user.email,
           projectName,
@@ -96,6 +124,7 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
     }
 
     revalidatePath('/content-assets');
+    revalidatePath(`/content-assets/${projectId}`);
     return { success: true, count: files.length };
   } catch (error) {
     return {
@@ -133,6 +162,7 @@ export async function deleteContentAssetAction(id: string): Promise<ContentAsset
     await requireFeatureAccess('content-assets');
     await deleteContentAsset(id);
     revalidatePath('/content-assets');
+    revalidatePath('/content-assets/[projectId]', 'page');
     return { success: true };
   } catch (error) {
     return {

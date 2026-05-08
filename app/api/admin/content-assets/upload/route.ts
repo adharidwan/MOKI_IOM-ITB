@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
-import { CONTENT_ASSET_BUCKET, createContentAsset } from '@/app/lib/content-assets';
+import { CONTENT_ASSET_BUCKET, createContentAsset, getContentAssetProject } from '@/app/lib/content-assets';
 import { getSupabaseAdminClient } from '@/app/lib/supabase-server';
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -20,14 +20,16 @@ export async function POST(request: Request) {
   try {
     const user = await requireAnyFeatureFromRequest(request, ['content-assets']);
     const formData = await request.formData();
-    const projectName = normalizeText(formData.get('project_name'));
+    const projectId = normalizeText(formData.get('project_id'));
+    const project = await getContentAssetProject(projectId);
+    const projectName = project?.project_name || '';
     const notes = normalizeText(formData.get('notes'));
     const files = formData
       .getAll('asset_files')
       .filter((value): value is File => value instanceof File && value.size > 0);
 
     if (!projectName) {
-      return NextResponse.json({ error: 'Nama project wajib diisi.' }, { status: 400 });
+      return NextResponse.json({ error: 'Project asset tidak ditemukan.' }, { status: 400 });
     }
 
     if (!files.length) {
@@ -64,6 +66,7 @@ export async function POST(request: Request) {
 
         uploadedObjects.push(objectPath);
         await createContentAsset({
+          projectId,
           uploader: user.name || user.email || user.sub,
           uploaderEmail: user.email,
           projectName,
