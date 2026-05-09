@@ -32,6 +32,7 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
@@ -456,44 +457,50 @@ export default function PhoneListTable({
                           </Typography>
                         </TableCell>
                         <TableCell sx={{ py: 0.8, minWidth: 220 }}>
-                          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
-                            {contact.group_names.length ? (
-                              contact.group_names.slice(0, 2).map((groupName) => (
+                          <Tooltip
+                            title={contact.group_names.length ? contact.group_names.join(', ') : ''}
+                            placement="top-start"
+                            disableHoverListener={!contact.group_names.length}
+                          >
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                              {contact.group_names.length ? (
+                                contact.group_names.slice(0, 2).map((groupName) => (
+                                  <Chip
+                                    key={`${contact.id}-${groupName}`}
+                                    label={groupName}
+                                    size="small"
+                                    sx={QUIET_TAG_SX}
+                                  />
+                                ))
+                              ) : (
                                 <Chip
-                                  key={`${contact.id}-${groupName}`}
-                                  label={groupName}
+                                  label="Unassigned"
                                   size="small"
-                                  sx={QUIET_TAG_SX}
+                                  sx={{
+                                    ...QUIET_TAG_SX,
+                                    backgroundColor: adminPalette.surfaceSoft,
+                                    color: adminPalette.textMuted,
+                                    border: `1px solid ${adminPalette.border}`,
+                                  }}
                                 />
-                              ))
-                            ) : (
-                              <Chip
-                                label="Unassigned"
-                                size="small"
-                                sx={{
-                                  ...QUIET_TAG_SX,
-                                  backgroundColor: adminPalette.surfaceSoft,
-                                  color: adminPalette.textMuted,
-                                  border: `1px solid ${adminPalette.border}`,
-                                }}
-                              />
-                            )}
-                            {contact.group_names.length > 2 ? (
-                              <Chip
-                                label={`+${contact.group_names.length - 2}`}
-                                size="small"
-                                variant="outlined"
-                                sx={{
-                                  height: 22,
-                                  borderRadius: 1.75,
-                                  borderColor: adminPalette.borderStrong,
-                                  color: adminPalette.textMuted,
-                                  fontSize: '0.71rem',
-                                  fontWeight: 700,
-                                }}
-                              />
-                            ) : null}
-                          </Stack>
+                              )}
+                              {contact.group_names.length > 2 ? (
+                                <Chip
+                                  label={`+${contact.group_names.length - 2}`}
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{
+                                    height: 22,
+                                    borderRadius: 1.75,
+                                    borderColor: adminPalette.borderStrong,
+                                    color: adminPalette.textMuted,
+                                    fontSize: '0.71rem',
+                                    fontWeight: 700,
+                                  }}
+                                />
+                              ) : null}
+                            </Stack>
+                          </Tooltip>
                         </TableCell>
                         <TableCell sx={{ py: 0.8 }}>
                           <Chip

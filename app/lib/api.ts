@@ -42,7 +42,7 @@ export interface CsvContactGroupSyncInput {
 
 export interface ContentRecordingInput {
   id?: string | null;
-  title: string;
+  title?: string | null;
   platform: ContentRecordingPlatform;
   caption?: string | null;
   description?: string | null;
@@ -51,6 +51,7 @@ export interface ContentRecordingInput {
   link: string;
   source_post_id?: string | null;
   thumbnail_url?: string | null;
+  media_urls?: string[] | null;
   tag_ids?: string[];
 }
 
@@ -63,6 +64,7 @@ export interface PaginatedContentRecordingsParams {
   platform?: string;
   contentType?: string;
   tagId?: string;
+  tagIds?: string[];
   sortBy?: string;
   sortDir?: SortDirection;
 }
@@ -167,8 +169,12 @@ function toCsvContact(record: Record<string, unknown>): CsvContact {
 }
 
 function toContentRecording(record: Record<string, unknown>): ContentRecording {
+  const displayId = Number(record.display_id || 0);
+  const mediaUrls = normalizeUrlList(record.media_urls);
+
   return {
     id: String(record.id || ''),
+    display_id: Number.isFinite(displayId) && displayId > 0 ? displayId : null,
     title: String(record.title || ''),
     platform: String(record.platform || '') as ContentRecordingPlatform,
     caption:
@@ -193,10 +199,29 @@ function toContentRecording(record: Record<string, unknown>): ContentRecording {
       record.thumbnail_url === null || record.thumbnail_url === undefined
         ? null
         : String(record.thumbnail_url),
+    media_urls: mediaUrls,
     tags: toContentTags(record.tags),
     created_at: String(record.created_at || ''),
     updated_at: String(record.updated_at || ''),
   };
+}
+
+function normalizeUrlList(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/\r?\n|,/)
+      : [];
+  const byUrl = new Map<string, string>();
+
+  values.forEach((entry) => {
+    const url = String(entry || '').trim();
+    if (url) {
+      byUrl.set(url, url);
+    }
+  });
+
+  return Array.from(byUrl.values());
 }
 
 function toContentTags(value: unknown): ContentTag[] {
@@ -780,6 +805,7 @@ export async function getPaginatedContentRecordings({
   platform = '',
   contentType = '',
   tagId = '',
+  tagIds = [],
   sortBy = 'upload_date',
   sortDir = 'desc',
 }: PaginatedContentRecordingsParams): Promise<PaginatedContentRecordingsResponse> {
@@ -788,12 +814,15 @@ export async function getPaginatedContentRecordings({
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
   const normalizedSortBy = normalizeContentRecordingSortKey(sortBy);
   const normalizedSortDir = normalizeSortDirection(sortDir, 'desc');
+  const normalizedTagIds = Array.from(
+    new Set([...(tagIds || []), tagId].map((id) => String(id || '').trim()).filter(Boolean)),
+  );
 
   const { data, error } = await supabase.rpc('list_content_recordings', {
     p_search: search.trim() || null,
     p_platform: platform.trim() || null,
     p_content_type: contentType.trim() || null,
-    p_tag_id: tagId.trim() || null,
+    p_tag_ids: normalizedTagIds.length ? normalizedTagIds : null,
     p_page: safePage,
     p_page_size: safePageSize,
     p_sort_by: normalizedSortBy,
@@ -912,43 +941,90 @@ async function replaceContentRecordingTags(contentRecordingId: string, tagIds: s
   }
 }
 
+async function findContentRecordingIdByLink(link: string): Promise<string | null> {
+  const normalizedLink = String(link || '').trim();
+  if (!normalizedLink) {
+    return null;
+  }
+
+  const supabase = getSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from('content_recordings')
+    .select('id')
+    .eq('link', normalizedLink)
+    .order('updated_at', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    throw new Error(`Failed to check existing content recording: ${error.message}`);
+  }
+
+  return data?.[0]?.id ? String(data[0].id) : null;
+}
+
 export async function upsertContentRecording(
   input: ContentRecordingInput,
 ): Promise<ContentRecording> {
   const supabase = getSupabaseAdminClient();
+  const title = String(input.title || '').trim();
+  const link = input.link.trim();
+  const mediaUrls = normalizeUrlList(input.media_urls);
   const payload = {
-    title: input.title.trim(),
+    title: title || null,
     platform: input.platform,
     caption: input.caption || null,
     description: input.description || null,
     content_type: input.content_type || null,
     upload_date: input.upload_date,
-    link: input.link.trim(),
+    link,
     source_post_id: input.source_post_id || null,
     thumbnail_url: input.thumbnail_url || null,
+    media_urls: mediaUrls.length ? mediaUrls : null,
     updated_at: new Date().toISOString(),
   };
 
-  if (input.id) {
+  const inputId = input.id ? String(input.id) : null;
+
+  if (inputId) {
     const { error } = await supabase
       .from('content_recordings')
       .update(payload)
-      .eq('id', input.id);
+      .eq('id', inputId);
 
     if (error) {
       throw new Error(`Failed to save content recording: ${error.message}`);
     }
 
     if (input.tag_ids) {
-      await replaceContentRecordingTags(String(input.id), input.tag_ids);
+      await replaceContentRecordingTags(inputId, input.tag_ids);
     }
 
-    return getContentRecordingById(String(input.id));
+    return getContentRecordingById(inputId);
+  }
+
+  const existingId = await findContentRecordingIdByLink(link);
+
+  if (existingId) {
+    const { error } = await supabase
+      .from('content_recordings')
+      .update(payload)
+      .eq('id', existingId);
+
+    if (error) {
+      throw new Error(`Failed to save content recording: ${error.message}`);
+    }
+
+    if (input.tag_ids) {
+      await replaceContentRecordingTags(existingId, input.tag_ids);
+    }
+
+    return getContentRecordingById(existingId);
   }
 
   const { data, error } = await supabase
     .from('content_recordings')
-    .upsert(payload, { onConflict: 'link' })
+    .insert(payload)
     .select()
     .single();
 

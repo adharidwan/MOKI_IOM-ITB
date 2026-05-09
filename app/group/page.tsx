@@ -1,6 +1,8 @@
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import GroupDirectory from '../components/GroupDirectory';
 import PhoneListToast from '../components/PhoneListToast';
+import { requireFeatureAccess } from '../lib/access-control';
+import { getPaginatedCsvContacts } from '../lib/api';
 import { getPaginatedContactGroups, getPaginatedGroupMembers } from '../lib/group-directory-server';
 
 export const dynamic = 'force-dynamic';
@@ -11,6 +13,7 @@ export default async function GroupPage({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  await requireFeatureAccess('groups');
   const resolvedSearchParams = await searchParams;
   const page = Number(resolvedSearchParams.page) || 1;
   const pageSize = Number(resolvedSearchParams.pageSize) || 20;
@@ -26,7 +29,10 @@ export default async function GroupPage({
   const rawMemberSortDir = String(resolvedSearchParams.memberSortDir || 'asc');
   const memberSortBy = rawMemberSortBy === 'no_telp' || rawMemberSortBy === 'jenis_kelamin' ? rawMemberSortBy : 'nama';
   const memberSortDir = rawMemberSortDir === 'desc' ? 'desc' : 'asc';
-  const groups = await getPaginatedContactGroups({ page, pageSize, search, sortBy, sortDir });
+  const [groups, contactOptions] = await Promise.all([
+    getPaginatedContactGroups({ page, pageSize, search, sortBy, sortDir }),
+    getPaginatedCsvContacts({ page: 1, pageSize: 100, search: '', sortBy: 'nama', sortDir: 'asc' }),
+  ]);
   const selectedGroupName = String(resolvedSearchParams.group || groups.items[0]?.name || '');
   const members = selectedGroupName
     ? await getPaginatedGroupMembers({
@@ -56,6 +62,7 @@ export default async function GroupPage({
 
       <GroupDirectory
         groups={groups}
+        contactOptions={contactOptions.items}
         selectedGroupName={selectedGroupName}
         members={members}
         currentSearch={search}

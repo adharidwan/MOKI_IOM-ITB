@@ -19,6 +19,7 @@ interface SsoContextValue {
   userName: string | null;
   userEmail: string | null;
   roles: string[];
+  features: string[];
   logout: () => Promise<void>;
 }
 
@@ -28,10 +29,11 @@ const devSsoContext: SsoContextValue = {
   userName: 'Local Developer',
   userEmail: 'dev@local',
   roles: ['admin'],
+  features: ['contacts', 'groups', 'blast', 'ticket', 'whatsapp', 'scrape', 'content-record', 'content-assets'],
   logout: async () => {},
 };
 
-async function syncSessionCookie(token: string): Promise<void> {
+async function syncSessionCookie(token: string): Promise<{ features: string[] }> {
   const response = await fetch('/api/auth/session', {
     method: 'POST',
     credentials: 'include',
@@ -44,6 +46,13 @@ async function syncSessionCookie(token: string): Promise<void> {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(payload?.error || 'Gagal menyimpan sesi SSO di server.');
   }
+
+  const payload = (await response.json().catch(() => null)) as { user?: { features?: unknown } } | null;
+  return {
+    features: Array.isArray(payload?.user?.features)
+      ? payload.user.features.filter((feature): feature is string => typeof feature === 'string')
+      : [],
+  };
 }
 
 function shouldAttachAuthHeader(input: RequestInfo | URL): boolean {
@@ -66,6 +75,7 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
   const [userName, setUserName] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [roles, setRoles] = useState<string[]>([]);
+  const [features, setFeatures] = useState<string[]>([]);
 
   useEffect(() => {
     if (isLoginPage) {
@@ -88,7 +98,7 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
           throw new Error('Token akses SSO tidak tersedia.');
         }
 
-        await syncSessionCookie(token);
+        const session = await syncSessionCookie(token);
 
         if (cancelled) {
           return;
@@ -102,6 +112,7 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
         setUserName(typeof keycloak.tokenParsed?.name === 'string' ? keycloak.tokenParsed.name : null);
         setUserEmail(typeof keycloak.tokenParsed?.email === 'string' ? keycloak.tokenParsed.email : null);
         setRoles(realmRoles);
+        setFeatures(session.features);
         setReady(true);
         setError(null);
       } catch (nextError) {
@@ -131,7 +142,10 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        await syncSessionCookie(token);
+        const session = await syncSessionCookie(token);
+        if (!cancelled) {
+          setFeatures(session.features);
+        }
       } catch (nextError) {
         if (!cancelled) {
           setError(nextError instanceof Error ? nextError.message : 'Gagal menyegarkan sesi SSO.');
@@ -186,12 +200,13 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
       userName,
       userEmail,
       roles,
+      features,
       logout: async () => {
         await logoutFromSso();
         router.replace('/sso/login');
       },
     }),
-    [roles, router, userEmail, userName],
+    [features, roles, router, userEmail, userName],
   );
 
   if (isLoginPage) {

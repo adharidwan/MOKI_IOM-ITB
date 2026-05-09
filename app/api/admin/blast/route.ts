@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import {
   BlastDispatchError,
   dispatchBlastMessage,
@@ -19,6 +20,7 @@ interface BlastRequestBody {
 
 export async function POST(request: Request) {
   try {
+    await requireAnyFeatureFromRequest(request, ['blast']);
     const body = (await request.json()) as BlastRequestBody;
     const result = await dispatchBlastMessage({
       message: String(body.message || ''),
@@ -42,11 +44,12 @@ export async function POST(request: Request) {
       );
     }
 
+    const errorMessage = error instanceof Error ? error.message : 'Gagal memproses blast message.';
     return NextResponse.json(
       {
-        error: error instanceof Error ? error.message : 'Gagal memproses blast message.',
+        error: errorMessage,
       },
-      { status: 500 },
+      { status: errorMessage.includes('akses') || errorMessage.includes('Sesi SSO') ? 403 : 500 },
     );
   }
 }

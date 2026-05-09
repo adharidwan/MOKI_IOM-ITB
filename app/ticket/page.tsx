@@ -4,6 +4,7 @@ import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material';
 
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import TicketTable from '../components/TicketTable';
+import { requireFeatureAccess } from '../lib/access-control';
 import { getTickets, getTicketStatusSummary } from '../lib/api';
 import { adminPalette } from '../lib/adminPalette';
 
@@ -53,6 +54,7 @@ export default async function TicketDashboard({
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  await requireFeatureAccess('ticket');
   const resolvedSearchParams = await searchParams;
   const page = Number(resolvedSearchParams.page) || 1;
   const pageSize = Math.min(100, Math.max(10, Number(resolvedSearchParams.pageSize) || 10));

@@ -8,7 +8,10 @@ import NotificationsNoneRoundedIcon from "@mui/icons-material/NotificationsNoneR
 import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ManageSearchRoundedIcon from "@mui/icons-material/ManageSearchRounded";
+import PermMediaRoundedIcon from "@mui/icons-material/PermMediaRounded";
 import VideoLibraryRoundedIcon from "@mui/icons-material/VideoLibraryRounded";
+import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
+import LocalOfferRoundedIcon from "@mui/icons-material/LocalOfferRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 
 import { adminPalette, adminTypographySx } from "../lib/adminPalette";
@@ -24,7 +27,10 @@ interface AdminFeatureShellProps {
     | "/ticket"
     | "/whatsapp"
     | "/scrape"
-    | "/content-record";
+    | "/content-record"
+    | "/content-assets"
+    | "/content-tags"
+    | "/access-control";
   badge?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
@@ -33,38 +39,57 @@ interface AdminFeatureShellProps {
 const NAV_ITEMS = [
   {
     href: "/contacts" as const,
+    featureKey: "contacts",
     label: "Contacts",
     icon: <PeopleAltRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/group" as const,
+    featureKey: "groups",
     label: "Groups",
     icon: <Groups2RoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/blastmessage" as const,
+    featureKey: "blast",
     label: "Blast",
     icon: <SendRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/ticket" as const,
+    featureKey: "ticket",
     label: "Ticket",
     icon: <ConfirmationNumberRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/whatsapp" as const,
-    label: "WA Ops",
+    featureKey: "whatsapp",
+    label: "WhatsApp",
     icon: <WhatsAppIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/scrape" as const,
+    featureKey: "scrape",
     label: "Import",
     icon: <ManageSearchRoundedIcon sx={{ fontSize: 18 }} />,
   },
   {
     href: "/content-record" as const,
+    featureKey: "content-record",
     label: "Library",
     icon: <VideoLibraryRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: "/content-assets" as const,
+    featureKey: "content-assets",
+    label: "Assets",
+    icon: <PermMediaRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: "/content-tags" as const,
+    featureKey: "content-assets",
+    label: "Tags",
+    icon: <LocalOfferRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
 
@@ -76,7 +101,20 @@ export default function AdminFeatureShell({
   actions,
   children,
 }: AdminFeatureShellProps) {
-  const { userName, userEmail, roles, logout } = useSso();
+  const { userName, userEmail, roles, features, logout } = useSso();
+  const isAdmin = roles.includes("admin");
+  const accessibleNavItems = NAV_ITEMS.filter((item) => isAdmin || features.includes(item.featureKey));
+  const navItems = isAdmin
+    ? [
+        ...accessibleNavItems,
+        {
+          href: "/access-control" as const,
+          featureKey: "access-control",
+          label: "Access",
+          icon: <AdminPanelSettingsRoundedIcon sx={{ fontSize: 18 }} />,
+        },
+      ]
+    : accessibleNavItems;
 
   return (
     <Box sx={{ ...adminTypographySx, minHeight: "100vh", backgroundColor: adminPalette.canvas }}>
@@ -132,7 +170,7 @@ export default function AdminFeatureShell({
           </Box>
 
           <Stack spacing={0} sx={{ width: "100%", py: 1 }}>
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const active = item.href === currentPath;
 
               return (
@@ -360,8 +398,8 @@ export default function AdminFeatureShell({
                 </Typography>
               </Box>
 
-              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ display: { xs: "flex", lg: "none" } }}>
-                {NAV_ITEMS.map((item) => {
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                {navItems.map((item) => {
                   const active = item.href === currentPath;
 
                   return (

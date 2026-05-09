@@ -34,6 +34,7 @@ interface XPost {
   id: string;
   title: string;
   link: string;
+  content?: string;
   upload_date?: string;
   thumbnail?: string;
 }
@@ -130,6 +131,7 @@ export default function XScraper() {
           link: tweet.link,
           source_post_id: tweet.id,
           thumbnail_url: tweet.thumbnail,
+          caption: tweet.content || tweet.title,
         })),
       );
 

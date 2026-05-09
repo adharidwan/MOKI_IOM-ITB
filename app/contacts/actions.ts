@@ -10,6 +10,7 @@ import {
   updateCsvContact,
   type CsvContactInput,
 } from '../lib/api';
+import { requireFeatureAccess } from '../lib/access-control';
 
 function parseGroupNames(rawValue: string): string[] {
   return rawValue
@@ -43,6 +44,7 @@ function revalidateContactPages() {
 }
 
 export async function createContactAction(formData: FormData): Promise<void> {
+  await requireFeatureAccess('contacts');
   const input = normalizeContactInput(formData);
   const validationError = validateInput(input);
 
@@ -61,6 +63,7 @@ export async function createContactAction(formData: FormData): Promise<void> {
 }
 
 export async function updateContactAction(formData: FormData): Promise<void> {
+  await requireFeatureAccess('contacts');
   const id = String(formData.get('id') || '').trim();
   if (!id) {
     redirect('/contacts?toast=error');
@@ -84,6 +87,7 @@ export async function updateContactAction(formData: FormData): Promise<void> {
 }
 
 export async function deleteContactAction(formData: FormData): Promise<void> {
+  await requireFeatureAccess('contacts');
   const id = String(formData.get('id') || '').trim();
   if (!id) {
     redirect('/contacts?toast=error');
@@ -100,6 +104,7 @@ export async function deleteContactAction(formData: FormData): Promise<void> {
 }
 
 export async function deleteContactsBulkAction(formData: FormData): Promise<void> {
+  await requireFeatureAccess('contacts');
   const idsRaw = String(formData.get('ids') || '[]');
 
   let ids: string[] = [];
@@ -127,6 +132,7 @@ export async function deleteContactsBulkAction(formData: FormData): Promise<void
 }
 
 export async function assignContactGroupAction(formData: FormData): Promise<void> {
+  await requireFeatureAccess('contacts');
   const idsRaw = String(formData.get('ids') || '[]');
   const groupNames = parseGroupNames(String(formData.get('group_names') || ''));
 

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 
+import { requireFeatureAccess } from '../../lib/access-control';
 import { addReply, getTicketById, updateTicketStatus } from '../../lib/api';
 
 export interface ReplyActionState {
@@ -29,6 +30,7 @@ export async function submitTicketReply(
   }
 
   try {
+    await requireFeatureAccess('ticket');
     const ticket = await getTicketById(ticketId);
 
     if (ticket.status === 'Closed') {
@@ -64,6 +66,7 @@ export async function closeTicket(
   void _formData;
 
   try {
+    await requireFeatureAccess('ticket');
     const ticket = await getTicketById(ticketId);
 
     if (ticket.status === 'Closed') {

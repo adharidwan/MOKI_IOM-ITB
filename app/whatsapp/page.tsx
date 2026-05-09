@@ -1,11 +1,13 @@
 import AdminFeatureShell from '../components/AdminFeatureShell';
 import WhatsappDashboard from '../components/WhatsappDashboard';
+import { requireFeatureAccess } from '../lib/access-control';
 import { createWhatsappOpsRepository } from '../lib/whatsapp-ops-repository';
 import { getWhatsappDashboardOverview } from '../lib/whatsapp-ops-service';
 
 export const dynamic = 'force-dynamic';
 
 export default async function WhatsappPage() {
+  await requireFeatureAccess('whatsapp');
   const repository = createWhatsappOpsRepository();
   const initialRenderedAt = new Date().toISOString();
   const [overview, outboundResponse, initialEvents] = await Promise.all([
