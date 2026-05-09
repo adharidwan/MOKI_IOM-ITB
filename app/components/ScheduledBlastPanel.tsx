@@ -18,6 +18,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TextField,
   Typography,
@@ -62,7 +63,15 @@ export interface ScheduledBlastSummary {
 }
 
 interface ScheduledBlastPanelProps {
-  initialItems: ScheduledBlastSummary[];
+  initialData: ScheduledBlastListResponse;
+}
+
+interface ScheduledBlastListResponse {
+  items: ScheduledBlastSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 const QUIET_BUTTON_SX = {
@@ -124,8 +133,15 @@ function toDatetimeLocal(value: string | null): string {
   return date.toISOString().slice(0, 16);
 }
 
-export default function ScheduledBlastPanel({ initialItems }: ScheduledBlastPanelProps) {
-  const [items, setItems] = useState(initialItems);
+export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanelProps) {
+  const [items, setItems] = useState(initialData.items);
+  const [total, setTotal] = useState(initialData.total);
+  const [page, setPage] = useState(initialData.page);
+  const [pageSize, setPageSize] = useState(initialData.pageSize);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<ScheduleStatus | 'all'>('all');
+  const [sourceFilter, setSourceFilter] = useState<BlastSource | 'all'>('all');
+  const [scheduleTypeFilter, setScheduleTypeFilter] = useState<ScheduleType | 'all'>('all');
   const [status, setStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<ScheduledBlastSummary | null>(null);
@@ -135,10 +151,26 @@ export default function ScheduledBlastPanel({ initialItems }: ScheduledBlastPane
   const [editRunAt, setEditRunAt] = useState('');
   const [editRecurrenceType, setEditRecurrenceType] = useState<RecurrenceType>('daily');
 
-  const loadItems = async () => {
+  const fetchItems = async (input: {
+    page: number;
+    pageSize: number;
+    search: string;
+    statusFilter: ScheduleStatus | 'all';
+    sourceFilter: BlastSource | 'all';
+    scheduleTypeFilter: ScheduleType | 'all';
+  }) => {
     setLoading(true);
-    const response = await fetch('/api/admin/scheduled-blasts', { cache: 'no-store' });
-    const payload = (await response.json()) as { items?: ScheduledBlastSummary[]; error?: string };
+    const params = new URLSearchParams({
+      page: String(input.page),
+      pageSize: String(input.pageSize),
+    });
+    if (input.search.trim()) params.set('search', input.search.trim());
+    if (input.statusFilter !== 'all') params.set('status', input.statusFilter);
+    if (input.sourceFilter !== 'all') params.set('source', input.sourceFilter);
+    if (input.scheduleTypeFilter !== 'all') params.set('scheduleType', input.scheduleTypeFilter);
+
+    const response = await fetch(`/api/admin/scheduled-blasts?${params.toString()}`, { cache: 'no-store' });
+    const payload = (await response.json()) as Partial<ScheduledBlastListResponse> & { error?: string };
     setLoading(false);
 
     if (!response.ok) {
@@ -147,16 +179,34 @@ export default function ScheduledBlastPanel({ initialItems }: ScheduledBlastPane
     }
 
     setItems(payload.items || []);
+    setTotal(payload.total || 0);
   };
+
+  const loadItems = (overrides: Partial<Parameters<typeof fetchItems>[0]> = {}) => fetchItems({
+    page,
+    pageSize,
+    search,
+    statusFilter,
+    sourceFilter,
+    scheduleTypeFilter,
+    ...overrides,
+  });
 
   useEffect(() => {
     const handler = () => {
-      void loadItems();
+      void fetchItems({
+        page: 1,
+        pageSize: initialData.pageSize,
+        search: '',
+        statusFilter: 'all',
+        sourceFilter: 'all',
+        scheduleTypeFilter: 'all',
+      });
     };
 
     window.addEventListener('scheduled-blasts-refresh', handler);
     return () => window.removeEventListener('scheduled-blasts-refresh', handler);
-  }, []);
+  }, [initialData.pageSize]);
 
   const openEdit = (item: ScheduledBlastSummary) => {
     setEditing(item);
@@ -237,9 +287,78 @@ export default function ScheduledBlastPanel({ initialItems }: ScheduledBlastPane
               Pantau schedule aktif, jalankan manual, ubah timing, pause, atau hapus schedule.
             </Typography>
           </Box>
-          <Button variant="outlined" onClick={loadItems} disabled={loading} sx={QUIET_BUTTON_SX}>
+          <Button variant="outlined" onClick={() => void loadItems()} disabled={loading} sx={QUIET_BUTTON_SX}>
             {loading ? 'Memuat...' : 'Refresh'}
           </Button>
+        </Stack>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems={{ xs: 'stretch', md: 'center' }}>
+          <TextField
+            value={search}
+            onChange={(event) => {
+              const nextSearch = event.target.value;
+              setSearch(nextSearch);
+              setPage(1);
+              void loadItems({ page: 1, search: nextSearch });
+            }}
+            placeholder="Cari nama atau pesan"
+            size="small"
+            sx={{ minWidth: { md: 260 }, '& .MuiOutlinedInput-root': { backgroundColor: adminPalette.surface } }}
+          />
+          <TextField
+            select
+            label="Status"
+            value={statusFilter}
+            onChange={(event) => {
+              const nextStatus = event.target.value as ScheduleStatus | 'all';
+              setStatusFilter(nextStatus);
+              setPage(1);
+              void loadItems({ page: 1, statusFilter: nextStatus });
+            }}
+            size="small"
+            sx={{ minWidth: { md: 150 } }}
+          >
+            <MenuItem value="all">Semua status</MenuItem>
+            <MenuItem value="active">Active</MenuItem>
+            <MenuItem value="paused">Paused</MenuItem>
+            <MenuItem value="completed">Completed</MenuItem>
+            <MenuItem value="cancelled">Cancelled</MenuItem>
+          </TextField>
+          <TextField
+            select
+            label="Sumber"
+            value={sourceFilter}
+            onChange={(event) => {
+              const nextSource = event.target.value as BlastSource | 'all';
+              setSourceFilter(nextSource);
+              setPage(1);
+              void loadItems({ page: 1, sourceFilter: nextSource });
+            }}
+            size="small"
+            sx={{ minWidth: { md: 150 } }}
+          >
+            <MenuItem value="all">Semua sumber</MenuItem>
+            <MenuItem value="manual">Manual</MenuItem>
+            <MenuItem value="csv">CSV</MenuItem>
+            <MenuItem value="contact">Kontak</MenuItem>
+            <MenuItem value="group">Grup</MenuItem>
+          </TextField>
+          <TextField
+            select
+            label="Tipe"
+            value={scheduleTypeFilter}
+            onChange={(event) => {
+              const nextScheduleType = event.target.value as ScheduleType | 'all';
+              setScheduleTypeFilter(nextScheduleType);
+              setPage(1);
+              void loadItems({ page: 1, scheduleTypeFilter: nextScheduleType });
+            }}
+            size="small"
+            sx={{ minWidth: { md: 150 } }}
+          >
+            <MenuItem value="all">Semua tipe</MenuItem>
+            <MenuItem value="once">Sekali</MenuItem>
+            <MenuItem value="recurring">Periodik</MenuItem>
+          </TextField>
         </Stack>
         {status ? <Alert severity={status.type} sx={{ borderRadius: 2.5 }}>{status.message}</Alert> : null}
       </Stack>
@@ -300,6 +419,25 @@ export default function ScheduledBlastPanel({ initialItems }: ScheduledBlastPane
           Belum ada scheduled blast. Susun pesan di atas lalu klik Jadwalkan.
         </Alert>
       )}
+
+      <TablePagination
+        component="div"
+        count={total}
+        page={Math.max(0, page - 1)}
+        rowsPerPage={pageSize}
+        rowsPerPageOptions={[5, 10, 20, 50, 100]}
+        onPageChange={(_, nextPage) => {
+          const nextPageNumber = nextPage + 1;
+          setPage(nextPageNumber);
+          void loadItems({ page: nextPageNumber });
+        }}
+        onRowsPerPageChange={(event) => {
+          const nextPageSize = Number(event.target.value);
+          setPageSize(nextPageSize);
+          setPage(1);
+          void loadItems({ page: 1, pageSize: nextPageSize });
+        }}
+      />
 
       <Dialog open={Boolean(editing)} onClose={() => setEditing(null)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Update scheduled blast</DialogTitle>

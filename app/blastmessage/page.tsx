@@ -23,7 +23,7 @@ export default async function BlastMessagePage() {
       description="Pilih penerima, tulis pesan, dan tinjau hasil render tanpa keluar dari satu workspace."
     >
       <BlastComposer initialContacts={initialContacts} initialGroups={initialGroups} />
-      <ScheduledBlastPanel initialItems={initialScheduledBlasts} />
+      <ScheduledBlastPanel initialData={initialScheduledBlasts} />
     </AdminFeatureShell>
   );
 }

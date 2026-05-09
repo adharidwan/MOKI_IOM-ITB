@@ -78,6 +78,23 @@ export interface ScheduledBlastSummary {
   updatedAt: string;
 }
 
+export interface ListScheduledBlastsInput {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: ScheduledBlastStatus | 'all';
+  source?: BlastSource | 'all';
+  scheduleType?: ScheduledBlastScheduleType | 'all';
+}
+
+export interface ListScheduledBlastsResult {
+  items: ScheduledBlastSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export interface SaveScheduledBlastInput {
   name?: string;
   message?: string;
@@ -201,13 +218,38 @@ function validateScheduleInput(input: SaveScheduledBlastInput, partial = false):
   }
 }
 
-export async function listScheduledBlasts(): Promise<ScheduledBlastSummary[]> {
+export async function listScheduledBlasts(input: ListScheduledBlastsInput = {}): Promise<ListScheduledBlastsResult> {
   const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
+  const page = Math.max(1, Number(input.page || 1));
+  const pageSize = Math.min(100, Math.max(5, Number(input.pageSize || 10)));
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const search = String(input.search || '').trim();
+  let query = supabase
     .from('scheduled_blasts')
-    .select('*')
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false });
+    .select('*', { count: 'exact' })
+    .is('deleted_at', null);
+
+  if (search) {
+    const escapedSearch = search.replace(/[%_]/g, (value) => `\\${value}`);
+    query = query.or(`name.ilike.%${escapedSearch}%,message_template.ilike.%${escapedSearch}%`);
+  }
+
+  if (input.status && input.status !== 'all') {
+    query = query.eq('status', input.status);
+  }
+
+  if (input.source && input.source !== 'all') {
+    query = query.eq('source_type', input.source);
+  }
+
+  if (input.scheduleType && input.scheduleType !== 'all') {
+    query = query.eq('schedule_type', input.scheduleType);
+  }
+
+  const { data, error, count } = await query
+    .order('created_at', { ascending: false })
+    .range(from, to);
 
   if (error) {
     throw new Error(`Gagal memuat scheduled blast: ${error.message}`);
@@ -215,7 +257,7 @@ export async function listScheduledBlasts(): Promise<ScheduledBlastSummary[]> {
 
   const records = (data || []) as ScheduledBlastRecord[];
 
-  return Promise.all(
+  const items = await Promise.all(
     records.map(async (record) => {
       const [{ count }, { data: runs, error: runError }] = await Promise.all([
         supabase
@@ -237,6 +279,15 @@ export async function listScheduledBlasts(): Promise<ScheduledBlastSummary[]> {
       return toSummary(record, count || 0, ((runs || [])[0] as ScheduledBlastRunRecord | undefined) || null);
     }),
   );
+
+  const total = count || 0;
+  return {
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  };
 }
 
 export async function createScheduledBlast(input: SaveScheduledBlastInput): Promise<ScheduledBlastSummary> {
