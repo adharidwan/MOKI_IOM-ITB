@@ -21,6 +21,7 @@ const FEED_URL_BUILDERS = [
 const INSTAGRAM_PROFILE_API =
   "https://i.instagram.com/api/v1/users/web_profile_info/";
 const INSTAGRAM_MEDIA_INFO_API = "https://i.instagram.com/api/v1/media/";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
 function normalizeUsername(rawUsername: string): string {
   return String(rawUsername || "")
@@ -71,6 +72,34 @@ function normalizeMediaUrls(values: string[]): string[] {
   return Array.from(byUrl.values());
 }
 
+function getCookieValue(cookie: string, key: string): string {
+  return (
+    cookie
+      .split(";")
+      .map((entry) => entry.trim())
+      .find((entry) => entry.startsWith(`${key}=`))
+      ?.slice(key.length + 1) || ""
+  );
+}
+
+function getInstagramHeaders(referer: string): HeadersInit {
+  const cookie = String(process.env.INSTAGRAM_COOKIE || "").trim();
+  const csrfToken = getCookieValue(cookie, "csrftoken");
+
+  return {
+    Accept: "application/json",
+    "User-Agent": USER_AGENT,
+    "x-ig-app-id": "936619743392459",
+    ...(csrfToken ? { "x-csrftoken": csrfToken } : {}),
+    ...(cookie ? { Cookie: cookie } : {}),
+    Referer: referer,
+    Origin: "https://www.instagram.com",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+  };
+}
+
 function pickInstagramImageUrl(value: unknown): string {
   if (!value || typeof value !== "object") {
     return "";
@@ -91,10 +120,10 @@ function pickInstagramImageUrl(value: unknown): string {
   );
 
   return String(
-    sortedCandidates[0]?.url ||
+    record.video_versions?.[0]?.url ||
+      sortedCandidates[0]?.url ||
       record.display_url ||
       record.thumbnail_src ||
-      record.video_versions?.[0]?.url ||
       "",
   ).trim();
 }
@@ -140,16 +169,7 @@ async function fetchPostMediaUrls(
 
   try {
     const response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "x-ig-app-id": "936619743392459",
-        Referer: `https://www.instagram.com/p/${shortcode}/`,
-        Origin: "https://www.instagram.com",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-      },
+      headers: getInstagramHeaders(`https://www.instagram.com/p/${shortcode}/`),
       cache: "no-store",
     });
 
@@ -307,16 +327,7 @@ async function fetchProfilePosts(username: string): Promise<InstagramPost[]> {
   let response: Response;
   try {
     response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "x-ig-app-id": "936619743392459",
-        Referer: referer,
-        Origin: "https://www.instagram.com",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-      },
+      headers: getInstagramHeaders(referer),
       cache: "no-store",
     });
   } catch (error) {

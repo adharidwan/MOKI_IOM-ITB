@@ -28,11 +28,11 @@ const X_FEED_URL_BUILDERS = [
   (username: string) => `https://rsshub.app/twitter/user/${username}`,
 ];
 const INSTAGRAM_FEED_URL_BUILDERS = [
+  (username: string) => `https://rsshub.app/picnob/user/${username}`,
   (username: string) => `https://rsshub.app/instagram/2/user/${username}`,
   (username: string) => `https://rsshub.rssforever.com/instagram/2/user/${username}`,
   (username: string) => `https://rsshub.app/instagram/user/${username}`,
   (username: string) => `https://rsshub.rssforever.com/instagram/user/${username}`,
-  (username: string) => `https://rsshub.app/picnob/user/${username}`,
 ];
 const INSTAGRAM_MEDIA_INFO_API = 'https://i.instagram.com/api/v1/media/';
 const INSTAGRAM_SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
@@ -49,6 +49,31 @@ function sanitizeDownloadName(value: string, fallback: string): string {
 function attachmentDisposition(fileName: string): string {
   const fallback = fileName.replace(/[^\x20-\x7e]+/g, '_').replace(/"/g, "'");
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+}
+
+function getCookieValue(cookie: string, key: string): string {
+  return (
+    cookie
+      .split(';')
+      .map((entry) => entry.trim())
+      .find((entry) => entry.startsWith(`${key}=`))
+      ?.slice(key.length + 1) || ''
+  );
+}
+
+function getInstagramHeaders(referer: string, accept = 'application/json'): HeadersInit {
+  const cookie = String(process.env.INSTAGRAM_COOKIE || '').trim();
+  const csrfToken = getCookieValue(cookie, 'csrftoken');
+
+  return {
+    Accept: accept,
+    'User-Agent': USER_AGENT,
+    'x-ig-app-id': '936619743392459',
+    ...(csrfToken ? { 'x-csrftoken': csrfToken } : {}),
+    ...(cookie ? { Cookie: cookie } : {}),
+    Referer: referer,
+    Origin: 'https://www.instagram.com',
+  };
 }
 
 function tryParseUrl(rawUrl: string): URL | null {
@@ -122,11 +147,7 @@ async function fetchInstagramUsernameFromPost(shortcode: string): Promise<string
 
   const postUrl = `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`;
   const response = await fetch(postUrl, {
-    headers: {
-      Accept: 'text/html,application/xhtml+xml',
-      'User-Agent': USER_AGENT,
-      Referer: 'https://www.instagram.com/',
-    },
+    headers: getInstagramHeaders('https://www.instagram.com/', 'text/html,application/xhtml+xml'),
     cache: 'no-store',
   }).catch(() => null);
 
@@ -184,13 +205,7 @@ async function fetchInstagramUsernameFromMediaInfo(shortcode: string): Promise<s
   }
 
   const response = await fetch(`${INSTAGRAM_MEDIA_INFO_API}${mediaId}/info/`, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': USER_AGENT,
-      'x-ig-app-id': '936619743392459',
-      Referer: `https://www.instagram.com/p/${shortcode}/`,
-      Origin: 'https://www.instagram.com',
-    },
+    headers: getInstagramHeaders(`https://www.instagram.com/p/${shortcode}/`),
     cache: 'no-store',
   }).catch(() => null);
 
@@ -239,13 +254,7 @@ async function fetchInstagramMediaUrlsFromMediaInfo(shortcode: string): Promise<
   }
 
   const response = await fetch(`${INSTAGRAM_MEDIA_INFO_API}${mediaId}/info/`, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': USER_AGENT,
-      'x-ig-app-id': '936619743392459',
-      Referer: `https://www.instagram.com/p/${shortcode}/`,
-      Origin: 'https://www.instagram.com',
-    },
+    headers: getInstagramHeaders(`https://www.instagram.com/p/${shortcode}/`),
     cache: 'no-store',
   }).catch(() => null);
 
@@ -265,10 +274,10 @@ async function fetchInstagramMediaUrlsFromMediaInfo(shortcode: string): Promise<
   }
 
   if (Array.isArray(item.carousel_media) && item.carousel_media.length > 0) {
-    return normalizeMediaUrls(item.carousel_media.map(pickInstagramMediaInfoUrl));
+    return filterInstagramOriginalMediaUrls(item.carousel_media.map(pickInstagramMediaInfoUrl));
   }
 
-  return normalizeMediaUrls([pickInstagramMediaInfoUrl(item)]);
+  return filterInstagramOriginalMediaUrls([pickInstagramMediaInfoUrl(item)]);
 }
 
 function extractMetaContent(html: string, selectorName: string): string {
@@ -277,6 +286,33 @@ function extractMetaContent(html: string, selectorName: string): string {
   const contentFirst = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escapedName}["'][^>]*>`, 'i');
 
   return decodeXmlEntities(propertyFirst.exec(html)?.[1] || contentFirst.exec(html)?.[1] || '');
+}
+
+function decodeEscapedJsonUrl(value: string): string {
+  return decodeXmlEntities(value)
+    .replace(/\\u0026/g, '&')
+    .replace(/\\\//g, '/')
+    .replace(/\\u003d/g, '=')
+    .replace(/\\u0025/g, '%');
+}
+
+function isLikelyInstagramThumbnailUrl(rawUrl: string): boolean {
+  const url = tryParseUrl(rawUrl);
+  const value = `${url?.pathname || ''}${url?.search || ''}`.toLowerCase();
+
+  return (
+    value.includes('s150x150') ||
+    value.includes('s320x320') ||
+    value.includes('s640x640') ||
+    value.includes('150x150') ||
+    value.includes('320x320') ||
+    value.includes('profile_pic') ||
+    value.includes('thumbnail')
+  );
+}
+
+function filterInstagramOriginalMediaUrls(urls: string[]): string[] {
+  return normalizeMediaUrls(urls).filter((url) => !isLikelyInstagramThumbnailUrl(url));
 }
 
 async function fetchInstagramMediaUrlsFromPostMetadata(shortcode: string, link: string): Promise<string[]> {
@@ -288,11 +324,7 @@ async function fetchInstagramMediaUrlsFromPostMetadata(shortcode: string, link: 
 
   for (const url of normalizeMediaUrls(urls)) {
     const response = await fetch(url, {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml',
-        'User-Agent': USER_AGENT,
-        Referer: 'https://www.instagram.com/',
-      },
+      headers: getInstagramHeaders('https://www.instagram.com/', 'text/html,application/xhtml+xml'),
       cache: 'no-store',
     }).catch(() => null);
 
@@ -301,13 +333,15 @@ async function fetchInstagramMediaUrlsFromPostMetadata(shortcode: string, link: 
     }
 
     const html = await response.text();
-    const mediaUrls = normalizeMediaUrls([
+    const mediaUrls = filterInstagramOriginalMediaUrls([
       extractMetaContent(html, 'og:video'),
       extractMetaContent(html, 'og:video:secure_url'),
       extractMetaContent(html, 'og:image'),
-      ...extractXmlTagValues(html, /"video_url"\s*:\s*"([^"]+)"/gi).map((value) => value.replace(/\\u0026/g, '&').replace(/\\\//g, '/')),
-      ...extractXmlTagValues(html, /"display_url"\s*:\s*"([^"]+)"/gi).map((value) => value.replace(/\\u0026/g, '&').replace(/\\\//g, '/')),
-      ...extractXmlTagValues(html, /"thumbnail_src"\s*:\s*"([^"]+)"/gi).map((value) => value.replace(/\\u0026/g, '&').replace(/\\\//g, '/')),
+      ...extractXmlTagValues(html, /"video_url"\s*:\s*"([^"]+)"/gi).map(decodeEscapedJsonUrl),
+      ...extractXmlTagValues(html, /"display_url"\s*:\s*"([^"]+)"/gi).map(decodeEscapedJsonUrl),
+      ...extractXmlTagValues(html, /"thumbnail_src"\s*:\s*"([^"]+)"/gi).map(decodeEscapedJsonUrl),
+      ...extractXmlTagValues(html, /"url"\s*:\s*"(https?:\\\/\\\/[^"]+)"/gi).map(decodeEscapedJsonUrl),
+      ...extractXmlTagValues(html, /"src"\s*:\s*"(https?:\\\/\\\/[^"]+)"/gi).map(decodeEscapedJsonUrl),
     ]).filter((mediaUrl) => /^https?:\/\//i.test(mediaUrl));
 
     if (mediaUrls.length) {
@@ -513,7 +547,7 @@ async function listDownloadedFiles(tempDir: string): Promise<string[]> {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-async function downloadFallbackMediaUrls(urls: string[], tempDir: string): Promise<string[]> {
+async function downloadFallbackMediaUrls(urls: string[], tempDir: string, referer: string): Promise<string[]> {
   const normalizedUrls = Array.from(new Set(urls.map((url) => String(url || '').trim()).filter(Boolean)));
   const downloadedFiles: string[] = [];
 
@@ -521,7 +555,7 @@ async function downloadFallbackMediaUrls(urls: string[], tempDir: string): Promi
     const response = await fetch(url, {
       headers: {
         'User-Agent': USER_AGENT,
-        Referer: 'https://x.com/',
+        Referer: referer,
       },
       cache: 'no-store',
     }).catch(() => null);
@@ -600,6 +634,8 @@ async function fetchInstagramMediaUrlsFromFeeds(username: string, shortcode: str
     return [];
   }
 
+  const allUrls: string[] = [];
+
   for (const buildFeedUrl of INSTAGRAM_FEED_URL_BUILDERS) {
     const feedUrl = buildFeedUrl(username);
     const response = await fetch(feedUrl, {
@@ -624,21 +660,18 @@ async function fetchInstagramMediaUrlsFromFeeds(username: string, shortcode: str
     }
 
     const decodedItem = decodeXmlEntities(item);
-    const urls = normalizeMediaUrls([
+    const urls = filterInstagramOriginalMediaUrls([
       ...extractXmlTagValues(item, /<media:content[^>]*url=["']([^"']+)["'][^>]*>/gi),
-      ...extractXmlTagValues(item, /<media:thumbnail[^>]*url=["']([^"']+)["'][^>]*>/gi),
       ...extractXmlTagValues(item, /<enclosure[^>]*url=["']([^"']+)["'][^>]*>/gi),
       ...extractXmlTagValues(decodedItem, /<img[^>]*src=["']([^"']+)["'][^>]*>/gi),
       ...extractXmlTagValues(decodedItem, /<video[^>]*src=["']([^"']+)["'][^>]*>/gi),
       ...extractXmlTagValues(decodedItem, /<source[^>]*src=["']([^"']+)["'][^>]*>/gi),
     ]).filter((url) => /^https?:\/\//i.test(url));
 
-    if (urls.length) {
-      return urls;
-    }
+    allUrls.push(...urls);
   }
 
-  return [];
+  return normalizeMediaUrls(allUrls);
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ recordingId: string }> }) {
@@ -678,7 +711,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     if (!files.length && recording.platform === 'x') {
       const statusId = extractXStatusId(downloadLink);
       const feedMediaUrls = await fetchXMediaUrlsFromFeeds(extractXUsername(downloadLink), statusId);
-      files = await downloadFallbackMediaUrls(feedMediaUrls, tempDir);
+      files = await downloadFallbackMediaUrls(feedMediaUrls, tempDir, 'https://x.com/');
     }
 
     if (!files.length && recording.platform === 'Instagram') {
@@ -693,16 +726,15 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
       const feedMediaUrls = username
         ? await fetchInstagramMediaUrlsFromFeeds(username, shortcode)
         : [];
-      const directMediaUrls = feedMediaUrls.length
-        ? []
-        : [
-            ...await fetchInstagramMediaUrlsFromMediaInfo(shortcode),
-            ...await fetchInstagramMediaUrlsFromPostMetadata(shortcode, downloadLink),
-          ];
+      const directMediaUrls = [
+        ...await fetchInstagramMediaUrlsFromMediaInfo(shortcode),
+        ...await fetchInstagramMediaUrlsFromPostMetadata(shortcode, downloadLink),
+      ];
 
       files = await downloadFallbackMediaUrls(
-        [...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || []), recording.thumbnail_url || ''],
+        filterInstagramOriginalMediaUrls([...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || [])]),
         tempDir,
+        'https://www.instagram.com/',
       );
     }
 
@@ -711,7 +743,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
         recording.platform === 'x'
           ? 'Tidak ada native image/video X yang bisa didownload dari feed publik.'
           : recording.platform === 'Instagram'
-            ? 'Tidak ada native image/video Instagram yang bisa didownload dari feed publik, metadata post, atau media yang tersimpan di record.'
+            ? 'Tidak ada image/video asli Instagram yang bisa didownload. Sumber yang tersedia hanya thumbnail/preview atau tidak mengekspos media asli.'
           : 'yt-dlp selesai tetapi tidak menghasilkan file media.',
       );
     }
