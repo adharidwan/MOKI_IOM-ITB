@@ -22,7 +22,6 @@ const YT_DLP_CANDIDATE_PATHS = [
 ];
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
-const X_TWEET_SYNDICATION_API = 'https://cdn.syndication.twimg.com/widgets/tweet';
 const X_FEED_URL_BUILDERS = [
   (username: string) => `https://nitter.net/${username}/rss`,
   (username: string) => `https://nitter.poast.org/${username}/rss`,
@@ -306,35 +305,6 @@ function normalizeMediaUrls(values: Array<string | null | undefined>): string[] 
   return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
 }
 
-async function fetchXMediaUrlsFromSyndication(statusId: string): Promise<string[]> {
-  if (!statusId) {
-    return [];
-  }
-
-  const response = await fetch(`${X_TWEET_SYNDICATION_API}?id=${encodeURIComponent(statusId)}`, {
-    headers: {
-      Accept: 'application/json',
-      'User-Agent': USER_AGENT,
-      Referer: 'https://platform.twitter.com/',
-    },
-    cache: 'no-store',
-  }).catch(() => null);
-
-  if (!response?.ok) {
-    return [];
-  }
-
-  const payload = await response.json().catch(() => null) as {
-    photos?: Array<{ url?: string }>;
-    video?: { poster?: string };
-  } | null;
-
-  return normalizeMediaUrls([
-    ...(payload?.photos || []).map((photo) => photo.url),
-    payload?.video?.poster,
-  ]);
-}
-
 function extractXmlTagValues(xml: string, pattern: RegExp): string[] {
   return Array.from(xml.matchAll(pattern)).map((match) => decodeXmlEntities(match[1] || ''));
 }
@@ -382,16 +352,6 @@ async function fetchXMediaUrlsFromFeeds(username: string, statusId: string): Pro
   return [];
 }
 
-function shouldFallbackAfterXDownloadError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error || '');
-
-  return (
-    message.includes('No video could be found') ||
-    message.includes('Page type') ||
-    message.includes('Unsupported URL')
-  );
-}
-
 export async function GET(request: Request, { params }: { params: Promise<{ recordingId: string }> }) {
   let tempDir = '';
 
@@ -417,40 +377,29 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
 
     const downloadLink = await normalizeDownloadLink(recording.platform, recording.link);
 
-    let ytDlpError: Error | null = null;
-
-    try {
+    if (recording.platform === 'youtube') {
       await runYtDlpDownload(
         recording.platform,
         downloadLink,
-        path.join(tempDir, recording.platform === 'youtube' ? 'media.%(ext)s' : 'media-%(autonumber)02d.%(ext)s'),
+        path.join(tempDir, 'media.%(ext)s'),
       );
-    } catch (error) {
-      if (recording.platform !== 'x' || !shouldFallbackAfterXDownloadError(error)) {
-        throw error;
-      }
-
-      ytDlpError = error instanceof Error ? error : new Error(String(error || 'yt-dlp gagal.'));
     }
 
     let files = await listDownloadedFiles(tempDir);
     if (!files.length && recording.platform === 'x') {
       const statusId = extractXStatusId(downloadLink);
-      const syndicationMediaUrls = await fetchXMediaUrlsFromSyndication(statusId);
-      const feedMediaUrls = syndicationMediaUrls.length
-        ? []
-        : await fetchXMediaUrlsFromFeeds(extractXUsername(downloadLink), statusId);
+      const feedMediaUrls = await fetchXMediaUrlsFromFeeds(extractXUsername(downloadLink), statusId);
       files = await downloadFallbackMediaUrls(
-        [...syndicationMediaUrls, ...feedMediaUrls, ...(recording.media_urls || []), recording.thumbnail_url || ''],
+        [...feedMediaUrls, ...(recording.media_urls || []), recording.thumbnail_url || ''],
         tempDir,
       );
     }
 
     if (!files.length) {
       throw new Error(
-        ytDlpError
-          ? `Tidak ada native image/video X yang bisa didownload dari record ini. yt-dlp: ${ytDlpError.message}`
-          : 'Tidak ada native image/video X yang bisa didownload dari record ini. Pastikan tweet memiliki media asli, bukan hanya link preview/card artikel.',
+        recording.platform === 'x'
+          ? 'Tidak ada native image/video X yang bisa didownload dari feed publik atau data media yang tersimpan.'
+          : 'yt-dlp selesai tetapi tidak menghasilkan file media.',
       );
     }
 
