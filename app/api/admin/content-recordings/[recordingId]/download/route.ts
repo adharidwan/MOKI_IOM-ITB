@@ -389,16 +389,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     if (!files.length && recording.platform === 'x') {
       const statusId = extractXStatusId(downloadLink);
       const feedMediaUrls = await fetchXMediaUrlsFromFeeds(extractXUsername(downloadLink), statusId);
-      files = await downloadFallbackMediaUrls(
-        [...feedMediaUrls, ...(recording.media_urls || []), recording.thumbnail_url || ''],
-        tempDir,
-      );
+      files = await downloadFallbackMediaUrls(feedMediaUrls, tempDir);
     }
 
     if (!files.length) {
       throw new Error(
         recording.platform === 'x'
-          ? 'Tidak ada native image/video X yang bisa didownload dari feed publik atau data media yang tersimpan.'
+          ? 'Tidak ada native image/video X yang bisa didownload dari feed publik.'
           : 'yt-dlp selesai tetapi tidak menghasilkan file media.',
       );
     }
