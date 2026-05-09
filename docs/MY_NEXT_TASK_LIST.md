@@ -14,11 +14,32 @@ It is focused on the next work items to execute, not the full product backlog.
 4. Improve `/whatsapp` dashboard UI and admin controls.
 5. Improve `/ticket` UI/UX where needed.
 
-## Task 1: Multiple WhatsApp Bot Integration
+## Task 1: Multiple WhatsApp Bot Integration And Docker-Controlled Workers
 
 ### Goal
 
-Support multiple WhatsApp bot instances safely, make outbound traffic distribute across available instances, and allow admins to manage bot instances from `/whatsapp`.
+Support multiple WhatsApp bot instances safely, distribute new outbound blast/API traffic across available instances, and allow admins to manage instance configuration and worker lifecycle from `/whatsapp`.
+
+The implementation should be phased. First make multi-instance message routing correct without Docker control. Then add a separate Docker orchestrator service that can start, stop, and restart bot containers for each instance.
+
+### Current Direction
+
+The preferred architecture is not to let the Next.js admin app talk directly to Docker. Instead, use a private internal orchestrator service.
+
+```txt
+Admin UI
+  -> Next.js API
+    -> Bot Orchestrator Service
+      -> Docker Engine
+        -> WhatsApp bot containers
+```
+
+Reason:
+
+- Docker control is powerful and can become host-level access if exposed incorrectly.
+- The frontend should never access Docker directly.
+- The Next.js API should only expose limited admin actions and delegate container operations to an internal service.
+- Multi-instance routing must work even if Docker orchestration is disabled or unavailable.
 
 ### Reality Check
 
@@ -30,124 +51,157 @@ Support multiple WhatsApp bot instances safely, make outbound traffic distribute
 - Blast and external API outbound messages still default to the hardcoded `default` instance.
 - Admin `/api/admin/whatsapp/instances` is currently GET-only.
 - The WhatsApp bot currently uses one `.wwebjs_auth` data path, which can conflict when multiple bot processes run.
+- Admin-controlled Docker lifecycle is not implemented yet.
 
-### Implementation Tasks
+### Phase 1: Multi-Instance Foundation
 
+Phase 1 makes the product correct and safe when multiple bot workers are already running.
+
+Implementation tasks:
+
+- Add `is_enabled boolean not null default true` to `whatsapp_instances`.
+- Update instance types/repository/service to include `is_enabled`.
 - Add bot session isolation by instance ID in `scripts/whatsapp-bot.js`.
-- Add a selector helper for outbound instance assignment.
+- Add an eligible instance selector helper for new outbound assignments.
 - Use the selector for blast outbound messages.
 - Use the selector for external API outbound messages.
-- Keep ticket replies routed to the ticket's `whatsapp_instance_id`.
+- Keep ticket replies routed to the ticket's existing `whatsapp_instance_id`.
 - Add admin API to create WhatsApp instances.
-- Add admin API to update instance label or disabled state.
+- Add admin API to update instance label or enabled state.
 - Prefer soft-disable over hard delete for demo safety.
-- Add dashboard UI on `/whatsapp` to create a bot instance.
-- Add dashboard UI to disable or reactivate an instance.
-- Show the required env/command for running a worker for each instance.
+- Add dashboard UI on `/whatsapp` to create, rename, disable, and reactivate an instance.
+- Show worker command/env guidance for manually running an instance.
 
-### Suggested Minimal Data Model Change
-
-Add disabled state if needed:
-
-- Option A: add `is_enabled boolean not null default true` to `whatsapp_instances`.
-- Option B: add a new status such as `disabled`.
-
-Recommendation: use `is_enabled` to avoid mixing operational runtime status with admin availability.
-
-### Acceptance Criteria
+Acceptance criteria:
 
 - Two bot workers can run with different `WHATSAPP_INSTANCE_ID` values without auth/session conflict.
-- `/whatsapp` shows both instances.
+- `/whatsapp` shows both configured and live instances.
 - New blast/API outbound messages are assigned to a ready enabled instance instead of always `default`.
 - Ticket replies still use the same instance that received the original ticket.
 - Disabled instances are not selected for new blast/API outbound messages.
+- If no eligible instance exists, blast/API send fails clearly instead of silently falling back to `default`.
 
-### Detailed Plan: Multi-Instance Message Distribution And Admin-Controlled Instances
+### Phase 2: Docker Orchestrator Service
 
-This plan covers the first implementation focus: multi-instance WhatsApp message delivery and admin-controlled instance management.
+Phase 2 adds admin-controlled worker lifecycle management.
 
-The chosen admin disable model is soft-disable only.
+The orchestrator is a separate internal service responsible for Docker operations. The admin app calls it through controlled backend APIs.
 
-Soft-disable means:
+Admin actions:
 
-- The bot container may still be running.
-- The WhatsApp session is not destroyed.
-- The instance remains visible in `/whatsapp`.
-- New blast/API outbound messages must not be assigned to that instance.
-- Existing historical messages, tickets, contacts, QR state, and events are not deleted.
-- Existing ticket conversations should not silently move to another WhatsApp account.
+- Create instance config.
+- Start worker container for an instance.
+- Stop worker container for an instance.
+- Restart worker container for an instance.
+- Disable instance for new blast/API assignments.
+- Reactivate instance for new blast/API assignments.
+- View worker/container state.
 
-#### Core Responsibility Split
+Important separation:
 
-| Concern | Owner |
-|---|---|
-| Bot process exists | Docker/deployment |
-| Bot process is logged in and ready | WhatsApp worker runtime |
-| Instance can receive new blast/API work | Admin `is_enabled` flag |
-| Message delivery history | `outbound_messages` ledger |
-| Live status, QR, heartbeat | Redis runtime keys |
-| Durable instance configuration | `whatsapp_instances` table |
+- Disable means the instance stays visible and logged in but does not receive new blast/API assignments.
+- Stop means the worker container is stopped.
+- Restart means the worker container is recreated or restarted while preserving the auth volume.
+- Delete is not part of v1.
 
-The admin dashboard should not start or stop Docker containers in v1.
+The orchestrator should be internal-only and should not be publicly reachable.
+
+### Docker Orchestrator Responsibilities
+
+The orchestrator should do only a small set of explicit operations:
+
+- Create a bot container for a given instance ID and label.
+- Start an existing bot container.
+- Stop an existing bot container.
+- Restart an existing bot container.
+- Inspect container status for dashboard display.
+- Ensure each instance uses a unique auth volume.
+- Prevent two containers from being started for the same `WHATSAPP_INSTANCE_ID`.
+
+The orchestrator should not decide message routing. Routing remains owned by the application selector and `whatsapp_instances.is_enabled`.
+
+### Docker Worker Contract
+
+Each spawned bot worker needs unique identity and storage:
+
+```txt
+WHATSAPP_INSTANCE_ID=<id>
+WHATSAPP_INSTANCE_LABEL="<label>"
+WHATSAPP_WORKER_ID=<id>-worker
+```
+
+Each spawned bot worker needs shared infrastructure env:
+
+```txt
+SUPABASE_URL=<shared>
+SUPABASE_SERVICE_ROLE_KEY=<shared>
+REDIS_URL=<shared>
+WHATSAPP_CHROMIUM_PATH=/usr/bin/chromium
+```
+
+Each spawned bot worker needs a unique auth volume:
+
+```txt
+bot_auth_<id>:/app/.wwebjs_auth
+```
+
+The bot script should also use instance-specific LocalAuth configuration so auth isolation does not depend only on Docker volume naming.
+
+Example generated container/service intent:
+
+```yaml
+bot_<id>:
+  image: iom4-bot:latest
+  env_file:
+    - .env.local
+  environment:
+    WHATSAPP_INSTANCE_ID: <id>
+    WHATSAPP_INSTANCE_LABEL: <label>
+    WHATSAPP_WORKER_ID: <id>-worker
+    WHATSAPP_CHROMIUM_PATH: /usr/bin/chromium
+  volumes:
+    - bot_auth_<id>:/app/.wwebjs_auth
+```
+
+### Security Rules For Docker Control
+
+- Do not expose the Docker socket to the browser.
+- Do not put Docker control directly in client components.
+- Prefer a separate private orchestrator service over direct Docker access from Next.js.
+- Authenticate all admin APIs before calling the orchestrator.
+- Validate instance IDs before using them in container names, volume names, env vars, or paths.
+- Allowed instance ID pattern: lowercase letters, numbers, hyphen, and underscore.
+- Reject spaces, slashes, path traversal, shell metacharacters, and duplicate IDs.
+- Keep orchestrator operations allowlisted; do not expose arbitrary Docker command execution.
+- Log all start/stop/restart actions.
+
+### Data Model
+
+Add disabled state:
+
+```sql
+alter table whatsapp_instances
+add column if not exists is_enabled boolean not null default true;
+```
+
+Recommendation: use `is_enabled` instead of overloading runtime status.
 
 Reason:
 
-- Docker control from a Next.js admin app is deployment-specific.
-- It requires privileged access to the Docker socket or host process manager.
-- It adds security risk and operational complexity.
-- For this project, staging should run multiple explicit bot services instead.
+- `is_enabled` represents admin availability for new assignments.
+- Runtime status represents whether the worker is alive, ready, disconnected, QR-required, degraded, or failed.
+- A disabled instance can still be running and ready.
 
-#### Staging Deployment Model
+Optional later fields for Docker orchestration:
 
-Staging should run one bot container per WhatsApp instance.
+- `container_name text`
+- `desired_state text` such as `running` or `stopped`
+- `last_started_at timestamptz`
+- `last_stopped_at timestamptz`
 
-Each bot service needs:
+For v1, derive Docker state from the orchestrator instead of adding these fields unless persistence is needed.
 
-- unique `WHATSAPP_INSTANCE_ID`
-- unique `WHATSAPP_INSTANCE_LABEL`
-- unique `WHATSAPP_WORKER_ID`
-- unique auth volume
-- shared Redis connection
-- shared Supabase configuration
-
-Example service naming:
-
-- `bot_1` with `WHATSAPP_INSTANCE_ID=default`
-- `bot_2` with `WHATSAPP_INSTANCE_ID=iom-wa-2`
-- `bot_3` with `WHATSAPP_INSTANCE_ID=iom-wa-3`
-
-Do not use `docker compose up --scale bot=2` with the current design unless the bot can automatically receive unique instance IDs and isolated auth volumes.
-
-#### Bot Session Isolation
-
-Problem:
-
-- Current bot auth uses one `.wwebjs_auth` path.
-- Multiple bot containers can conflict if they share the same WhatsApp Web auth session.
-
-Required behavior:
-
-- Same `WHATSAPP_INSTANCE_ID` should reuse the same auth session after restart.
-- Different `WHATSAPP_INSTANCE_ID` values must never share the same auth session.
-- Two running workers with the same `WHATSAPP_INSTANCE_ID` should be treated as a conflict or degraded condition.
-
-Implementation direction:
-
-- Make WhatsApp auth path or LocalAuth client ID instance-specific.
-- Use `WHATSAPP_INSTANCE_ID` as the isolation key.
-- Example session paths:
-  - `.wwebjs_auth/default`
-  - `.wwebjs_auth/iom-wa-2`
-
-Cases to consider:
-
-- Two workers start with different instance IDs.
-- Two workers accidentally start with the same instance ID.
-- Bot restarts and should reuse the same session.
-- Bot is moved to a new container but uses the same volume and same instance ID.
-- Bot auth is deleted and must show QR again.
-
-#### Eligible Instance Selection
+### Eligible Instance Selection
 
 New blast/API outbound messages should only go to eligible instances.
 
@@ -158,7 +212,6 @@ An instance is eligible when:
 - derived status is `ready`
 - heartbeat is not stale
 - no worker conflict is detected
-- optional later: queue pressure is below a configured threshold
 
 An instance is not eligible when:
 
@@ -171,32 +224,20 @@ An instance is not eligible when:
 - stale heartbeat
 - worker conflict exists
 
-Fallback policy decision:
+Fallback policy:
 
-- Production-strict policy: reject blast/API send when no eligible instance exists.
-- Demo-friendly policy: fallback to `default` only if it is enabled and exists.
+- Use production-strict behavior for v1.
+- Reject blast/API send when no eligible instance exists.
+- Do not silently use `default`.
+- Show clear UI/API error text such as `No ready enabled WhatsApp instance is available`.
 
-Recommendation:
-
-- Prefer the production-strict policy for correctness.
-- If staging reliability is a concern, implement an explicit fallback with clear warning text instead of silently using `default`.
-
-#### Blast Distribution
-
-Avoid querying the database for lowest queue per individual message.
-
-Reason:
-
-- It creates unnecessary database load during large blasts.
-- Queue state becomes stale while inserting messages.
-- It slows down blast creation.
-- It can produce uneven behavior if many inserts race at once.
+### Blast Distribution
 
 Recommended blast flow:
 
 - Resolve all recipients.
 - Load eligible instances once.
-- Load current queue/load snapshot once per eligible instance.
+- Load queue/load snapshot once per eligible instance.
 - Assign recipients to instances in memory.
 - Insert outbound rows with selected `whatsapp_instance_id`.
 - Enqueue dispatch jobs after outbound rows are created.
@@ -206,79 +247,32 @@ Distribution policy:
 - Minimum v1: balanced round-robin among eligible instances.
 - Better v1: weighted round-robin using current pending counts.
 
-Example:
+Important rules:
 
-| Instance | Current queue | New assignment behavior |
-|---|---:|---|
-| `default` | 50 | receives fewer new recipients |
-| `iom-wa-2` | 5 | receives more new recipients |
-| `iom-wa-3` | 0 | receives most new recipients |
-
-Important rule:
-
+- Do not query the database per recipient to find the lowest queue.
 - Once a message is assigned to an instance, do not automatically rebalance it to another instance.
+- Existing queued messages should not move when an instance is disabled.
 
-Reason:
-
-- Keeps delivery behavior predictable.
-- Keeps outbound tracker easy to understand.
-- Prevents messages from jumping between WhatsApp accounts.
-
-Cases to consider:
-
-- Only one bot is ready.
-- Multiple bots are ready.
-- One bot is disabled.
-- One bot becomes disconnected after messages are assigned.
-- One bot has high queue pressure.
-- Blast has one recipient.
-- Blast has thousands of recipients.
-- Duplicate recipients after group resolution.
-- Personalized variable rendering per recipient.
-- Existing idempotency behavior for duplicate blast requests.
-- Some assigned messages fail to enqueue.
-
-#### API Notification Distribution
-
-API notification requests are often one message per request.
+### API Notification Distribution
 
 Recommended flow:
 
+- Check idempotency first.
+- If an existing idempotent outbound message exists, reuse it and do not reassign.
 - Load eligible instances.
-- Pick one eligible instance using round-robin or lightweight selection.
+- Pick one eligible instance using a lightweight selector.
 - Insert outbound row with selected `whatsapp_instance_id`.
 
-Recommended optimization:
+Recommended selector for first implementation:
 
-- Use Redis for a simple round-robin pointer later if API traffic is high.
-- For first implementation, a lightweight helper that reads eligible instances is acceptable.
+- Load eligible instances from database plus Redis runtime state.
+- Sort instances deterministically.
+- Use queue/load snapshot or simple round-robin.
+- Add Redis round-robin pointer later if API traffic is high.
 
-Cases to consider:
-
-- High API request rate.
-- No eligible instance.
-- One ready instance.
-- Multiple ready instances.
-- Disabled instance.
-- Redis unavailable.
-- Supabase unavailable.
-- Idempotency replay.
-
-Idempotency rule:
-
-- Existing idempotency replay must return/reuse the existing outbound message.
-- It must not reassign to a different WhatsApp instance.
-
-#### Ticketing Instance Affinity
+### Ticketing Instance Affinity
 
 Ticket replies must use the same WhatsApp instance that received the original customer message.
-
-Reason:
-
-- The user expects replies from the same WhatsApp account.
-- Conversation context belongs to that account.
-- Replying from another number can confuse the user.
-- WhatsApp Web chat/session state may be instance-specific.
 
 Current behavior to preserve:
 
@@ -288,58 +282,39 @@ Current behavior to preserve:
 Soft-disable rule for ticketing:
 
 - Soft-disable blocks new blast/API assignment only.
-- It should not silently reroute existing ticket replies to another instance.
-- If the original instance is down, the reply should remain queued/retrying/fail according to delivery logic.
+- Soft-disable must not reroute existing ticket conversations to another WhatsApp account.
+- If the original instance is down, the reply should remain queued, retrying, or failed according to existing delivery logic.
 
-Cases to consider:
+### Worker Processing Rule
 
-- Ticket created by `default`, admin replies while `default` is ready.
-- Ticket created by `iom-wa-2`, admin replies while `iom-wa-2` is disabled but running.
-- Ticket created by `iom-wa-2`, admin replies while `iom-wa-2` container is down.
-- Ticket created before multi-instance existed and has null/default instance.
-- Ticket transfer between WhatsApp accounts is not supported in v1.
-
-#### Worker Processing Rule
-
-Current behavior:
+Keep the current v1 worker behavior:
 
 - A worker delays a job when `job.data.whatsapp_instance_id` does not match its own instance ID.
 
-Keep this behavior for v1.
-
-Cases to consider:
-
-- Worker `default` sees job for `iom-wa-2`.
-- Worker `iom-wa-2` is down.
-- Queue contains jobs for multiple instances.
-- Job repeatedly gets picked by the wrong worker and delayed.
-
-Known performance concern:
+Known limitation:
 
 - If all workers share one BullMQ queue, workers can pick jobs for other instances and delay them.
-- This is acceptable for v1/demo volume, but may become noisy at larger scale.
+- This is acceptable for v1/demo volume.
 
 Future improvement:
 
 - Use one queue per instance, such as `outbound-dispatch:default` and `outbound-dispatch:iom-wa-2`.
-- Or add a stronger worker partitioning strategy.
+- Or add stronger worker partitioning.
 
-#### Admin Instance Management
+### Admin APIs
 
-Implement these admin actions:
-
-- Create instance.
-- Rename instance.
-- Disable instance.
-- Reactivate instance.
-
-Do not implement hard delete in v1.
-
-API direction:
+Phase 1 APIs:
 
 - `GET /api/admin/whatsapp/instances`
 - `POST /api/admin/whatsapp/instances`
 - `PATCH /api/admin/whatsapp/instances/[id]`
+
+Phase 2 APIs:
+
+- `POST /api/admin/whatsapp/instances/[id]/start`
+- `POST /api/admin/whatsapp/instances/[id]/stop`
+- `POST /api/admin/whatsapp/instances/[id]/restart`
+- `GET /api/admin/whatsapp/instances/[id]/container`
 
 Create instance fields:
 
@@ -347,36 +322,61 @@ Create instance fields:
 - `label`
 - `is_enabled`
 
+Update instance fields:
+
+- `label`
+- `is_enabled`
+
 Validation rules:
 
 - `id` is required.
 - `label` is required.
-- `id` must be simple and safe for env/session path usage.
-- Recommended ID pattern: lowercase letters, numbers, hyphen, underscore.
+- `id` must be safe for env/session path/container/volume usage.
 - Duplicate IDs are rejected.
 - Spaces in IDs are rejected.
+- Hard delete is not implemented in v1.
 
-Cases to consider:
+### `/whatsapp` Dashboard UI
 
-- Create instance before worker container exists.
-- Create instance after worker is already running.
-- Duplicate instance ID.
-- Invalid instance ID.
-- Disable default instance.
-- Disable all instances.
-- Reactivate instance with no worker.
-- Rename instance while worker is running.
-- Worker auto-upserts an instance while admin creates/updates it.
+The dashboard should support both phases.
 
-Expected behavior:
+Phase 1 UI:
 
-- Creating an instance only creates durable config.
-- It does not start Docker.
-- Dashboard should show “No live worker detected” until a matching container runs.
-- Disabling all instances is allowed, but blast/API send should fail or show no eligible worker.
-- Renaming affects dashboard display only, not worker identity.
+- Show instance label.
+- Show instance ID.
+- Show enabled/disabled state.
+- Show derived runtime status.
+- Show QR required state.
+- Show worker ID.
+- Show worker host.
+- Show heartbeat age.
+- Show queued ticket replies.
+- Show queued API notifications.
+- Show queued blast messages.
+- Show retrying, failed, and sent counts.
+- Create instance.
+- Rename instance.
+- Disable instance.
+- Reactivate instance.
+- Show manual worker env/command guidance.
 
-#### Soft-Disable Semantics
+Phase 2 UI:
+
+- Start worker container.
+- Stop worker container.
+- Restart worker container.
+- Show Docker/container state.
+- Show warning when instance config exists but no matching container is running.
+- Show warning when a container is running with the wrong instance ID.
+- Show warning when duplicate workers are detected for one instance.
+
+UI copy for soft-disable:
+
+```txt
+Disable prevents new blast/API assignments. Existing queued messages and ticket replies may still be processed by this instance.
+```
+
+### Soft-Disable Semantics
 
 Soft-disable should do these things:
 
@@ -397,149 +397,7 @@ Soft-disable should not do these things:
 - Reassign existing queued messages automatically.
 - Reroute ticket replies to another WhatsApp account.
 
-Race cases:
-
-- Admin disables an instance while blast assignment is happening.
-- Admin disables an instance after messages are queued.
-- Admin disables an instance while worker is sending.
-- Admin reactivates an instance later.
-- Admin disables the only ready instance.
-
-Recommended behavior:
-
-- Assignment reads enabled state at the start of the request.
-- Messages assigned just before disable may still send.
-- New requests after disable must not use that instance.
-- UI should explain: “Disable prevents new blast/API assignments. Existing queued/ticket messages may still be processed.”
-
-#### Worker Command Guidance In Dashboard
-
-Because admin does not start Docker, the dashboard should show operator guidance for each instance.
-
-Show environment values:
-
-```txt
-WHATSAPP_INSTANCE_ID=<id>
-WHATSAPP_INSTANCE_LABEL="<label>"
-WHATSAPP_WORKER_ID=<id>-worker
-```
-
-Show Docker Compose service pattern:
-
-```yaml
-bot_<id>:
-  image: iom4-bot:latest
-  env_file:
-    - .env.local
-  environment:
-    WHATSAPP_INSTANCE_ID: <id>
-    WHATSAPP_INSTANCE_LABEL: <label>
-    WHATSAPP_WORKER_ID: <id>-worker
-    WHATSAPP_CHROMIUM_PATH: /usr/bin/chromium
-  volumes:
-    - bot_auth_<id>:/app/.wwebjs_auth
-```
-
-Operator mistakes to surface:
-
-- Instance created but no matching bot container is running.
-- Container started with wrong `WHATSAPP_INSTANCE_ID`.
-- Two containers started with the same `WHATSAPP_INSTANCE_ID`.
-- Two instances share the same auth volume.
-
-Dashboard indicators:
-
-- no heartbeat
-- worker conflict warning
-- QR required
-- auth failed
-- disconnected
-- repeated reconnect events
-
-#### Outbound Tracker And Dashboard Integration
-
-The user should be able to watch worker and message status clearly.
-
-Per-instance dashboard should show:
-
-- instance label
-- instance ID
-- enabled/disabled state
-- derived runtime status
-- QR required state
-- worker ID
-- worker host
-- heartbeat age
-- last inbound timestamp
-- last outbound timestamp
-- queued ticket replies
-- queued API notifications
-- queued blast messages
-- retrying count
-- failed count
-- sent count
-- latest events
-- worker conflict warning
-- disabled warning
-
-Outbound tracker/message list should show:
-
-- `whatsapp_instance_id`
-- instance label
-- source type: blast, API, or ticket
-- delivery status
-- recipient
-- created timestamp
-- delivered timestamp
-- last error
-
-UI cases to represent:
-
-- Disabled but ready instance: “Ready, not receiving new blast/API work.”
-- Enabled but no heartbeat: “Enabled, but worker unavailable.”
-- QR required instance: show QR action.
-- Auth failed instance: show re-login action.
-- Instance with queued messages but no live worker.
-- Instance with high failed count.
-- Message assigned before disable.
-- Message assigned to an instance that later disconnects.
-
-#### Performance Considerations
-
-Avoid:
-
-- DB lookup per recipient to find the lowest queue.
-- Per-message queue count query.
-- Repeated dashboard polling with large payloads.
-- Loading all outbound messages without pagination.
-- One-by-one inserts for very large blasts if batching is possible.
-
-Recommended:
-
-- Select eligible instances once per blast request.
-- Read queue/load snapshot once per eligible instance.
-- Assign recipients in memory.
-- Use Redis for live runtime state.
-- Use Supabase/Postgres for durable ledger and config.
-- Keep outbound tracker payload limited and paginated.
-- Keep recent outbound list limited.
-
-Potential bottlenecks:
-
-- Very large recipient lists.
-- Shared BullMQ queue with many instance-mismatched jobs.
-- Supabase insert loop per outbound message.
-- Redis outage causing runtime state to be unavailable.
-- Stale runtime causing ready workers to look unavailable.
-
-Mitigation for v1:
-
-- Use approximate distribution instead of perfect balancing.
-- Limit dashboard/outbound list sizes.
-- Fail clearly when no eligible instance exists.
-- Do not silently assign work to unknown/stale workers.
-
-#### Implementation Order
+### Implementation Order
 
 1. Add `is_enabled` migration and type support.
 2. Update instance repository/service to include `is_enabled`.
@@ -550,17 +408,23 @@ Mitigation for v1:
 7. Verify ticket reply affinity remains unchanged.
 8. Add admin create/rename/disable/reactivate APIs.
 9. Update `/whatsapp` dashboard cards to show enabled/runtime/queue states.
-10. Add admin controls to `/whatsapp`.
+10. Add admin controls to `/whatsapp` for create, rename, disable, and reactivate.
 11. Update outbound tracker/list to clearly show instance label/status.
 12. Add tests for assignment and disable behavior.
+13. Add private Docker orchestrator service skeleton.
+14. Add orchestrator Docker inspect/start/stop/restart operations.
+15. Add Next.js API routes that call the orchestrator.
+16. Add `/whatsapp` start/stop/restart controls.
+17. Add security validation and audit logging for container lifecycle actions.
+18. Test two dynamically spawned bot containers with separate sessions.
 
-#### Test Cases
+### Test Cases
 
 - Blast uses only enabled ready instances.
 - Blast skips disabled instances.
 - Blast skips QR-required, disconnected, stale, and conflicted instances.
 - Blast distributes across multiple eligible instances.
-- Blast handles no eligible instance according to chosen fallback policy.
+- Blast fails clearly when no eligible instance exists.
 - API notification uses a selected eligible instance.
 - API notification idempotency replay does not reassign.
 - Ticket reply uses the ticket's original `whatsapp_instance_id`.
@@ -573,8 +437,13 @@ Mitigation for v1:
 - Disabled instance appears on dashboard but is not selected for new blast/API messages.
 - Dashboard shows worker unavailable when instance config exists but no container is running.
 - Dashboard shows worker conflict when two workers use the same instance ID.
+- Orchestrator can start a worker for an instance.
+- Orchestrator can stop a worker without deleting auth/session data.
+- Orchestrator can restart a worker and preserve the auth volume.
+- Orchestrator rejects invalid instance IDs.
+- Orchestrator prevents duplicate containers for the same instance ID.
 
-#### Definition Of Done
+### Definition Of Done
 
 - Staging can run at least two bot containers with separate WhatsApp sessions.
 - `/whatsapp` shows each worker separately.
@@ -585,6 +454,8 @@ Mitigation for v1:
 - Ticket replies stay on the same WhatsApp instance as the original ticket.
 - Outbound tracker/dashboard clearly shows which worker/instance each message belongs to.
 - If only one bot is running, the system still works normally.
+- Admin can start, stop, and restart a bot worker through the dashboard after Phase 2 is implemented.
+- Docker orchestration is isolated behind a private service with strict allowlisted operations.
 
 ## Task 2: WhatsApp Blast Templates
 
