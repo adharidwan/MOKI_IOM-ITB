@@ -1063,10 +1063,9 @@ export default function ContentRecordingWorkspace({
                     <TableCell>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                         {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {!previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {record.platform !== 'x' && !previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
-                        {xEmbedUrl && !previewUrls.length ? <Chip size="small" label="No X preview" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                        {record.caption && (record.platform === 'x' || previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
