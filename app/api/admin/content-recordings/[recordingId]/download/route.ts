@@ -27,6 +27,15 @@ const X_FEED_URL_BUILDERS = [
   (username: string) => `https://nitter.poast.org/${username}/rss`,
   (username: string) => `https://rsshub.app/twitter/user/${username}`,
 ];
+const INSTAGRAM_FEED_URL_BUILDERS = [
+  (username: string) => `https://rsshub.app/instagram/2/user/${username}`,
+  (username: string) => `https://rsshub.rssforever.com/instagram/2/user/${username}`,
+  (username: string) => `https://rsshub.app/instagram/user/${username}`,
+  (username: string) => `https://rsshub.rssforever.com/instagram/user/${username}`,
+  (username: string) => `https://rsshub.app/picnob/user/${username}`,
+];
+const INSTAGRAM_MEDIA_INFO_API = 'https://i.instagram.com/api/v1/media/';
+const INSTAGRAM_SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
 function resolveYtDlpBinaryPath(): string {
   return YT_DLP_CANDIDATE_PATHS.find((candidate) => candidate && fs.existsSync(candidate)) || 'yt-dlp';
@@ -65,6 +74,10 @@ function isSupportedPlatformUrl(platform: ContentRecordingPlatform, rawUrl: stri
     );
   }
 
+  if (platform === 'Instagram') {
+    return hostname === 'instagram.com' || hostname.endsWith('.instagram.com');
+  }
+
   return false;
 }
 
@@ -80,6 +93,236 @@ function extractXUsername(rawUrl: string): string {
   const statusIndex = segments.findIndex((segment) => segment.toLowerCase() === 'status');
 
   return statusIndex > 0 ? segments[statusIndex - 1].replace(/^@/, '') : '';
+}
+
+function extractInstagramShortcode(rawUrl: string): string {
+  const url = tryParseUrl(rawUrl);
+  const segments = (url?.pathname || '').split('/').filter(Boolean);
+  const markerIndex = segments.findIndex((segment) => ['p', 'reel', 'tv'].includes(segment.toLowerCase()));
+
+  return markerIndex !== -1 ? segments[markerIndex + 1] || '' : '';
+}
+
+function extractInstagramUsername(rawUrl: string): string {
+  const url = tryParseUrl(rawUrl);
+  const segments = (url?.pathname || '').split('/').filter(Boolean);
+  const firstSegment = segments[0] || '';
+
+  if (!firstSegment || ['p', 'reel', 'tv', 'stories', 'explore', 'accounts'].includes(firstSegment.toLowerCase())) {
+    return '';
+  }
+
+  return firstSegment.replace(/^@/, '');
+}
+
+async function fetchInstagramUsernameFromPost(shortcode: string): Promise<string> {
+  if (!shortcode) {
+    return '';
+  }
+
+  const postUrl = `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`;
+  const response = await fetch(postUrl, {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml',
+      'User-Agent': USER_AGENT,
+      Referer: 'https://www.instagram.com/',
+    },
+    cache: 'no-store',
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return '';
+  }
+
+  const html = await response.text();
+  const canonicalMatch = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']https:\/\/www\.instagram\.com\/([^/"?#]+)\/(?:p|reel|tv)\/[^"']+["'][^>]*>/i);
+  const ogTitleMatch = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/i);
+  const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+  const candidates = [
+    canonicalMatch?.[1],
+    ogTitleMatch?.[1]?.match(/@([A-Za-z0-9._]+)/)?.[1],
+    titleMatch?.[1]?.match(/@([A-Za-z0-9._]+)/)?.[1],
+  ];
+
+  return candidates.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function extractInstagramUsernameFromText(...values: Array<string | null | undefined>): string {
+  for (const value of values) {
+    const match = String(value || '').match(/@([A-Za-z0-9._]+)/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return '';
+}
+
+function instagramShortcodeToMediaId(shortcode: string): string {
+  const cleanShortcode = String(shortcode || '').trim();
+  if (!cleanShortcode) {
+    return '';
+  }
+
+  let mediaId = BigInt(0);
+  for (const char of cleanShortcode) {
+    const index = INSTAGRAM_SHORTCODE_ALPHABET.indexOf(char);
+    if (index === -1) {
+      return '';
+    }
+
+    mediaId = mediaId * BigInt(64) + BigInt(index);
+  }
+
+  return mediaId > BigInt(0) ? mediaId.toString() : '';
+}
+
+async function fetchInstagramUsernameFromMediaInfo(shortcode: string): Promise<string> {
+  const mediaId = instagramShortcodeToMediaId(shortcode);
+  if (!mediaId) {
+    return '';
+  }
+
+  const response = await fetch(`${INSTAGRAM_MEDIA_INFO_API}${mediaId}/info/`, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': USER_AGENT,
+      'x-ig-app-id': '936619743392459',
+      Referer: `https://www.instagram.com/p/${shortcode}/`,
+      Origin: 'https://www.instagram.com',
+    },
+    cache: 'no-store',
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return '';
+  }
+
+  const payload = await response.json().catch(() => null) as {
+    items?: Array<{
+      user?: {
+        username?: string;
+      };
+      owner?: {
+        username?: string;
+      };
+    }>;
+  } | null;
+
+  return String(payload?.items?.[0]?.user?.username || payload?.items?.[0]?.owner?.username || '').trim();
+}
+
+function pickInstagramMediaInfoUrl(value: unknown): string {
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  const record = value as {
+    image_versions2?: {
+      candidates?: Array<{ url?: string; width?: number; height?: number }>;
+    };
+    display_url?: string;
+    thumbnail_src?: string;
+    video_versions?: Array<{ url?: string }>;
+  };
+  const candidates = [...(record.image_versions2?.candidates || [])].sort(
+    (left, right) => (right.width || 0) * (right.height || 0) - (left.width || 0) * (left.height || 0),
+  );
+
+  return String(record.video_versions?.[0]?.url || candidates[0]?.url || record.display_url || record.thumbnail_src || '').trim();
+}
+
+async function fetchInstagramMediaUrlsFromMediaInfo(shortcode: string): Promise<string[]> {
+  const mediaId = instagramShortcodeToMediaId(shortcode);
+  if (!mediaId) {
+    return [];
+  }
+
+  const response = await fetch(`${INSTAGRAM_MEDIA_INFO_API}${mediaId}/info/`, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': USER_AGENT,
+      'x-ig-app-id': '936619743392459',
+      Referer: `https://www.instagram.com/p/${shortcode}/`,
+      Origin: 'https://www.instagram.com',
+    },
+    cache: 'no-store',
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return [];
+  }
+
+  const payload = await response.json().catch(() => null) as {
+    items?: Array<{
+      carousel_media?: unknown[];
+    }>;
+  } | null;
+  const item = payload?.items?.[0];
+
+  if (!item) {
+    return [];
+  }
+
+  if (Array.isArray(item.carousel_media) && item.carousel_media.length > 0) {
+    return normalizeMediaUrls(item.carousel_media.map(pickInstagramMediaInfoUrl));
+  }
+
+  return normalizeMediaUrls([pickInstagramMediaInfoUrl(item)]);
+}
+
+function extractMetaContent(html: string, selectorName: string): string {
+  const escapedName = selectorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const propertyFirst = new RegExp(`<meta[^>]+(?:property|name)=["']${escapedName}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i');
+  const contentFirst = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escapedName}["'][^>]*>`, 'i');
+
+  return decodeXmlEntities(propertyFirst.exec(html)?.[1] || contentFirst.exec(html)?.[1] || '');
+}
+
+async function fetchInstagramMediaUrlsFromPostMetadata(shortcode: string, link: string): Promise<string[]> {
+  const urls = [
+    link,
+    `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/`,
+    `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/embed`,
+  ];
+
+  for (const url of normalizeMediaUrls(urls)) {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'User-Agent': USER_AGENT,
+        Referer: 'https://www.instagram.com/',
+      },
+      cache: 'no-store',
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      continue;
+    }
+
+    const html = await response.text();
+    const mediaUrls = normalizeMediaUrls([
+      extractMetaContent(html, 'og:video'),
+      extractMetaContent(html, 'og:video:secure_url'),
+      extractMetaContent(html, 'og:image'),
+      ...extractXmlTagValues(html, /"video_url"\s*:\s*"([^"]+)"/gi).map((value) => value.replace(/\\u0026/g, '&').replace(/\\\//g, '/')),
+      ...extractXmlTagValues(html, /"display_url"\s*:\s*"([^"]+)"/gi).map((value) => value.replace(/\\u0026/g, '&').replace(/\\\//g, '/')),
+      ...extractXmlTagValues(html, /"thumbnail_src"\s*:\s*"([^"]+)"/gi).map((value) => value.replace(/\\u0026/g, '&').replace(/\\\//g, '/')),
+    ]).filter((mediaUrl) => /^https?:\/\//i.test(mediaUrl));
+
+    if (mediaUrls.length) {
+      return mediaUrls;
+    }
+  }
+
+  return [];
+}
+
+function extractInstagramUsernameFromSourcePostId(value: string | null | undefined): string {
+  const rawValue = String(value || '').trim();
+  const match = rawValue.match(/^([A-Za-z0-9._]+):[^:]+$/);
+
+  return match?.[1] || '';
 }
 
 function decodeXmlEntities(value: string): string {
@@ -125,7 +368,7 @@ async function normalizeDownloadLink(platform: ContentRecordingPlatform, rawUrl:
     return resolvedUrl;
   }
 
-  const label = platform === 'youtube' ? 'YouTube' : 'X/Twitter';
+  const label = platform === 'youtube' ? 'YouTube' : platform === 'x' ? 'X/Twitter' : 'Instagram';
   throw new Error(`Link tersimpan bukan link ${label} yang bisa didownload. Buka original link dan simpan URL ${label} langsung, bukan short link atau link platform lain.`);
 }
 
@@ -352,6 +595,52 @@ async function fetchXMediaUrlsFromFeeds(username: string, statusId: string): Pro
   return [];
 }
 
+async function fetchInstagramMediaUrlsFromFeeds(username: string, shortcode: string): Promise<string[]> {
+  if (!username || !shortcode) {
+    return [];
+  }
+
+  for (const buildFeedUrl of INSTAGRAM_FEED_URL_BUILDERS) {
+    const feedUrl = buildFeedUrl(username);
+    const response = await fetch(feedUrl, {
+      headers: {
+        Accept: 'application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8',
+        'User-Agent': USER_AGENT,
+      },
+      cache: 'no-store',
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      continue;
+    }
+
+    const xml = await response.text();
+    const item = Array.from(xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi))
+      .map((match) => match[1])
+      .find((value) => value.includes(`/${shortcode}`) || value.includes(`/${shortcode}/`));
+
+    if (!item) {
+      continue;
+    }
+
+    const decodedItem = decodeXmlEntities(item);
+    const urls = normalizeMediaUrls([
+      ...extractXmlTagValues(item, /<media:content[^>]*url=["']([^"']+)["'][^>]*>/gi),
+      ...extractXmlTagValues(item, /<media:thumbnail[^>]*url=["']([^"']+)["'][^>]*>/gi),
+      ...extractXmlTagValues(item, /<enclosure[^>]*url=["']([^"']+)["'][^>]*>/gi),
+      ...extractXmlTagValues(decodedItem, /<img[^>]*src=["']([^"']+)["'][^>]*>/gi),
+      ...extractXmlTagValues(decodedItem, /<video[^>]*src=["']([^"']+)["'][^>]*>/gi),
+      ...extractXmlTagValues(decodedItem, /<source[^>]*src=["']([^"']+)["'][^>]*>/gi),
+    ]).filter((url) => /^https?:\/\//i.test(url));
+
+    if (urls.length) {
+      return urls;
+    }
+  }
+
+  return [];
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ recordingId: string }> }) {
   let tempDir = '';
 
@@ -360,8 +649,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     const { recordingId } = await params;
     const recording = await getContentRecordingById(recordingId);
 
-    if (recording.platform !== 'youtube' && recording.platform !== 'x') {
-      return NextResponse.json({ error: 'Download media saat ini hanya tersedia untuk konten YouTube dan X.' }, { status: 400 });
+    if (recording.platform !== 'youtube' && recording.platform !== 'x' && recording.platform !== 'Instagram') {
+      return NextResponse.json({ error: 'Download media saat ini hanya tersedia untuk konten YouTube, X, dan Instagram.' }, { status: 400 });
     }
 
     if (!recording.link) {
@@ -392,10 +681,37 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
       files = await downloadFallbackMediaUrls(feedMediaUrls, tempDir);
     }
 
+    if (!files.length && recording.platform === 'Instagram') {
+      const shortcode = extractInstagramShortcode(downloadLink);
+      const username =
+        extractInstagramUsername(downloadLink) ||
+        extractInstagramUsernameFromSourcePostId(recording.source_post_id) ||
+        extractInstagramUsernameFromText(recording.title, recording.caption, recording.description) ||
+        await fetchInstagramUsernameFromMediaInfo(shortcode) ||
+        await fetchInstagramUsernameFromPost(shortcode);
+
+      const feedMediaUrls = username
+        ? await fetchInstagramMediaUrlsFromFeeds(username, shortcode)
+        : [];
+      const directMediaUrls = feedMediaUrls.length
+        ? []
+        : [
+            ...await fetchInstagramMediaUrlsFromMediaInfo(shortcode),
+            ...await fetchInstagramMediaUrlsFromPostMetadata(shortcode, downloadLink),
+          ];
+
+      files = await downloadFallbackMediaUrls(
+        [...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || []), recording.thumbnail_url || ''],
+        tempDir,
+      );
+    }
+
     if (!files.length) {
       throw new Error(
         recording.platform === 'x'
           ? 'Tidak ada native image/video X yang bisa didownload dari feed publik.'
+          : recording.platform === 'Instagram'
+            ? 'Tidak ada native image/video Instagram yang bisa didownload dari feed publik, metadata post, atau media yang tersimpan di record.'
           : 'yt-dlp selesai tetapi tidak menghasilkan file media.',
       );
     }

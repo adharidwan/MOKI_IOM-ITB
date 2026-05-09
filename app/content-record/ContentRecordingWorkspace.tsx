@@ -244,6 +244,13 @@ function isDownloadableRecord(record: Pick<ContentRecording, 'platform' | 'link'
         /\/[^/]+\/status\/\d+/i.test(url.pathname)
       );
     }
+
+    if (record.platform === 'Instagram') {
+      return (
+        (hostname === 'instagram.com' || hostname.endsWith('.instagram.com')) &&
+        /\/(p|reel|tv)\//i.test(url.pathname)
+      );
+    }
   } catch {
     return false;
   }
@@ -1066,7 +1073,7 @@ export default function ContentRecordingWorkspace({
                       <Stack direction="row" spacing={0.75} justifyContent="flex-end">
                         <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
                         {isDownloadableRecord(record) ? (
-                          <Tooltip title={record.platform === 'youtube' ? 'Download YouTube video' : 'Download X media'} placement="top" arrow>
+                          <Tooltip title={record.platform === 'youtube' ? 'Download YouTube video' : record.platform === 'x' ? 'Download X media' : 'Download Instagram media'} placement="top" arrow>
                             <IconButton
                               size="small"
                               onClick={() => handleDownload(record)}

@@ -8,6 +8,7 @@ interface InstagramPost {
   link: string;
   thumbnail: string;
   media_urls: string[];
+  owner_username?: string;
   upload_date?: string;
 }
 
@@ -211,7 +212,7 @@ function parseXmlItems(xml: string): InstagramPost[] {
     .filter((item) => item.link.startsWith("http"));
 }
 
-async function parseInstagramProfilePosts(payload: unknown): Promise<InstagramPost[]> {
+async function parseInstagramProfilePosts(payload: unknown, ownerUsername: string): Promise<InstagramPost[]> {
   if (!payload || typeof payload !== "object") {
     return [];
   }
@@ -293,6 +294,7 @@ async function parseInstagramProfilePosts(payload: unknown): Promise<InstagramPo
         ...post,
         thumbnail: mediaUrls[0] || post.thumbnail,
         media_urls: mediaUrls,
+        owner_username: ownerUsername,
       };
     }),
   );
@@ -337,7 +339,7 @@ async function fetchProfilePosts(username: string): Promise<InstagramPost[]> {
   }
 
   const payload = await response.json();
-  const posts = await parseInstagramProfilePosts(payload);
+  const posts = await parseInstagramProfilePosts(payload, username);
 
   if (posts.length === 0) {
     throw new Error(
@@ -412,7 +414,10 @@ export async function scrape_ig(username: string) {
 
     try {
       const xml = await fetchFeedXml(normalizedUsername);
-      const posts = parseXmlItems(xml);
+      const posts = parseXmlItems(xml).map((post) => ({
+        ...post,
+        owner_username: normalizedUsername,
+      }));
       return { channel: `@${normalizedUsername}`, videos: posts };
     } catch (feedError) {
       console.error(
