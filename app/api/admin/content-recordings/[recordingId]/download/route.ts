@@ -547,11 +547,16 @@ async function listDownloadedFiles(tempDir: string): Promise<string[]> {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-async function downloadFallbackMediaUrls(urls: string[], tempDir: string, referer: string): Promise<string[]> {
+async function downloadFallbackMediaUrls(
+  urls: string[],
+  tempDir: string,
+  referer: string,
+  fileBaseName = 'fallback',
+): Promise<string[]> {
   const normalizedUrls = Array.from(new Set(urls.map((url) => String(url || '').trim()).filter(Boolean)));
   const downloadedFiles: string[] = [];
 
-  for (const [index, url] of normalizedUrls.entries()) {
+  for (const url of normalizedUrls) {
     const response = await fetch(url, {
       headers: {
         'User-Agent': USER_AGENT,
@@ -570,7 +575,7 @@ async function downloadFallbackMediaUrls(urls: string[], tempDir: string, refere
     }
 
     const extension = extensionFromUrl(url) || extensionFromContentType(contentType) || '.bin';
-    const filePath = path.join(tempDir, `fallback-${index + 1}${extension}`);
+    const filePath = path.join(tempDir, `${fileBaseName}-${downloadedFiles.length + 1}${extension}`);
     await fs.promises.writeFile(filePath, Buffer.from(await response.arrayBuffer()));
     downloadedFiles.push(filePath);
   }
@@ -735,6 +740,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
         filterInstagramOriginalMediaUrls([...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || [])]),
         tempDir,
         'https://www.instagram.com/',
+        'gambar',
       );
     }
 
