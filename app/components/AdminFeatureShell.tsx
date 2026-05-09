@@ -8,8 +8,10 @@ import NotificationsNoneRoundedIcon from "@mui/icons-material/NotificationsNoneR
 import PeopleAltRoundedIcon from "@mui/icons-material/PeopleAltRounded";
 import SendRoundedIcon from "@mui/icons-material/SendRounded";
 import ManageSearchRoundedIcon from "@mui/icons-material/ManageSearchRounded";
+import PermMediaRoundedIcon from "@mui/icons-material/PermMediaRounded";
 import VideoLibraryRoundedIcon from "@mui/icons-material/VideoLibraryRounded";
 import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
+import LocalOfferRoundedIcon from "@mui/icons-material/LocalOfferRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 
 import { adminPalette } from "../lib/adminPalette";
@@ -26,6 +28,8 @@ interface AdminFeatureShellProps {
     | "/whatsapp"
     | "/scrape"
     | "/content-record"
+    | "/content-assets"
+    | "/content-tags"
     | "/access-control";
   badge?: string;
   actions?: React.ReactNode;
@@ -74,6 +78,18 @@ const NAV_ITEMS = [
     featureKey: "content-record",
     label: "Library",
     icon: <VideoLibraryRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: "/content-assets" as const,
+    featureKey: "content-assets",
+    label: "Assets",
+    icon: <PermMediaRoundedIcon sx={{ fontSize: 18 }} />,
+  },
+  {
+    href: "/content-tags" as const,
+    featureKey: "content-assets",
+    label: "Tags",
+    icon: <LocalOfferRoundedIcon sx={{ fontSize: 18 }} />,
   },
 ];
 
