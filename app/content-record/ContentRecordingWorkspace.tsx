@@ -11,6 +11,7 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import ImageNotSupportedRoundedIcon from '@mui/icons-material/ImageNotSupportedRounded';
 import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
@@ -580,6 +581,7 @@ export default function ContentRecordingWorkspace({
     tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
+  const [downloadingRecordId, setDownloadingRecordId] = useState<string | null>(null);
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -806,6 +808,49 @@ export default function ContentRecordingWorkspace({
     }
   }
 
+  async function handleDownload(record: ContentRecording) {
+    if (downloadingRecordId) {
+      return;
+    }
+
+    setDownloadingRecordId(record.id);
+    setFlash({ severity: 'info', message: 'Menyiapkan download video YouTube...' });
+
+    try {
+      const response = await fetch(`/api/admin/content-recordings/${record.id}/download`);
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || 'Gagal download video YouTube.');
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('Content-Disposition') || '';
+      const encodedFileName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)?.[1];
+      const quotedFileName = contentDisposition.match(/filename="([^"]+)"/)?.[1];
+      const fileName = encodedFileName
+        ? decodeURIComponent(encodedFileName)
+        : quotedFileName || `${record.source_post_id || record.id}.mp4`;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setFlash({ severity: 'success', message: 'Download video YouTube dimulai.' });
+    } catch (error) {
+      setFlash({
+        severity: 'error',
+        message: error instanceof Error ? error.message : 'Gagal download video YouTube.',
+      });
+    } finally {
+      setDownloadingRecordId(null);
+    }
+  }
+
   return (
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
@@ -998,6 +1043,17 @@ export default function ContentRecordingWorkspace({
                     <TableCell align="right">
                       <Stack direction="row" spacing={0.75} justifyContent="flex-end">
                         <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
+                        {record.platform === 'youtube' ? (
+                          <Tooltip title="Download YouTube video" placement="top" arrow>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDownload(record)}
+                              disabled={downloadingRecordId === record.id}
+                            >
+                              <DownloadRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        ) : null}
                         <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
                         <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
                       </Stack>
