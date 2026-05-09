@@ -13,6 +13,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  MenuItem,
   Paper,
   Stack,
   Table,
@@ -20,14 +21,17 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
 import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
+import { downloadCsvContactTemplate } from '../lib/csv-template';
 import type { CsvContact } from '../lib/types';
 
 const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
@@ -97,6 +101,23 @@ interface GroupDirectoryResponse {
 interface GroupRecipientsPreviewResponse {
   totalRecipients: number;
   previewRecipients: RecipientInput[];
+}
+
+interface BlastTemplateSummary {
+  id: string;
+  title: string;
+  description: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BlastTemplateListResponse {
+  items: BlastTemplateSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 const CONTACT_SORT_DEFAULTS: Record<ContactSortKey, SortDirection> = {
@@ -192,6 +213,13 @@ function buildGroupPreview(previewNames: string[], memberCount: number): string 
 
   const extraCount = Math.max(0, memberCount - previewNames.length);
   return `${previewNames.join(', ')}${extraCount > 0 ? ` dan ${extraCount} lainnya` : ''}`;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
 }
 
 function renderHighlightedTemplate(text: string) {
@@ -290,7 +318,9 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const [contactSearch, setContactSearch] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
   const [contactPage, setContactPage] = useState(initialContacts.page || 1);
+  const [contactPageSize, setContactPageSize] = useState(initialContacts.pageSize || 12);
   const [groupPage, setGroupPage] = useState(initialGroups.page || 1);
+  const [groupPageSize, setGroupPageSize] = useState(initialGroups.pageSize || 12);
   const [contactSortBy, setContactSortBy] = useState<ContactSortKey>('nama');
   const [contactSortDir, setContactSortDir] = useState<SortDirection>('asc');
   const [groupSortBy, setGroupSortBy] = useState<GroupSortKey>('memberCount');
@@ -319,6 +349,26 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   >(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleName, setScheduleName] = useState('');
+  const [scheduleType, setScheduleType] = useState<'once' | 'recurring'>('once');
+  const [scheduleRunAt, setScheduleRunAt] = useState('');
+  const [scheduleRecurrence, setScheduleRecurrence] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+  const [scheduling, setScheduling] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [templateItems, setTemplateItems] = useState<BlastTemplateSummary[]>([]);
+  const [templateTotal, setTemplateTotal] = useState(0);
+  const [templatePage, setTemplatePage] = useState(1);
+  const [templatePageSize, setTemplatePageSize] = useState(5);
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<BlastTemplateSummary | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<BlastTemplateSummary | null>(null);
+  const [templateTitle, setTemplateTitle] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+  const [templateContent, setTemplateContent] = useState('');
   const [previewIndex, setPreviewIndex] = useState(0);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const messageMirrorRef = useRef<HTMLDivElement | null>(null);
@@ -372,7 +422,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
       try {
         const params = new URLSearchParams({
           page: String(contactPage),
-          pageSize: String(initialContacts.pageSize || 20),
+          pageSize: String(contactPageSize),
           sortBy: contactSortBy,
           sortDir: contactSortDir,
         });
@@ -412,7 +462,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     return () => {
       cancelled = true;
     };
-  }, [contactPage, contactSearch, contactSortBy, contactSortDir, initialContacts.pageSize, selectedSource]);
+  }, [contactPage, contactPageSize, contactSearch, contactSortBy, contactSortDir, selectedSource]);
 
   useEffect(() => {
     if (selectedSource !== 'group') {
@@ -427,7 +477,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
       try {
         const params = new URLSearchParams({
           page: String(groupPage),
-          pageSize: String(initialGroups.pageSize || 20),
+          pageSize: String(groupPageSize),
           sortBy: groupSortBy,
           sortDir: groupSortDir,
         });
@@ -467,7 +517,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     return () => {
       cancelled = true;
     };
-  }, [groupPage, groupSearch, groupSortBy, groupSortDir, initialGroups.pageSize, selectedSource]);
+  }, [groupPage, groupPageSize, groupSearch, groupSortBy, groupSortDir, selectedSource]);
 
   useEffect(() => {
     if (!selectedGroups.length) {
@@ -663,6 +713,163 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     setPreviewOpen(true);
   };
 
+  const openScheduleDialog = () => {
+    if (!canSendBlast) {
+      setStatus({ type: 'error', message: 'Lengkapi penerima dan pesan terlebih dahulu sebelum menjadwalkan blast.' });
+      return;
+    }
+
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    tomorrow.setMinutes(0, 0, 0);
+    setScheduleName(scheduleName || `Blast ${sourceLabel(selectedSource)}`);
+    setScheduleRunAt(tomorrow.toISOString().slice(0, 16));
+    setScheduleOpen(true);
+  };
+
+  const handleScheduleBlast = async () => {
+    if (!selectedSource || !canSendBlast) {
+      setStatus({ type: 'error', message: 'Data schedule belum lengkap.' });
+      return;
+    }
+
+    if (scheduleType === 'once' && !scheduleRunAt) {
+      setStatus({ type: 'error', message: 'Isi waktu kirim schedule terlebih dahulu.' });
+      return;
+    }
+
+    setScheduling(true);
+    const response = await fetch('/api/admin/scheduled-blasts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: scheduleName.trim() || `Blast ${sourceLabel(selectedSource)}`,
+        message,
+        source: selectedSource,
+        recipients: selectedSource === 'group' ? undefined : recipients,
+        groupNames: selectedSource === 'group' ? selectedGroups : undefined,
+        sourceFile: selectedSource === 'csv' ? csvFileName || 'blast-csv' : undefined,
+        scheduleType,
+        recurrenceType: scheduleType === 'recurring' ? scheduleRecurrence : null,
+        runAt: scheduleRunAt ? new Date(scheduleRunAt).toISOString() : null,
+        saveToGroup: requiresGroupName,
+        saveGroupName: requiresGroupName ? saveGroupName.trim() : undefined,
+      }),
+    });
+
+    const result = (await response.json()) as { error?: string };
+    setScheduling(false);
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: result.error || 'Scheduled blast gagal dibuat.' });
+      return;
+    }
+
+    setScheduleOpen(false);
+    setStatus({ type: 'success', message: 'Scheduled blast berhasil dibuat.' });
+    window.dispatchEvent(new CustomEvent('scheduled-blasts-refresh'));
+  };
+
+  const fetchTemplates = async (input: { page: number; pageSize: number; search: string }) => {
+    setTemplateLoading(true);
+    const params = new URLSearchParams({
+      page: String(input.page),
+      pageSize: String(input.pageSize),
+    });
+    if (input.search.trim()) params.set('search', input.search.trim());
+
+    const response = await fetch(`/api/admin/blast-templates?${params.toString()}`, { cache: 'no-store' });
+    const payload = (await response.json()) as Partial<BlastTemplateListResponse> & { error?: string };
+    setTemplateLoading(false);
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: payload.error || 'Gagal memuat template blast.' });
+      return;
+    }
+
+    setTemplateItems(payload.items || []);
+    setTemplateTotal(payload.total || 0);
+  };
+
+  const loadTemplates = (overrides: Partial<Parameters<typeof fetchTemplates>[0]> = {}) => fetchTemplates({
+    page: templatePage,
+    pageSize: templatePageSize,
+    search: templateSearch,
+    ...overrides,
+  });
+
+  const openTemplateManager = () => {
+    setTemplatePage(1);
+    setTemplateOpen(true);
+    void fetchTemplates({ page: 1, pageSize: templatePageSize, search: templateSearch });
+  };
+
+  const openCreateTemplate = () => {
+    setEditingTemplate(null);
+    setTemplateTitle('');
+    setTemplateDescription('');
+    setTemplateContent(message.trim());
+    setTemplateEditorOpen(true);
+  };
+
+  const openEditTemplate = (item: BlastTemplateSummary) => {
+    setEditingTemplate(item);
+    setTemplateTitle(item.title);
+    setTemplateDescription(item.description);
+    setTemplateContent(item.content);
+    setTemplateEditorOpen(true);
+  };
+
+  const handleSaveTemplate = async () => {
+    setTemplateSaving(true);
+    const response = await fetch(editingTemplate ? `/api/admin/blast-templates/${editingTemplate.id}` : '/api/admin/blast-templates', {
+      method: editingTemplate ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: templateTitle,
+        description: templateDescription,
+        content: templateContent,
+      }),
+    });
+    const payload = (await response.json()) as { error?: string };
+    setTemplateSaving(false);
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: payload.error || 'Gagal menyimpan template blast.' });
+      return;
+    }
+
+    setTemplateEditorOpen(false);
+    setStatus({ type: 'success', message: editingTemplate ? 'Template blast berhasil diperbarui.' : 'Template blast berhasil disimpan.' });
+    setTemplatePage(1);
+    await loadTemplates({ page: 1 });
+  };
+
+  const handleUseTemplate = (item: BlastTemplateSummary) => {
+    if (message.trim() && !window.confirm('Pesan saat ini akan diganti dengan template ini. Lanjutkan?')) {
+      return;
+    }
+
+    setMessage(item.content);
+    setTemplateOpen(false);
+    setPreviewTemplate(null);
+    setStatus({ type: 'success', message: `Template "${item.title}" dipakai sebagai pesan blast.` });
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    if (!window.confirm('Hapus template blast ini?')) return;
+    const response = await fetch(`/api/admin/blast-templates/${id}`, { method: 'DELETE' });
+    const payload = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: payload.error || 'Gagal menghapus template blast.' });
+      return;
+    }
+
+    setStatus({ type: 'success', message: 'Template blast berhasil dihapus.' });
+    setPreviewTemplate((current) => (current?.id === id ? null : current));
+    await loadTemplates();
+  };
+
   const handleSendBlast = async () => {
     if (!selectedSource || recipientCount === 0 || !message.trim()) {
       setConfirmOpen(false);
@@ -777,6 +984,15 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     setStatus(null);
     setConfirmOpen(false);
     setPreviewOpen(false);
+    setScheduleOpen(false);
+    setTemplateOpen(false);
+    setTemplateEditorOpen(false);
+    setPreviewTemplate(null);
+    setScheduleName('');
+    setScheduleType('once');
+    setScheduleRunAt('');
+    setScheduleRecurrence('daily');
+    setScheduling(false);
     setPreviewIndex(0);
   };
 
@@ -791,7 +1007,25 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
           boxShadow: 'none',
         }}
       >
-        <Stack spacing={1.1} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.2, md: 1.35 } }}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Blast
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Susun blast message
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Pilih penerima, tulis pesan, dan tinjau hasil render tanpa keluar dari satu workspace.
+              </Typography>
+            </Box>
+
+            <Button component={Link} href="/group" variant="outlined" sx={QUIET_BUTTON_SX}>
+              Buka groups
+            </Button>
+          </Stack>
+
           <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
               <MetricTile label="Sumber aktif" value={sourceLabel(selectedSource)} />
@@ -903,12 +1137,12 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                       '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` },
                     }}
                   >
-                    <TableHead>
-                      <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                      <TableRow>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           Pilih
                         </TableCell>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           <TableSortLabel
                             active={contactSortBy === 'nama'}
                             direction={contactSortBy === 'nama' ? contactSortDir : CONTACT_SORT_DEFAULTS.nama}
@@ -918,7 +1152,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                             Nama
                           </TableSortLabel>
                         </TableCell>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           <TableSortLabel
                             active={contactSortBy === 'no_telp'}
                             direction={contactSortBy === 'no_telp' ? contactSortDir : CONTACT_SORT_DEFAULTS.no_telp}
@@ -928,7 +1162,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                             Nomor WhatsApp
                           </TableSortLabel>
                         </TableCell>
-                        <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableCell sx={adminTableHeaderCellSx}>
                           Grup
                         </TableCell>
                       </TableRow>
@@ -968,19 +1202,19 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   </Table>
                 </TableContainer>
 
-                <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1} alignItems={{ xs: 'flex-start', md: 'center' }}>
-                  <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                    Halaman {contactDirectory.page} dari {contactDirectory.totalPages}{loadingContacts ? ' • memuat...' : ''}
-                  </Typography>
-                  <Stack direction="row" spacing={1}>
-                    <Button variant="outlined" onClick={() => setContactPage((previous) => Math.max(1, previous - 1))} disabled={contactDirectory.page <= 1 || loadingContacts} sx={QUIET_BUTTON_SX}>
-                      Sebelumnya
-                    </Button>
-                    <Button variant="outlined" onClick={() => setContactPage((previous) => Math.min(contactDirectory.totalPages, previous + 1))} disabled={contactDirectory.page >= contactDirectory.totalPages || loadingContacts} sx={QUIET_BUTTON_SX}>
-                      Berikutnya
-                    </Button>
-                  </Stack>
-                </Stack>
+                <TablePagination
+                  component="div"
+                  count={contactDirectory.total}
+                  page={Math.max(0, contactDirectory.page - 1)}
+                  rowsPerPage={contactDirectory.pageSize}
+                  rowsPerPageOptions={[10, 20, 50, 100]}
+                  sx={{ opacity: loadingContacts ? 0.65 : 1 }}
+                  onPageChange={(_, nextPage) => setContactPage(nextPage + 1)}
+                  onRowsPerPageChange={(event) => {
+                    setContactPageSize(Number(event.target.value));
+                    setContactPage(1);
+                  }}
+                />
               </Stack>
             ) : null}
 
@@ -1016,12 +1250,12 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
 
                     <TableContainer>
                       <Table size="small" sx={{ minWidth: 700, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
-                        <TableHead>
-                          <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                        <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                          <TableRow>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               Pilih
                             </TableCell>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               <TableSortLabel
                                 active={groupSortBy === 'name'}
                                 direction={groupSortBy === 'name' ? groupSortDir : GROUP_SORT_DEFAULTS.name}
@@ -1031,7 +1265,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                                 Grup
                               </TableSortLabel>
                             </TableCell>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               <TableSortLabel
                                 active={groupSortBy === 'memberCount'}
                                 direction={groupSortBy === 'memberCount' ? groupSortDir : GROUP_SORT_DEFAULTS.memberCount}
@@ -1041,7 +1275,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                                 Jumlah anggota
                               </TableSortLabel>
                             </TableCell>
-                            <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell sx={adminTableHeaderCellSx}>
                               Pratinjau
                             </TableCell>
                           </TableRow>
@@ -1071,19 +1305,19 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                       </Table>
                     </TableContainer>
 
-                    <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" spacing={1} alignItems={{ xs: 'flex-start', md: 'center' }}>
-                      <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                        Halaman {groupDirectory.page} dari {groupDirectory.totalPages}{loadingGroups ? ' • memuat...' : ''}
-                      </Typography>
-                      <Stack direction="row" spacing={1}>
-                        <Button variant="outlined" onClick={() => setGroupPage((previous) => Math.max(1, previous - 1))} disabled={groupDirectory.page <= 1 || loadingGroups} sx={QUIET_BUTTON_SX}>
-                          Sebelumnya
-                        </Button>
-                        <Button variant="outlined" onClick={() => setGroupPage((previous) => Math.min(groupDirectory.totalPages, previous + 1))} disabled={groupDirectory.page >= groupDirectory.totalPages || loadingGroups} sx={QUIET_BUTTON_SX}>
-                          Berikutnya
-                        </Button>
-                      </Stack>
-                    </Stack>
+                    <TablePagination
+                      component="div"
+                      count={groupDirectory.total}
+                      page={Math.max(0, groupDirectory.page - 1)}
+                      rowsPerPage={groupDirectory.pageSize}
+                      rowsPerPageOptions={[10, 20, 50, 100]}
+                      sx={{ opacity: loadingGroups ? 0.65 : 1 }}
+                      onPageChange={(_, nextPage) => setGroupPage(nextPage + 1)}
+                      onRowsPerPageChange={(event) => {
+                        setGroupPageSize(Number(event.target.value));
+                        setGroupPage(1);
+                      }}
+                    />
                   </>
                 )}
               </Stack>
@@ -1106,6 +1340,14 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                       }}
                     />
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outlined"
+                    onClick={() => downloadCsvContactTemplate()}
+                    sx={{ ...QUIET_BUTTON_SX, px: 2.2, alignSelf: 'flex-start' }}
+                  >
+                    Download template CSV
+                  </Button>
                   {csvFileName ? <Chip label={csvFileName} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} /> : null}
                 </Stack>
 
@@ -1116,10 +1358,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 {csvRecipients.length > 0 ? (
                   <TableContainer>
                     <Table size="small" sx={{ minWidth: 520, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
-                      <TableHead>
-                        <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
+                      <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                        <TableRow>
                           {['Nama', 'Nomor WhatsApp'].map((label) => (
-                            <TableCell key={label} sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell key={label} sx={adminTableHeaderCellSx}>
                               {label}
                             </TableCell>
                           ))}
@@ -1174,10 +1416,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 {manualRecipients.length > 0 ? (
                   <TableContainer>
                     <Table size="small" sx={{ minWidth: 560, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
-                      <TableHead>
-                        <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
+                      <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                        <TableRow>
                           {['Nama', 'Nomor WhatsApp', 'Aksi'].map((label) => (
-                            <TableCell key={label} sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                            <TableCell key={label} sx={adminTableHeaderCellSx}>
                               {label}
                             </TableCell>
                           ))}
@@ -1273,9 +1515,27 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   <Chip key={variable.token} clickable label={variable.token} onClick={() => handleInsertVariable(variable.token)} sx={{ backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />
                 ))}
               </Stack>
-              <Button variant="outlined" onClick={handleOpenPreview} disabled={!canPreviewMessage} sx={QUIET_BUTTON_SX}>
-                Preview pesan
-              </Button>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
+                <Tooltip title="Template pesan">
+                  <Button
+                    variant="outlined"
+                    onClick={openTemplateManager}
+                    sx={QUIET_BUTTON_SX}
+                  >
+                    Template
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Simpan sebagai template">
+                  <Button
+                    variant="outlined"
+                    onClick={openCreateTemplate}
+                    disabled={!message.trim()}
+                    sx={QUIET_BUTTON_SX}
+                  >
+                    Simpan
+                  </Button>
+                </Tooltip>
+              </Stack>
             </Stack>
           </Stack>
 
@@ -1410,7 +1670,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
               </Button>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                 <Button variant="outlined" onClick={handleOpenPreview} disabled={!canPreviewMessage} sx={QUIET_BUTTON_SX}>
-                  Preview pesan
+                  Preview
+                </Button>
+                <Button variant="outlined" onClick={openScheduleDialog} disabled={!canSendBlast || submitting || scheduling || (requiresGroupName && !saveGroupName.trim())} sx={QUIET_BUTTON_SX}>
+                  Jadwalkan
                 </Button>
                 <Button variant="contained" onClick={() => setConfirmOpen(true)} disabled={!canSendBlast || submitting || (requiresGroupName && !saveGroupName.trim())} sx={PRIMARY_BUTTON_SX}>
                   {submitting ? 'Mengirim...' : 'Kirim blast'}
@@ -1420,6 +1683,183 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
           </Stack>
         </Paper>
       </Box>
+
+      <Dialog open={templateOpen} onClose={() => setTemplateOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Template pesan blast</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}>
+              <TextField
+                value={templateSearch}
+                onChange={(event) => {
+                  const nextSearch = event.target.value;
+                  setTemplateSearch(nextSearch);
+                  setTemplatePage(1);
+                  void loadTemplates({ page: 1, search: nextSearch });
+                }}
+                placeholder="Cari judul, deskripsi, atau isi"
+                size="small"
+                sx={{ minWidth: { sm: 280 } }}
+              />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <Button variant="outlined" onClick={() => void loadTemplates()} disabled={templateLoading} sx={QUIET_BUTTON_SX}>
+                  {templateLoading ? 'Memuat...' : 'Refresh'}
+                </Button>
+                <Button variant="contained" onClick={openCreateTemplate} sx={PRIMARY_BUTTON_SX}>
+                  Template baru
+                </Button>
+              </Stack>
+            </Stack>
+
+            {templateItems.length ? (
+              <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${adminPalette.border}`, borderRadius: 2.5 }}>
+                <Table size="small" sx={{ minWidth: 760, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
+                  <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                    <TableRow>
+                      {['Template', 'Diperbarui', 'Aksi'].map((label) => (
+                        <TableCell key={label} sx={adminTableHeaderCellSx}>{label}</TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {templateItems.map((item) => (
+                      <TableRow key={item.id} hover onClick={() => setPreviewTemplate(item)} sx={{ cursor: 'pointer', '&:hover': { backgroundColor: adminPalette.brandSoft } }}>
+                        <TableCell sx={{ py: 0.9, minWidth: 360 }}>
+                          <Typography sx={{ fontSize: '0.86rem', fontWeight: 800, color: adminPalette.textPrimary }}>{item.title}</Typography>
+                          {item.description ? (
+                            <Typography sx={{ mt: 0.25, fontSize: '0.78rem', color: adminPalette.textSecondary }}>{item.description}</Typography>
+                          ) : null}
+                          <Typography sx={{ mt: 0.55, fontSize: '0.78rem', color: adminPalette.textMuted, whiteSpace: 'pre-wrap' }}>
+                            {item.content.slice(0, 180)}{item.content.length > 180 ? '...' : ''}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 0.9, minWidth: 160 }}>
+                          <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{formatDate(item.updatedAt)}</Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 0.9, minWidth: 230 }}>
+                          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                            <Button variant="outlined" onClick={(event) => { event.stopPropagation(); handleUseTemplate(item); }} sx={QUIET_BUTTON_SX}>Use</Button>
+                            <Button variant="outlined" onClick={(event) => { event.stopPropagation(); openEditTemplate(item); }} sx={QUIET_BUTTON_SX}>Edit</Button>
+                            <Button variant="text" color="error" onClick={(event) => { event.stopPropagation(); handleDeleteTemplate(item.id); }} sx={{ textTransform: 'none', fontWeight: 700 }}>Delete</Button>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                Belum ada template blast. Simpan pesan saat ini sebagai template untuk dipakai ulang.
+              </Alert>
+            )}
+
+            <TablePagination
+              component="div"
+              count={templateTotal}
+              page={Math.max(0, templatePage - 1)}
+              rowsPerPage={templatePageSize}
+              rowsPerPageOptions={[5, 10, 20, 50, 100]}
+              onPageChange={(_, nextPage) => {
+                const nextPageNumber = nextPage + 1;
+                setTemplatePage(nextPageNumber);
+                void loadTemplates({ page: nextPageNumber });
+              }}
+              onRowsPerPageChange={(event) => {
+                const nextPageSize = Number(event.target.value);
+                setTemplatePageSize(nextPageSize);
+                setTemplatePage(1);
+                void loadTemplates({ page: 1, pageSize: nextPageSize });
+              }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setTemplateOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Tutup
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={templateEditorOpen} onClose={() => setTemplateEditorOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>
+          {editingTemplate ? 'Edit template blast' : 'Simpan template blast'}
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <TextField
+              label="Judul template"
+              value={templateTitle}
+              onChange={(event) => setTemplateTitle(event.target.value)}
+              inputProps={{ maxLength: 120 }}
+              size="small"
+              fullWidth
+            />
+            <TextField
+              label="Deskripsi"
+              value={templateDescription}
+              onChange={(event) => setTemplateDescription(event.target.value)}
+              inputProps={{ maxLength: 240 }}
+              size="small"
+              fullWidth
+            />
+            <TextField
+              label="Konten template"
+              value={templateContent}
+              onChange={(event) => setTemplateContent(event.target.value)}
+              inputProps={{ maxLength: MAX_MESSAGE_LENGTH }}
+              size="small"
+              fullWidth
+              multiline
+              minRows={5}
+            />
+            <Typography sx={{ fontSize: '0.8rem', color: templateContent.trim().length > MAX_MESSAGE_LENGTH ? adminPalette.dangerText : adminPalette.textMuted, fontWeight: 700 }}>
+              {templateContent.trim().length}/{MAX_MESSAGE_LENGTH} karakter
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setTemplateEditorOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Batal
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveTemplate}
+            disabled={templateSaving || !templateTitle.trim() || !templateContent.trim() || templateContent.trim().length > MAX_MESSAGE_LENGTH}
+            sx={PRIMARY_BUTTON_SX}
+          >
+            {templateSaving ? 'Menyimpan...' : 'Simpan'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(previewTemplate)} onClose={() => setPreviewTemplate(null)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{previewTemplate?.title || 'Preview template'}</DialogTitle>
+        <DialogContent>
+          {previewTemplate ? (
+            <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+              {previewTemplate.description ? (
+                <Typography sx={{ fontSize: '0.9rem', color: adminPalette.textSecondary }}>{previewTemplate.description}</Typography>
+              ) : null}
+              <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
+                <Typography sx={{ fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: adminPalette.textPrimary }}>
+                  {previewTemplate.content}
+                </Typography>
+              </Paper>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setPreviewTemplate(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Tutup
+          </Button>
+          {previewTemplate ? (
+            <Button variant="contained" onClick={() => handleUseTemplate(previewTemplate)} sx={PRIMARY_BUTTON_SX}>
+              Use template
+            </Button>
+          ) : null}
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={previewOpen} onClose={() => setPreviewOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Preview pesan</DialogTitle>
@@ -1474,6 +1914,68 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
         <DialogActions sx={{ p: 2.5 }}>
           <Button onClick={() => setPreviewOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
             Tutup
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={scheduleOpen} onClose={() => setScheduleOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Jadwalkan blast</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <TextField
+              label="Nama schedule"
+              value={scheduleName}
+              onChange={(event) => setScheduleName(event.target.value)}
+              size="small"
+              fullWidth
+            />
+            <TextField
+              select
+              label="Tipe schedule"
+              value={scheduleType}
+              onChange={(event) => setScheduleType(event.target.value as 'once' | 'recurring')}
+              size="small"
+              fullWidth
+            >
+              <MenuItem value="once">Sekali kirim</MenuItem>
+              <MenuItem value="recurring">Periodik</MenuItem>
+            </TextField>
+            <TextField
+              label={scheduleType === 'once' ? 'Waktu kirim' : 'Mulai kirim'}
+              type="datetime-local"
+              value={scheduleRunAt}
+              onChange={(event) => setScheduleRunAt(event.target.value)}
+              size="small"
+              fullWidth
+              InputLabelProps={{ shrink: true }}
+            />
+            {scheduleType === 'recurring' ? (
+              <TextField
+                select
+                label="Pengulangan"
+                value={scheduleRecurrence}
+                onChange={(event) => setScheduleRecurrence(event.target.value as 'daily' | 'weekly' | 'monthly')}
+                size="small"
+                fullWidth
+              >
+                <MenuItem value="daily">Setiap hari</MenuItem>
+                <MenuItem value="weekly">Setiap minggu</MenuItem>
+                <MenuItem value="monthly">Setiap bulan</MenuItem>
+              </TextField>
+            ) : null}
+            <Paper elevation={0} sx={{ p: 1.25, borderRadius: 2.5, backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
+              <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+                Schedule akan memakai pesan saat ini dan {recipientCount} penerima dari {sourceLabel(selectedSource)}.
+              </Typography>
+            </Paper>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setScheduleOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Batal
+          </Button>
+          <Button variant="contained" onClick={handleScheduleBlast} disabled={scheduling} sx={PRIMARY_BUTTON_SX}>
+            {scheduling ? 'Menyimpan...' : 'Simpan schedule'}
           </Button>
         </DialogActions>
       </Dialog>

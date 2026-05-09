@@ -57,6 +57,7 @@ export default async function TicketDashboard({
   await requireFeatureAccess('ticket');
   const resolvedSearchParams = await searchParams;
   const page = Number(resolvedSearchParams.page) || 1;
+  const pageSize = Math.min(100, Math.max(10, Number(resolvedSearchParams.pageSize) || 10));
   const search = (resolvedSearchParams.search as string) || '';
   const rawSort = (resolvedSearchParams.sort as string) || 'updated_at';
   const rawSortDir = (resolvedSearchParams.sortDir as string) || 'desc';
@@ -66,7 +67,7 @@ export default async function TicketDashboard({
 
   const filters = { search, instanceId: instanceId || undefined };
   const [data, summary] = await Promise.all([
-    getTickets({ page, search, sort, sortDir, instanceId: instanceId || undefined }),
+    getTickets({ page, pageSize, search, sort, sortDir, instanceId: instanceId || undefined }),
     getTicketStatusSummary(filters),
   ]);
 
@@ -145,7 +146,7 @@ export default async function TicketDashboard({
           </Stack>
         </Paper>
 
-        <TicketTable initialData={data.tickets} totalCount={data.total} />
+        <TicketTable initialData={data.tickets} totalCount={data.total} pageSize={pageSize} />
       </Stack>
     </AdminFeatureShell>
   );

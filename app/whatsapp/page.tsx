@@ -30,9 +30,9 @@ export default async function WhatsappPage() {
   return (
     <AdminFeatureShell
       currentPath="/whatsapp"
-      badge="WhatsApp"
+      badge="WhatsApp Ops"
       title="WhatsApp Operations"
-      description="Pantau instance, QR, runtime worker, dan antrean outbound WhatsApp."
+      description="Monitor device health, QR login needs, queues, and delivery issues from one operational workspace."
     >
       <WhatsappDashboard
         initialOverview={overview}

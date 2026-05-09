@@ -28,6 +28,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
@@ -35,7 +36,7 @@ import {
   Typography,
 } from '@mui/material';
 
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminPanelSx, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 import {
   assignContactGroupAction,
@@ -48,6 +49,7 @@ interface PhoneListTableProps {
   contacts: CsvContact[];
   totalCount: number;
   currentPage: number;
+  pageSize: number;
   totalPages: number;
   currentSearch: string;
   currentGroupName: string;
@@ -137,6 +139,7 @@ export default function PhoneListTable({
   contacts,
   totalCount,
   currentPage,
+  pageSize,
   totalPages,
   currentSearch,
   currentGroupName,
@@ -205,9 +208,10 @@ export default function PhoneListTable({
     setSelectedIds(contacts.map((contact) => contact.id));
   };
 
-  const goToPage = (nextPage: number) => {
+  const updatePagination = (nextPage: number, nextPageSize = pageSize) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('page', String(nextPage));
+    params.set('pageSize', String(nextPageSize));
     const nextQuery = params.toString();
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname);
   };
@@ -243,16 +247,7 @@ export default function PhoneListTable({
 
   return (
     <Stack spacing={2}>
-      <Paper
-        elevation={0}
-        sx={{
-          overflow: 'hidden',
-          borderRadius: 2.5,
-          border: `1px solid ${adminPalette.border}`,
-          backgroundColor: adminPalette.surface,
-          boxShadow: 'none',
-        }}
-      >
+      <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Stack
           spacing={1}
           sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}
@@ -346,8 +341,8 @@ export default function PhoneListTable({
                   },
                 }}
               >
-                <TableHead>
-                  <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
+                <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                  <TableRow>
                     <TableCell sx={{ width: 46, py: 0.8 }}>
                       <Checkbox
                         checked={allVisibleSelected}
@@ -363,7 +358,7 @@ export default function PhoneListTable({
                         }}
                       />
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'nama'}
                         direction={currentSortBy === 'nama' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.nama}
@@ -373,7 +368,7 @@ export default function PhoneListTable({
                         Name
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'no_telp'}
                         direction={currentSortBy === 'no_telp' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.no_telp}
@@ -383,10 +378,10 @@ export default function PhoneListTable({
                         WhatsApp
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       Group
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'status'}
                         direction={currentSortBy === 'status' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.status}
@@ -396,7 +391,7 @@ export default function PhoneListTable({
                         Status
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell sx={adminTableHeaderCellSx}>
                       <TableSortLabel
                         active={currentSortBy === 'imported_at'}
                         direction={currentSortBy === 'imported_at' ? currentSortDir : DEFAULT_SORT_DIRECTIONS.imported_at}
@@ -406,7 +401,7 @@ export default function PhoneListTable({
                         Imported
                       </TableSortLabel>
                     </TableCell>
-                    <TableCell align="right" sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                    <TableCell align="right" sx={adminTableHeaderCellSx}>
                       Actions
                     </TableCell>
                   </TableRow>
@@ -440,7 +435,7 @@ export default function PhoneListTable({
                           />
                         </TableCell>
                         <TableCell sx={{ py: 0.8 }}>
-                          <Typography sx={{ fontSize: '0.86rem', fontWeight: 700, color: adminPalette.textPrimary }}>{contact.nama}</Typography>
+                          <Typography sx={{ fontSize: '0.86rem', fontWeight: 800, color: adminPalette.textPrimary }}>{contact.nama}</Typography>
                           <Typography sx={{ mt: 0.15, fontSize: '0.74rem', color: adminPalette.textSubtle }}>
                             {contact.jabatan || contact.jenis_kelamin}
                           </Typography>
@@ -559,35 +554,15 @@ export default function PhoneListTable({
               </Table>
             </TableContainer>
 
-            <Stack
-              direction={{ xs: 'column', md: 'row' }}
-              justifyContent="space-between"
-              spacing={1.25}
-              alignItems={{ xs: 'flex-start', md: 'center' }}
-              sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-            >
-              <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                Menampilkan {contacts.length} kontak.
-              </Typography>
-              <Stack direction="row" spacing={1}>
-                <Button
-                  variant="outlined"
-                  onClick={() => goToPage(Math.max(1, currentPage - 1))}
-                  disabled={currentPage <= 1}
-                  sx={QUIET_BUTTON_SX}
-                >
-                  Sebelumnya
-                </Button>
-                <Button
-                  variant="outlined"
-                  onClick={() => goToPage(Math.min(totalPages, currentPage + 1))}
-                  disabled={currentPage >= totalPages}
-                  sx={QUIET_BUTTON_SX}
-                >
-                  Berikutnya
-                </Button>
-              </Stack>
-            </Stack>
+            <TablePagination
+              component="div"
+              count={totalCount}
+              page={Math.max(0, currentPage - 1)}
+              rowsPerPage={pageSize}
+              rowsPerPageOptions={[10, 20, 50, 100]}
+              onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
+              onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
+            />
           </>
         )}
       </Paper>

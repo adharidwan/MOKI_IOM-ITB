@@ -14,7 +14,7 @@ import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSetting
 import LocalOfferRoundedIcon from "@mui/icons-material/LocalOfferRounded";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 
-import { adminPalette } from "../lib/adminPalette";
+import { adminPalette, adminTypographySx } from "../lib/adminPalette";
 import { useSso } from "./SsoProvider";
 
 interface AdminFeatureShellProps {
@@ -117,7 +117,7 @@ export default function AdminFeatureShell({
     : accessibleNavItems;
 
   return (
-    <Box sx={{ minHeight: "100vh", backgroundColor: adminPalette.canvas }}>
+    <Box sx={{ ...adminTypographySx, minHeight: "100vh", backgroundColor: adminPalette.canvas }}>
       <Box
         sx={{
           display: "grid",
