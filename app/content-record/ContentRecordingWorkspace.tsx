@@ -229,6 +229,28 @@ function getXEmbedUrl(link: string): string {
   return `https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&theme=light`;
 }
 
+function isDownloadableRecord(record: Pick<ContentRecording, 'platform' | 'link'>): boolean {
+  try {
+    const url = new URL(record.link);
+    const hostname = url.hostname.toLowerCase();
+
+    if (record.platform === 'youtube') {
+      return hostname === 'youtu.be' || hostname.endsWith('youtube.com');
+    }
+
+    if (record.platform === 'x') {
+      return (
+        (hostname === 'x.com' || hostname.endsWith('.x.com') || hostname === 'twitter.com' || hostname.endsWith('.twitter.com')) &&
+        /\/[^/]+\/status\/\d+/i.test(url.pathname)
+      );
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
 function formatDateLabel(value: string): string {
   if (!value) {
     return '-';
@@ -814,14 +836,14 @@ export default function ContentRecordingWorkspace({
     }
 
     setDownloadingRecordId(record.id);
-    setFlash({ severity: 'info', message: 'Menyiapkan download video YouTube...' });
+    setFlash({ severity: 'info', message: 'Menyiapkan download media...' });
 
     try {
       const response = await fetch(`/api/admin/content-recordings/${record.id}/download`);
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(payload?.error || 'Gagal download video YouTube.');
+        throw new Error(payload?.error || 'Gagal download media.');
       }
 
       const blob = await response.blob();
@@ -840,11 +862,11 @@ export default function ContentRecordingWorkspace({
       link.click();
       link.remove();
       URL.revokeObjectURL(objectUrl);
-      setFlash({ severity: 'success', message: 'Download video YouTube dimulai.' });
+      setFlash({ severity: 'success', message: 'Download media dimulai.' });
     } catch (error) {
       setFlash({
         severity: 'error',
-        message: error instanceof Error ? error.message : 'Gagal download video YouTube.',
+        message: error instanceof Error ? error.message : 'Gagal download media.',
       });
     } finally {
       setDownloadingRecordId(null);
@@ -1043,8 +1065,8 @@ export default function ContentRecordingWorkspace({
                     <TableCell align="right">
                       <Stack direction="row" spacing={0.75} justifyContent="flex-end">
                         <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
-                        {record.platform === 'youtube' ? (
-                          <Tooltip title="Download YouTube video" placement="top" arrow>
+                        {isDownloadableRecord(record) ? (
+                          <Tooltip title={record.platform === 'youtube' ? 'Download YouTube video' : 'Download X media'} placement="top" arrow>
                             <IconButton
                               size="small"
                               onClick={() => handleDownload(record)}
