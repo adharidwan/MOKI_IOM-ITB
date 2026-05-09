@@ -25,6 +25,7 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 
@@ -100,6 +101,23 @@ interface GroupDirectoryResponse {
 interface GroupRecipientsPreviewResponse {
   totalRecipients: number;
   previewRecipients: RecipientInput[];
+}
+
+interface BlastTemplateSummary {
+  id: string;
+  title: string;
+  description: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BlastTemplateListResponse {
+  items: BlastTemplateSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 const CONTACT_SORT_DEFAULTS: Record<ContactSortKey, SortDirection> = {
@@ -195,6 +213,13 @@ function buildGroupPreview(previewNames: string[], memberCount: number): string 
 
   const extraCount = Math.max(0, memberCount - previewNames.length);
   return `${previewNames.join(', ')}${extraCount > 0 ? ` dan ${extraCount} lainnya` : ''}`;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
 }
 
 function renderHighlightedTemplate(text: string) {
@@ -330,6 +355,20 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const [scheduleRunAt, setScheduleRunAt] = useState('');
   const [scheduleRecurrence, setScheduleRecurrence] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [scheduling, setScheduling] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [templateItems, setTemplateItems] = useState<BlastTemplateSummary[]>([]);
+  const [templateTotal, setTemplateTotal] = useState(0);
+  const [templatePage, setTemplatePage] = useState(1);
+  const [templatePageSize, setTemplatePageSize] = useState(5);
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<BlastTemplateSummary | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<BlastTemplateSummary | null>(null);
+  const [templateTitle, setTemplateTitle] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+  const [templateContent, setTemplateContent] = useState('');
   const [previewIndex, setPreviewIndex] = useState(0);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const messageMirrorRef = useRef<HTMLDivElement | null>(null);
@@ -730,6 +769,107 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     window.dispatchEvent(new CustomEvent('scheduled-blasts-refresh'));
   };
 
+  const fetchTemplates = async (input: { page: number; pageSize: number; search: string }) => {
+    setTemplateLoading(true);
+    const params = new URLSearchParams({
+      page: String(input.page),
+      pageSize: String(input.pageSize),
+    });
+    if (input.search.trim()) params.set('search', input.search.trim());
+
+    const response = await fetch(`/api/admin/blast-templates?${params.toString()}`, { cache: 'no-store' });
+    const payload = (await response.json()) as Partial<BlastTemplateListResponse> & { error?: string };
+    setTemplateLoading(false);
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: payload.error || 'Gagal memuat template blast.' });
+      return;
+    }
+
+    setTemplateItems(payload.items || []);
+    setTemplateTotal(payload.total || 0);
+  };
+
+  const loadTemplates = (overrides: Partial<Parameters<typeof fetchTemplates>[0]> = {}) => fetchTemplates({
+    page: templatePage,
+    pageSize: templatePageSize,
+    search: templateSearch,
+    ...overrides,
+  });
+
+  const openTemplateManager = () => {
+    setTemplatePage(1);
+    setTemplateOpen(true);
+    void fetchTemplates({ page: 1, pageSize: templatePageSize, search: templateSearch });
+  };
+
+  const openCreateTemplate = () => {
+    setEditingTemplate(null);
+    setTemplateTitle('');
+    setTemplateDescription('');
+    setTemplateContent(message.trim());
+    setTemplateEditorOpen(true);
+  };
+
+  const openEditTemplate = (item: BlastTemplateSummary) => {
+    setEditingTemplate(item);
+    setTemplateTitle(item.title);
+    setTemplateDescription(item.description);
+    setTemplateContent(item.content);
+    setTemplateEditorOpen(true);
+  };
+
+  const handleSaveTemplate = async () => {
+    setTemplateSaving(true);
+    const response = await fetch(editingTemplate ? `/api/admin/blast-templates/${editingTemplate.id}` : '/api/admin/blast-templates', {
+      method: editingTemplate ? 'PATCH' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: templateTitle,
+        description: templateDescription,
+        content: templateContent,
+      }),
+    });
+    const payload = (await response.json()) as { error?: string };
+    setTemplateSaving(false);
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: payload.error || 'Gagal menyimpan template blast.' });
+      return;
+    }
+
+    setTemplateEditorOpen(false);
+    setStatus({ type: 'success', message: editingTemplate ? 'Template blast berhasil diperbarui.' : 'Template blast berhasil disimpan.' });
+    setTemplatePage(1);
+    await loadTemplates({ page: 1 });
+  };
+
+  const handleUseTemplate = (item: BlastTemplateSummary) => {
+    if (message.trim() && !window.confirm('Pesan saat ini akan diganti dengan template ini. Lanjutkan?')) {
+      return;
+    }
+
+    setMessage(item.content);
+    setTemplateOpen(false);
+    setPreviewTemplate(null);
+    setStatus({ type: 'success', message: `Template "${item.title}" dipakai sebagai pesan blast.` });
+  };
+
+  const handleDeleteTemplate = async (id: string) => {
+    if (!window.confirm('Hapus template blast ini?')) return;
+    const response = await fetch(`/api/admin/blast-templates/${id}`, { method: 'DELETE' });
+    const payload = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      setStatus({ type: 'error', message: payload.error || 'Gagal menghapus template blast.' });
+      return;
+    }
+
+    setStatus({ type: 'success', message: 'Template blast berhasil dihapus.' });
+    setPreviewTemplate((current) => (current?.id === id ? null : current));
+    await loadTemplates();
+  };
+
   const handleSendBlast = async () => {
     if (!selectedSource || recipientCount === 0 || !message.trim()) {
       setConfirmOpen(false);
@@ -845,6 +985,9 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     setConfirmOpen(false);
     setPreviewOpen(false);
     setScheduleOpen(false);
+    setTemplateOpen(false);
+    setTemplateEditorOpen(false);
+    setPreviewTemplate(null);
     setScheduleName('');
     setScheduleType('once');
     setScheduleRunAt('');
@@ -1372,6 +1515,27 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   <Chip key={variable.token} clickable label={variable.token} onClick={() => handleInsertVariable(variable.token)} sx={{ backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />
                 ))}
               </Stack>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
+                <Tooltip title="Template pesan">
+                  <Button
+                    variant="outlined"
+                    onClick={openTemplateManager}
+                    sx={QUIET_BUTTON_SX}
+                  >
+                    Template
+                  </Button>
+                </Tooltip>
+                <Tooltip title="Simpan sebagai template">
+                  <Button
+                    variant="outlined"
+                    onClick={openCreateTemplate}
+                    disabled={!message.trim()}
+                    sx={QUIET_BUTTON_SX}
+                  >
+                    Simpan
+                  </Button>
+                </Tooltip>
+              </Stack>
             </Stack>
           </Stack>
 
@@ -1506,7 +1670,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
               </Button>
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                 <Button variant="outlined" onClick={handleOpenPreview} disabled={!canPreviewMessage} sx={QUIET_BUTTON_SX}>
-                  Preview pesan
+                  Preview
                 </Button>
                 <Button variant="outlined" onClick={openScheduleDialog} disabled={!canSendBlast || submitting || scheduling || (requiresGroupName && !saveGroupName.trim())} sx={QUIET_BUTTON_SX}>
                   Jadwalkan
@@ -1519,6 +1683,183 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
           </Stack>
         </Paper>
       </Box>
+
+      <Dialog open={templateOpen} onClose={() => setTemplateOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Template pesan blast</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}>
+              <TextField
+                value={templateSearch}
+                onChange={(event) => {
+                  const nextSearch = event.target.value;
+                  setTemplateSearch(nextSearch);
+                  setTemplatePage(1);
+                  void loadTemplates({ page: 1, search: nextSearch });
+                }}
+                placeholder="Cari judul, deskripsi, atau isi"
+                size="small"
+                sx={{ minWidth: { sm: 280 } }}
+              />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <Button variant="outlined" onClick={() => void loadTemplates()} disabled={templateLoading} sx={QUIET_BUTTON_SX}>
+                  {templateLoading ? 'Memuat...' : 'Refresh'}
+                </Button>
+                <Button variant="contained" onClick={openCreateTemplate} sx={PRIMARY_BUTTON_SX}>
+                  Template baru
+                </Button>
+              </Stack>
+            </Stack>
+
+            {templateItems.length ? (
+              <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${adminPalette.border}`, borderRadius: 2.5 }}>
+                <Table size="small" sx={{ minWidth: 760, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
+                  <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                    <TableRow>
+                      {['Template', 'Diperbarui', 'Aksi'].map((label) => (
+                        <TableCell key={label} sx={adminTableHeaderCellSx}>{label}</TableCell>
+                      ))}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {templateItems.map((item) => (
+                      <TableRow key={item.id} hover onClick={() => setPreviewTemplate(item)} sx={{ cursor: 'pointer', '&:hover': { backgroundColor: adminPalette.brandSoft } }}>
+                        <TableCell sx={{ py: 0.9, minWidth: 360 }}>
+                          <Typography sx={{ fontSize: '0.86rem', fontWeight: 800, color: adminPalette.textPrimary }}>{item.title}</Typography>
+                          {item.description ? (
+                            <Typography sx={{ mt: 0.25, fontSize: '0.78rem', color: adminPalette.textSecondary }}>{item.description}</Typography>
+                          ) : null}
+                          <Typography sx={{ mt: 0.55, fontSize: '0.78rem', color: adminPalette.textMuted, whiteSpace: 'pre-wrap' }}>
+                            {item.content.slice(0, 180)}{item.content.length > 180 ? '...' : ''}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 0.9, minWidth: 160 }}>
+                          <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{formatDate(item.updatedAt)}</Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 0.9, minWidth: 230 }}>
+                          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                            <Button variant="outlined" onClick={(event) => { event.stopPropagation(); handleUseTemplate(item); }} sx={QUIET_BUTTON_SX}>Use</Button>
+                            <Button variant="outlined" onClick={(event) => { event.stopPropagation(); openEditTemplate(item); }} sx={QUIET_BUTTON_SX}>Edit</Button>
+                            <Button variant="text" color="error" onClick={(event) => { event.stopPropagation(); handleDeleteTemplate(item.id); }} sx={{ textTransform: 'none', fontWeight: 700 }}>Delete</Button>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            ) : (
+              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                Belum ada template blast. Simpan pesan saat ini sebagai template untuk dipakai ulang.
+              </Alert>
+            )}
+
+            <TablePagination
+              component="div"
+              count={templateTotal}
+              page={Math.max(0, templatePage - 1)}
+              rowsPerPage={templatePageSize}
+              rowsPerPageOptions={[5, 10, 20, 50, 100]}
+              onPageChange={(_, nextPage) => {
+                const nextPageNumber = nextPage + 1;
+                setTemplatePage(nextPageNumber);
+                void loadTemplates({ page: nextPageNumber });
+              }}
+              onRowsPerPageChange={(event) => {
+                const nextPageSize = Number(event.target.value);
+                setTemplatePageSize(nextPageSize);
+                setTemplatePage(1);
+                void loadTemplates({ page: 1, pageSize: nextPageSize });
+              }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setTemplateOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Tutup
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={templateEditorOpen} onClose={() => setTemplateEditorOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>
+          {editingTemplate ? 'Edit template blast' : 'Simpan template blast'}
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+            <TextField
+              label="Judul template"
+              value={templateTitle}
+              onChange={(event) => setTemplateTitle(event.target.value)}
+              inputProps={{ maxLength: 120 }}
+              size="small"
+              fullWidth
+            />
+            <TextField
+              label="Deskripsi"
+              value={templateDescription}
+              onChange={(event) => setTemplateDescription(event.target.value)}
+              inputProps={{ maxLength: 240 }}
+              size="small"
+              fullWidth
+            />
+            <TextField
+              label="Konten template"
+              value={templateContent}
+              onChange={(event) => setTemplateContent(event.target.value)}
+              inputProps={{ maxLength: MAX_MESSAGE_LENGTH }}
+              size="small"
+              fullWidth
+              multiline
+              minRows={5}
+            />
+            <Typography sx={{ fontSize: '0.8rem', color: templateContent.trim().length > MAX_MESSAGE_LENGTH ? adminPalette.dangerText : adminPalette.textMuted, fontWeight: 700 }}>
+              {templateContent.trim().length}/{MAX_MESSAGE_LENGTH} karakter
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setTemplateEditorOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Batal
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveTemplate}
+            disabled={templateSaving || !templateTitle.trim() || !templateContent.trim() || templateContent.trim().length > MAX_MESSAGE_LENGTH}
+            sx={PRIMARY_BUTTON_SX}
+          >
+            {templateSaving ? 'Menyimpan...' : 'Simpan'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(previewTemplate)} onClose={() => setPreviewTemplate(null)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{previewTemplate?.title || 'Preview template'}</DialogTitle>
+        <DialogContent>
+          {previewTemplate ? (
+            <Stack spacing={1.5} sx={{ mt: 0.5 }}>
+              {previewTemplate.description ? (
+                <Typography sx={{ fontSize: '0.9rem', color: adminPalette.textSecondary }}>{previewTemplate.description}</Typography>
+              ) : null}
+              <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
+                <Typography sx={{ fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: adminPalette.textPrimary }}>
+                  {previewTemplate.content}
+                </Typography>
+              </Paper>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setPreviewTemplate(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Tutup
+          </Button>
+          {previewTemplate ? (
+            <Button variant="contained" onClick={() => handleUseTemplate(previewTemplate)} sx={PRIMARY_BUTTON_SX}>
+              Use template
+            </Button>
+          ) : null}
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={previewOpen} onClose={() => setPreviewOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Preview pesan</DialogTitle>
