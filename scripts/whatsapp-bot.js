@@ -61,8 +61,6 @@ const DEFAULT_DISPATCH_SETTINGS = {
 const DEFAULT_WHATSAPP_INSTANCE_ID = process.env.WHATSAPP_INSTANCE_ID || 'default';
 const DEFAULT_WHATSAPP_INSTANCE_LABEL = process.env.WHATSAPP_INSTANCE_LABEL || 'Primary WhatsApp';
 const HEARTBEAT_INTERVAL_MS = 15000;
-const SCHEDULED_BLAST_POLL_INTERVAL_MS = Number(process.env.SCHEDULED_BLAST_POLL_INTERVAL_MS || 60000);
-const SCHEDULED_BLAST_RUNNER_URL = process.env.SCHEDULED_BLAST_RUNNER_URL || 'http://localhost:3000/api/admin/scheduled-blasts/run-due';
 const WHATSAPP_INSTANCE_ID_PATTERN = /^[a-z0-9_-]+$/;
 
 function getRequiredEnv(name) {
@@ -103,7 +101,6 @@ function createInstanceContext() {
     workerVersion: getWorkerVersion(),
     runtimeRedis: createRedisConnection(),
     heartbeatTimer: null,
-    scheduledBlastTimer: null,
     lastStatus: 'starting',
     lastError: null,
     lastDisconnectAt: null,
@@ -897,43 +894,6 @@ function startOutboundDispatchWorker(client, supabase, dispatchState, instanceCo
   return { worker, workerRedis, counterRedis };
 }
 
-function startScheduledBlastPoller(instanceContext) {
-  if (instanceContext.scheduledBlastTimer) {
-    return;
-  }
-
-  const runDueScheduledBlasts = async () => {
-    if (instanceContext.lastStatus !== 'ready') {
-      return;
-    }
-
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (process.env.SCHEDULED_BLAST_RUNNER_SECRET) {
-        headers['x-scheduled-blast-secret'] = process.env.SCHEDULED_BLAST_RUNNER_SECRET;
-      }
-
-      const response = await fetch(SCHEDULED_BLAST_RUNNER_URL, {
-        method: 'POST',
-        headers,
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Scheduled blast runner failed (${response.status}): ${text.slice(0, 240)}`);
-      }
-    } catch (error) {
-      console.error(`Failed to run scheduled blast poller: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
-
-  instanceContext.scheduledBlastTimer = setInterval(() => {
-    void runDueScheduledBlasts();
-  }, Math.max(10000, SCHEDULED_BLAST_POLL_INTERVAL_MS));
-
-  void runDueScheduledBlasts();
-}
-
 async function main() {
   const chromiumPath = process.env.WHATSAPP_CHROMIUM_PATH || '/snap/bin/chromium';
   const supabase = getSupabaseClient();
@@ -1025,7 +985,6 @@ async function main() {
       );
     }
 
-    startScheduledBlastPoller(instanceContext);
   });
 
   client.on('auth_failure', async (message) => {

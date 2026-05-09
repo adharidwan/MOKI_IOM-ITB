@@ -48,8 +48,19 @@ async function decrementPendingOutboundCounts(redis, sourceType, clientId) {
   );
 }
 
+async function incrementPendingOutboundCounts(redis, sourceType, clientId) {
+  const keys = [buildSourcePendingCountKey(sourceType)];
+
+  if (clientId) {
+    keys.push(buildClientPendingCountKey(clientId));
+  }
+
+  await Promise.all(keys.map((key) => redis.incr(key)));
+}
+
 module.exports = {
   OUTBOUND_DISPATCH_QUEUE_NAME,
   createRedisConnection,
   decrementPendingOutboundCounts,
+  incrementPendingOutboundCounts,
 };
