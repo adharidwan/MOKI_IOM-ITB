@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import AdminNotificationCenter from "./components/AdminNotificationCenter";
 import OutboundTrackerOverlay from "./components/OutboundTrackerOverlay";
 import ThemeRegistry from "./components/ThemeRegistry";
 import SsoProvider from "./components/SsoProvider";
@@ -31,7 +32,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeRegistry>
-          <SsoProvider>{children}</SsoProvider>
+          <SsoProvider>
+            <AdminNotificationCenter />
+            {children}
+          </SsoProvider>
           <OutboundTrackerOverlay />
         </ThemeRegistry>
       </body>
