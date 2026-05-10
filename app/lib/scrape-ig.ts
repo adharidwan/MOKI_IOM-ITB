@@ -4,8 +4,7 @@ import { getPlaywrightLaunchOptions } from "./chromium-path";
 import { scrapeContentFromLink } from "./scrape-content-link";
 
 const SCRAPE_ERROR_MESSAGE = "Gagal mengambil data Instagram saat ini.";
-const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const INSTAGRAM_PROFILE_MAX_POSTS = 12;
 
 interface InstagramPost {
@@ -27,7 +26,6 @@ const FEED_URL_BUILDERS = [
 const INSTAGRAM_PROFILE_API =
   "https://i.instagram.com/api/v1/users/web_profile_info/";
 const INSTAGRAM_MEDIA_INFO_API = "https://i.instagram.com/api/v1/media/";
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
 function normalizeUsername(rawUsername: string): string {
   return cleanText(rawUsername).replace(/^@/, "");
