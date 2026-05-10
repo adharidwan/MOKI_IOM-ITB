@@ -21,7 +21,14 @@ import {
 
 import CSVDropZone from '../components/CSVDropZone';
 import PhoneListSearch from '../components/PhoneListSearch';
-import { adminPalette } from '../lib/adminPalette';
+import {
+  adminMetricLabelSx,
+  adminMetricTileSx,
+  adminMetricValueSx,
+  adminPalette,
+  adminPanelSx,
+  adminSectionLabelSx,
+} from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 import { createContactAction } from './actions';
 
@@ -37,6 +44,7 @@ interface ContactsWorkspaceProps {
   contacts: CsvContact[];
   totalCount: number;
   currentPage: number;
+  pageSize: number;
   totalPages: number;
   currentSearch: string;
   currentGroupName: string;
@@ -46,39 +54,11 @@ interface ContactsWorkspaceProps {
 
 function MetricTile({ label, value }: { label: string; value: number }) {
   return (
-    <Box
-      sx={{
-        minWidth: 0,
-        px: { xs: 0, sm: 1.4 },
-        py: 0.1,
-        borderLeft: { sm: `1px solid ${adminPalette.border}` },
-        '&:first-of-type': {
-          pl: 0,
-          borderLeft: 'none',
-        },
-      }}
-    >
-      <Typography
-        sx={{
-          fontSize: '0.63rem',
-          fontWeight: 700,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          color: adminPalette.textMuted,
-        }}
-      >
+    <Box sx={adminMetricTileSx}>
+      <Typography sx={adminMetricLabelSx}>
         {label}
       </Typography>
-      <Typography
-        sx={{
-          mt: 0.4,
-          fontSize: { xs: '1rem', sm: '1.12rem' },
-          fontWeight: 700,
-          lineHeight: 1,
-          letterSpacing: '-0.02em',
-          color: adminPalette.brandDark,
-        }}
-      >
+      <Typography sx={adminMetricValueSx}>
         {value}
       </Typography>
     </Box>
@@ -87,7 +67,7 @@ function MetricTile({ label, value }: { label: string; value: number }) {
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+    <Typography sx={adminSectionLabelSx}>
       {children}
     </Typography>
   );
@@ -100,6 +80,7 @@ export default function ContactsWorkspace({
   contacts,
   totalCount,
   currentPage,
+  pageSize,
   totalPages,
   currentSearch,
   currentGroupName,
@@ -112,27 +93,25 @@ export default function ContactsWorkspace({
 
   return (
     <Stack spacing={1.25}>
-      <Paper
-        elevation={0}
-        sx={{
-          borderRadius: 2.5,
-          border: `1px solid ${adminPalette.border}`,
-          backgroundColor: adminPalette.surface,
-          boxShadow: 'none',
-        }}
-      >
-        <Stack spacing={1.1} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.2, md: 1.35 } }}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
           <Stack
             direction={{ xs: 'column', lg: 'row' }}
             spacing={1.25}
             justifyContent="space-between"
             alignItems={{ xs: 'flex-start', lg: 'center' }}
           >
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
-              <MetricTile label="Total" value={overview.totalContacts} />
-              <MetricTile label="Groups" value={groupsTotal} />
-              <MetricTile label="Ungrouped" value={overview.ungroupedContacts} />
-            </Stack>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Contacts
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Recipient directory
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Cari, filter, dan rapikan penerima dari satu tabel kerja yang cepat dipindai.
+              </Typography>
+            </Box>
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', lg: 'auto' } }}>
               <Button
@@ -178,6 +157,12 @@ export default function ContactsWorkspace({
               </Button>
             </Stack>
           </Stack>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
+            <MetricTile label="Total" value={overview.totalContacts} />
+            <MetricTile label="Groups" value={groupsTotal} />
+            <MetricTile label="Ungrouped" value={overview.ungroupedContacts} />
+          </Stack>
         </Stack>
       </Paper>
 
@@ -186,6 +171,7 @@ export default function ContactsWorkspace({
         contacts={contacts}
         totalCount={totalCount}
         currentPage={currentPage}
+        pageSize={pageSize}
         totalPages={totalPages}
         currentSearch={currentSearch}
         currentGroupName={currentGroupName}

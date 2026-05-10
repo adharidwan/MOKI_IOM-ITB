@@ -1,23 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import QRCode from 'qrcode';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import EditRoundedIcon from '@mui/icons-material/EditRounded';
+import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
+import PauseCircleOutlineRoundedIcon from '@mui/icons-material/PauseCircleOutlineRounded';
+import PlayCircleOutlineRoundedIcon from '@mui/icons-material/PlayCircleOutlineRounded';
+import QrCode2RoundedIcon from '@mui/icons-material/QrCode2Rounded';
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
+import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import {
   Alert,
   Box,
   Button,
-  Card,
-  CardActionArea,
-  CardContent,
+  ButtonBase,
   Chip,
   Collapse,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   Grid,
+  InputAdornment,
   List,
   ListItemButton,
-  ListItemText,
   Paper,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -25,19 +39,20 @@ import {
   TableContainer,
   TableHead,
   TableRow,
-  Tab,
-  Tabs,
-  Tooltip,
+  TextField,
   Typography,
+  type AlertColor,
 } from '@mui/material';
-import type { Theme } from '@mui/material/styles';
-import { alpha } from '@mui/material/styles';
-import CheckCircleOutlineRoundedIcon from '@mui/icons-material/CheckCircleOutlineRounded';
-import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
-import QrCode2RoundedIcon from '@mui/icons-material/QrCode2Rounded';
-import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
-import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
 
+import {
+  adminMetricLabelSx,
+  adminMetricTileSx,
+  adminMetricValueSx,
+  adminPalette,
+  adminPanelSx,
+  adminSectionLabelSx,
+  adminTypographySx,
+} from '../lib/adminPalette';
 import type {
   WhatsappDashboardOverview,
   WhatsappContainerState,
@@ -61,8 +76,48 @@ interface WhatsappDashboardProps {
 }
 
 type OutboundFilter = 'all' | 'queued' | 'retrying' | 'failed' | 'sent';
-type DetailTab = 'ringkasan' | 'aktivitas' | 'pengiriman' | 'teknis';
+type HealthFilter = 'all' | 'attention' | 'queue' | 'disabled' | 'ready';
+type DetailSection = 'overview' | 'deliveries' | 'activity' | 'technical';
 type DeleteWhatsappInstanceMode = 'stop_only' | 'remove_runtime_resources' | 'delete_db_row';
+
+type ToastState = {
+  severity: AlertColor;
+  message: string;
+} | null;
+
+type EditorDialogState =
+  | {
+      mode: 'create';
+      id: string;
+      label: string;
+    }
+  | {
+      mode: 'rename';
+      instanceId: string;
+      label: string;
+    }
+  | null;
+
+type ConfirmActionState =
+  | {
+      kind: 'toggle-assignment';
+      instanceId: string;
+      instanceLabel: string;
+      nextEnabled: boolean;
+    }
+  | {
+      kind: 'container';
+      instanceId: string;
+      instanceLabel: string;
+      action: 'start' | 'stop' | 'restart';
+    }
+  | {
+      kind: 'retire';
+      instanceId: string;
+      instanceLabel: string;
+      mode: DeleteWhatsappInstanceMode;
+    }
+  | null;
 
 interface GroupedEvent {
   id: string;
@@ -71,6 +126,8 @@ interface GroupedEvent {
   createdAt: string;
   count: number;
 }
+
+const numberFormatter = new Intl.NumberFormat('id-ID');
 
 const dateTimeFormatter = new Intl.DateTimeFormat('id-ID', {
   day: '2-digit',
@@ -89,43 +146,131 @@ const STATUS_COPY: Record<
     color: 'success' | 'warning' | 'error' | 'info' | 'default';
     rank: number;
     shortAction: string;
+    detail: string;
   }
 > = {
-  starting: { label: 'Memulai', color: 'default', rank: 4, shortAction: 'Tunggu proses awal selesai' },
-  qr_required: { label: 'Perlu Scan QR', color: 'warning', rank: 0, shortAction: 'Scan QR untuk mengaktifkan kembali' },
-  connecting: { label: 'Menghubungkan', color: 'info', rank: 3, shortAction: 'Tunggu hingga perangkat tersambung' },
-  ready: { label: 'Aktif', color: 'success', rank: 5, shortAction: 'Pantau aktivitas terbaru' },
-  degraded: { label: 'Perlu Dicek', color: 'warning', rank: 1, shortAction: 'Periksa koneksi dan antrean pesan' },
-  disconnected: { label: 'Terputus', color: 'error', rank: 1, shortAction: 'Sambungkan ulang perangkat' },
-  auth_failed: { label: 'Gagal Masuk', color: 'error', rank: 0, shortAction: 'Masuk ulang dengan scan QR baru' },
+  qr_required: {
+    label: 'Need QR Login',
+    color: 'warning',
+    rank: 0,
+    shortAction: 'Scan QR to reactivate device.',
+    detail: 'Device cannot receive new tasks until a new QR is scanned.',
+  },
+  auth_failed: {
+    label: 'Login Failed',
+    color: 'error',
+    rank: 0,
+    shortAction: 'Scan new QR to log in again.',
+    detail: 'Device session failed to recover and requires re-authentication.',
+  },
+  disconnected: {
+    label: 'Disconnected',
+    color: 'error',
+    rank: 1,
+    shortAction: 'Check connection then reconnect worker.',
+    detail: 'Worker is not currently connected to the WhatsApp device.',
+  },
+  degraded: {
+    label: 'Needs Attention',
+    color: 'warning',
+    rank: 1,
+    shortAction: 'Check message backlog and worker heartbeat.',
+    detail: 'Operational signals indicate decreased device performance.',
+  },
+  starting: {
+    label: 'Starting',
+    color: 'default',
+    rank: 2,
+    shortAction: 'Wait for worker initialization to complete.',
+    detail: 'Worker is bootstrapping and not yet fully ready.',
+  },
+  connecting: {
+    label: 'Connecting',
+    color: 'info',
+    rank: 3,
+    shortAction: 'Wait for device session to connect.',
+    detail: 'Worker is attempting to establish connection to device.',
+  },
+  ready: {
+    label: 'Healthy',
+    color: 'success',
+    rank: 4,
+    shortAction: 'Monitor queue and recent activity.',
+    detail: 'Device is ready to receive assignments and send messages.',
+  },
 };
 
 const OUTBOUND_FILTER_COPY: Record<
   OutboundFilter,
-  { label: string; color?: 'warning' | 'error' | 'success' }
+  { label: string; color: 'default' | 'warning' | 'error' | 'success' }
 > = {
-  all: { label: 'Semua' },
-  queued: { label: 'Tertunda', color: 'warning' },
-  retrying: { label: 'Coba Lagi', color: 'warning' },
-  failed: { label: 'Gagal', color: 'error' },
-  sent: { label: 'Berhasil', color: 'success' },
+  all: { label: 'All', color: 'default' },
+  queued: { label: 'Queued Messages', color: 'warning' },
+  retrying: { label: 'Retrying', color: 'warning' },
+  failed: { label: 'Delivery Issues', color: 'error' },
+  sent: { label: 'Delivered', color: 'success' },
 };
 
 const OUTBOUND_SOURCE_COPY = {
   ticket_reply: { label: 'Balasan tiket', chipLabel: 'Tiket' },
-  api_notification: { label: 'External API', chipLabel: 'External' },
+  api_notification: { label: 'External API', chipLabel: 'API' },
   blast: { label: 'Blast', chipLabel: 'Blast' },
 } as const;
 
-const CONTAINER_STATUS_COPY: Record<WhatsappContainerState['status'], { label: string; color: 'success' | 'warning' | 'error' | 'info' | 'default' }> = {
-  not_configured: { label: 'Orchestrator belum dikonfigurasi', color: 'default' },
-  not_found: { label: 'Container belum ada', color: 'warning' },
-  created: { label: 'Container dibuat', color: 'info' },
-  running: { label: 'Container berjalan', color: 'success' },
-  stopped: { label: 'Container berhenti', color: 'default' },
-  restarting: { label: 'Container restart', color: 'warning' },
+const CONTAINER_STATUS_COPY: Record<
+  WhatsappContainerState['status'],
+  { label: string; color: 'success' | 'warning' | 'error' | 'info' | 'default' }
+> = {
+  not_configured: { label: 'Orchestrator not configured', color: 'default' },
+  not_found: { label: 'Container not created', color: 'warning' },
+  created: { label: 'Container created', color: 'info' },
+  running: { label: 'Container running', color: 'success' },
+  stopped: { label: 'Container stopped', color: 'default' },
+  restarting: { label: 'Container restarting', color: 'warning' },
   error: { label: 'Container error', color: 'error' },
 };
+
+const HEALTH_FILTER_OPTIONS: Array<{ value: HealthFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'attention', label: 'Need Action' },
+  { value: 'queue', label: 'Has Queue' },
+  { value: 'disabled', label: 'Paused' },
+  { value: 'ready', label: 'Active' },
+];
+
+const dashboardTypography = adminTypographySx;
+
+const monoTypography =
+  'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+
+const elevatedPanelSx = {
+  ...adminPanelSx,
+} as const;
+
+const sectionLabelSx = adminSectionLabelSx;
+
+const primaryButtonSx = {
+  minHeight: 36,
+  borderRadius: 2,
+  backgroundColor: adminPalette.brand,
+  textTransform: 'none',
+  fontWeight: 700,
+  boxShadow: 'none',
+  '&:hover': {
+    backgroundColor: adminPalette.brandDark,
+    boxShadow: 'none',
+  },
+} as const;
+
+const secondaryButtonSx = {
+  minHeight: 36,
+  borderRadius: 2,
+  borderColor: adminPalette.borderStrong,
+  color: adminPalette.textSecondary,
+  textTransform: 'none',
+  fontWeight: 700,
+  backgroundColor: adminPalette.surface,
+} as const;
 
 function formatDateTime(value: string | null): string {
   if (!value) {
@@ -199,65 +344,85 @@ function isCriticalInstance(instance: WhatsappInstanceSummary): boolean {
   return ['qr_required', 'degraded', 'disconnected', 'auth_failed'].includes(instance.derived_status);
 }
 
-function getPrimaryActionLabel(instance: WhatsappInstanceSummary): string {
-  if (!instance.runtime) {
-    return 'Worker belum aktif';
-  }
-
-  if (instance.derived_status === 'qr_required' || instance.derived_status === 'auth_failed') {
-    return 'Lihat QR';
-  }
-
-  if (instance.derived_status === 'degraded' || instance.derived_status === 'disconnected') {
-    return 'Periksa Status';
-  }
-
-  return 'Buka Detail';
+function hasQueuePressure(instance: WhatsappInstanceSummary): boolean {
+  return getPendingMessageCount(instance) > 0 || instance.queue.failed_messages > 0;
 }
 
 function getInstanceOperationalNote(instance: WhatsappInstanceSummary): string {
   if (!instance.runtime) {
-    return 'Konfigurasi sudah dibuat, tetapi belum ada worker yang aktif untuk instance ini.';
+    return 'Worker is not active. Start the worker or verify orchestrator availability.';
   }
 
   if (!instance.instance.is_enabled) {
-    return 'Assignment dinonaktifkan: blast/API baru tidak akan memakai instance ini.';
+    return 'New blasts and API notifications are paused for this device.';
   }
 
-  return getStatusPresentation(instance.derived_status).shortAction;
+  if (instance.queue.failed_messages > 0) {
+    return `${instance.queue.failed_messages} recent failed messages need review.`;
+  }
+
+  if (getPendingMessageCount(instance) > 0) {
+    return `${getPendingMessageCount(instance)} messages are waiting for delivery or retry.`;
+  }
+
+  return getStatusPresentation(instance.derived_status).detail;
+}
+
+function getRecommendedActionLabel(instance: WhatsappInstanceSummary): string {
+  if (!instance.runtime) {
+    return 'Start worker';
+  }
+
+  if (instance.derived_status === 'qr_required' || instance.derived_status === 'auth_failed') {
+    return 'Scan QR';
+  }
+
+  if (instance.derived_status === 'disconnected' || instance.derived_status === 'degraded') {
+    return 'Check worker';
+  }
+
+  if (!instance.instance.is_enabled) {
+    return 'Resume assignment';
+  }
+
+  if (getPendingMessageCount(instance) > 0) {
+    return 'Review queue';
+  }
+
+  return 'Monitor status';
 }
 
 function getEventCopy(event: WhatsappInstanceEventRecord): { title: string; description: string } {
   switch (event.event_type) {
     case 'qr_issued':
       return {
-        title: 'QR baru siap dipindai',
-        description: event.message || 'Perangkat membutuhkan scan QR agar bisa dipakai kembali.',
+        title: 'QR baru tersedia',
+        description: event.message || 'Perangkat menunggu QR dipindai untuk melanjutkan sesi.',
       };
     case 'ready':
       return {
-        title: 'Perangkat sudah aktif',
-        description: event.message || 'Perangkat sudah terhubung dan siap mengirim atau menerima pesan.',
+        title: 'Perangkat aktif kembali',
+        description: event.message || 'Perangkat sudah terhubung dan siap dipakai.',
       };
     case 'disconnected':
       return {
-        title: 'Koneksi perangkat terputus',
-        description: event.message || 'Perlu pengecekan koneksi atau login ulang.',
+        title: 'Perangkat terputus',
+        description: event.message || 'Koneksi terputus dan butuh pengecekan worker atau login.',
       };
     case 'auth_failed':
       return {
         title: 'Login perangkat gagal',
-        description: event.message || 'Silakan scan ulang untuk masuk kembali.',
+        description: event.message || 'Sesi login tidak valid dan perlu QR baru.',
       };
     case 'worker_stale':
       return {
-        title: 'Pembaruan perangkat terlambat',
-        description: event.message || 'Sistem tidak menerima kabar terbaru dari perangkat.',
+        title: 'Heartbeat worker terlambat',
+        description: event.message || 'Sistem terlambat menerima kabar terbaru dari worker.',
       };
     case 'reconnect_started':
       return {
-        title: 'Sistem mencoba menyambungkan ulang',
-        description: event.message || 'Perangkat sedang diproses agar kembali aktif.',
+        title: 'Reconnect dimulai',
+        description: event.message || 'Worker sedang mencoba menyambungkan perangkat lagi.',
       };
     default:
       return {
@@ -274,7 +439,7 @@ function groupEvents(events: WhatsappInstanceEventRecord[]): GroupedEvent[] {
     const copy = getEventCopy(event);
     const previous = grouped[grouped.length - 1];
 
-    if (previous && previous.title === copy.title) {
+    if (previous && previous.title === copy.title && previous.description === copy.description) {
       previous.count += 1;
       previous.createdAt = previous.createdAt > event.created_at ? previous.createdAt : event.created_at;
       return;
@@ -314,88 +479,187 @@ function updateOverviewWithDetail(
   };
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: 'no-store', ...init });
-
-  if (!response.ok) {
-    throw new Error(`Request failed for ${url}: ${response.status}`);
-  }
-
-  return response.json() as Promise<T>;
+function getPreferredSelectedInstance(
+  overview: WhatsappDashboardOverview,
+  preferredInstanceId: string | null,
+): WhatsappInstanceSummary | null {
+  return (
+    overview.instances.find((instance) => instance.instance.id === preferredInstanceId) ||
+    overview.instances[0] ||
+    null
+  );
 }
 
-function SummaryCard({
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { cache: 'no-store', ...init });
+  const contentType = response.headers.get('content-type') || '';
+  let payload: unknown = null;
+  let fallbackText = '';
+
+  if (contentType.includes('application/json')) {
+    payload = await response.json().catch(() => null);
+  } else {
+    fallbackText = await response.text().catch(() => '');
+  }
+
+  if (!response.ok) {
+    const payloadRecord = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+    const errorRecord =
+      payloadRecord && payloadRecord.error && typeof payloadRecord.error === 'object'
+        ? (payloadRecord.error as Record<string, unknown>)
+        : null;
+
+    const message =
+      (errorRecord && typeof errorRecord.message === 'string' && errorRecord.message) ||
+      (payloadRecord && typeof payloadRecord.message === 'string' && payloadRecord.message) ||
+      fallbackText ||
+      `Request gagal (${response.status}) untuk ${url}.`;
+
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
+function SectionHeading({
+  eyebrow,
+  title,
+  description,
+  action,
+}: {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+}) {
+  return (
+    <Stack
+      direction={{ xs: 'column', md: 'row' }}
+      spacing={1.5}
+      justifyContent="space-between"
+      alignItems={{ xs: 'flex-start', md: 'center' }}
+    >
+      <Stack spacing={0.45} sx={{ minWidth: 0 }}>
+        {eyebrow ? <Typography sx={sectionLabelSx}>{eyebrow}</Typography> : null}
+        <Typography
+          sx={{
+            ...dashboardTypography,
+            fontSize: { xs: '1.02rem', md: '1.12rem' },
+            fontWeight: 800,
+            lineHeight: 1.15,
+            color: adminPalette.textPrimary,
+          }}
+        >
+          {title}
+        </Typography>
+        {description ? (
+          <Typography sx={{ fontSize: '0.84rem', lineHeight: 1.55, color: adminPalette.textSecondary }}>
+            {description}
+          </Typography>
+        ) : null}
+      </Stack>
+      {action ? <Box sx={{ width: { xs: '100%', md: 'auto' } }}>{action}</Box> : null}
+    </Stack>
+  );
+}
+
+function MetricTile({
   label,
   value,
-  helper,
-  icon,
   tone = 'default',
   onClick,
 }: {
   label: string;
   value: string | number;
-  helper?: string;
-  icon: React.ReactNode;
+  helper: string;
   tone?: 'default' | 'warning' | 'error' | 'success';
   onClick?: () => void;
 }) {
-  const tones: Record<NonNullable<typeof tone>, (theme: Theme) => { background: string; border: string }> = {
-    default: (theme) => ({
-      background: theme.palette.background.paper,
-      border: alpha(theme.palette.divider, 1),
-    }),
-    warning: (theme) => ({
-      background: alpha(theme.palette.warning.main, 0.08),
-      border: alpha(theme.palette.warning.main, 0.3),
-    }),
-    error: (theme) => ({
-      background: alpha(theme.palette.error.main, 0.08),
-      border: alpha(theme.palette.error.main, 0.3),
-    }),
-    success: (theme) => ({
-      background: alpha(theme.palette.success.main, 0.08),
-      border: alpha(theme.palette.success.main, 0.3),
-    }),
-  };
+  const valueColor = {
+    default: adminPalette.brandDark,
+    warning: adminPalette.warningText,
+    error: adminPalette.dangerText,
+    success: adminPalette.successText,
+  }[tone];
 
   const content = (
-    <Card
-      elevation={0}
-      sx={(theme) => ({
-        height: '100%',
-        borderRadius: 3,
-        border: `1px solid ${tones[tone](theme).border}`,
-        backgroundColor: tones[tone](theme).background,
-      })}
-    >
-      <CardContent>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={2}>
-          <Box>
-            <Typography color="text.secondary" variant="body2">
-              {label}
-            </Typography>
-            <Typography sx={{ fontSize: 30, fontWeight: 700, lineHeight: 1.1 }}>{value}</Typography>
-            {helper ? (
-              <Typography color="text.secondary" variant="caption">
-                {helper}
-              </Typography>
-            ) : null}
-          </Box>
-          <Box sx={{ color: 'text.secondary' }}>{icon}</Box>
-        </Stack>
-      </CardContent>
-    </Card>
+    <Box className="metric-tile-content">
+      <Typography sx={adminMetricLabelSx}>{label}</Typography>
+      <Typography sx={{ ...adminMetricValueSx, color: valueColor }}>
+        {typeof value === 'number' ? numberFormatter.format(value) : value}
+      </Typography>
+    </Box>
   );
 
   if (!onClick) {
-    return content;
+    return <Box sx={adminMetricTileSx}>{content}</Box>;
   }
 
   return (
-    <CardActionArea onClick={onClick} sx={{ borderRadius: 3 }}>
+    <ButtonBase
+      onClick={onClick}
+      sx={{
+        ...adminMetricTileSx,
+        width: 'auto',
+        display: 'block',
+        borderRadius: 1.5,
+        transition: 'background-color 160ms ease',
+        textAlign: 'left',
+        '&:hover': {
+          backgroundColor: adminPalette.brandSoft,
+        },
+      }}
+    >
       {content}
-    </CardActionArea>
+    </ButtonBase>
   );
+}
+
+function DetailStat({
+  label,
+  value,
+  helper,
+}: {
+  label: string;
+  value: string;
+  helper?: string;
+}) {
+  return (
+    <Stack spacing={0.45} sx={{ minWidth: 0 }}>
+      <Typography sx={sectionLabelSx}>
+        {label}
+      </Typography>
+      <Typography sx={{ ...dashboardTypography, fontSize: '0.98rem', fontWeight: 800, color: adminPalette.textPrimary, wordBreak: 'break-word', lineHeight: 1.25 }}>
+        {value}
+      </Typography>
+      {helper ? (
+        <Typography sx={{ fontSize: '0.8rem', lineHeight: 1.45, color: adminPalette.textSecondary }}>
+          {helper}
+        </Typography>
+      ) : null}
+    </Stack>
+  );
+}
+
+function getStatusChipSx(color: 'success' | 'warning' | 'error' | 'info' | 'default') {
+  const colors = {
+    success: { color: adminPalette.successText, backgroundColor: adminPalette.successBg, borderColor: adminPalette.successBorder },
+    warning: { color: adminPalette.warningText, backgroundColor: adminPalette.warningBg, borderColor: adminPalette.warningBorder },
+    error: { color: adminPalette.dangerText, backgroundColor: adminPalette.dangerBg, borderColor: adminPalette.dangerBorder },
+    info: { color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft, borderColor: adminPalette.brandSoftStrong },
+    default: { color: adminPalette.textSecondary, backgroundColor: adminPalette.surfaceSoft, borderColor: adminPalette.border },
+  }[color];
+
+  return {
+    height: 22,
+    borderRadius: 999,
+    fontSize: '0.68rem',
+    fontWeight: 700,
+    border: `1px solid ${colors.borderColor}`,
+    color: colors.color,
+    backgroundColor: colors.backgroundColor,
+    '& .MuiChip-label': { px: 1 },
+  } as const;
 }
 
 export default function WhatsappDashboard({
@@ -404,74 +668,77 @@ export default function WhatsappDashboard({
   initialEvents,
   initialRenderedAt,
 }: WhatsappDashboardProps) {
+  const initialSelected = initialOverview.instances[0] || null;
+  const activeSelectionRef = useRef<string | null>(initialSelected?.instance.id || null);
   const [overview, setOverview] = useState(initialOverview);
   const [outbound, setOutbound] = useState(initialOutbound);
-  const [selectedInstanceId, setSelectedInstanceId] = useState(
-    initialOverview.instances[0]?.instance.id || null,
-  );
-  const [selectedDetail, setSelectedDetail] = useState<WhatsappInstanceSummary | null>(
-    initialOverview.instances[0] || null,
-  );
+  const [selectedInstanceId, setSelectedInstanceId] = useState(initialSelected?.instance.id || null);
+  const [selectedDetail, setSelectedDetail] = useState<WhatsappInstanceSummary | null>(initialSelected);
   const [events, setEvents] = useState(initialEvents);
+  const [eventsInstanceId, setEventsInstanceId] = useState(initialSelected?.instance.id || null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [showQr, setShowQr] = useState(false);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [showQr, setShowQr] = useState(
+    Boolean(initialSelected && ['qr_required', 'auth_failed'].includes(initialSelected.derived_status)),
+  );
   const [qrImage, setQrImage] = useState<{ code: string; src: string } | null>(null);
   const [showAllEvents, setShowAllEvents] = useState(false);
   const [outboundFilter, setOutboundFilter] = useState<OutboundFilter>('all');
-  const [detailTab, setDetailTab] = useState<DetailTab>('ringkasan');
-  const initialSelectedInstanceId = initialOverview.instances[0]?.instance.id || null;
+  const [healthFilter, setHealthFilter] = useState<HealthFilter>('all');
+  const [detailSection, setDetailSection] = useState<DetailSection>('overview');
+  const [instanceSearch, setInstanceSearch] = useState('');
+  const deferredInstanceSearch = useDeferredValue(instanceSearch.trim().toLowerCase());
+  const [editorDialog, setEditorDialog] = useState<EditorDialogState>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmActionState>(null);
+  const [confirmInput, setConfirmInput] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [containerState, setContainerState] = useState<WhatsappContainerState | null>(null);
   const [overviewUpdatedAt, setOverviewUpdatedAt] = useState(initialRenderedAt);
   const [detailUpdatedAt, setDetailUpdatedAt] = useState(initialRenderedAt);
   const [eventsUpdatedAt, setEventsUpdatedAt] = useState(initialRenderedAt);
   const [outboundUpdatedAt, setOutboundUpdatedAt] = useState(initialRenderedAt);
-  const [eventsInstanceId, setEventsInstanceId] = useState<string | null>(initialSelectedInstanceId);
-  const [adminActionBusy, setAdminActionBusy] = useState(false);
-  const [containerState, setContainerState] = useState<WhatsappContainerState | null>(null);
-  const [containerActionBusy, setContainerActionBusy] = useState(false);
+  const [containerUpdatedAt, setContainerUpdatedAt] = useState(initialRenderedAt);
+
+  const setSelectedInstance = (instance: WhatsappInstanceSummary | null) => {
+    activeSelectionRef.current = instance?.instance.id || null;
+    setSelectedInstanceId(instance?.instance.id || null);
+    setSelectedDetail(instance);
+  };
 
   useEffect(() => {
-    if (!selectedInstanceId) {
+    if (overview.instances.length === 0) {
+      setSelectedInstance(null);
+      setEvents([]);
+      setEventsInstanceId(null);
+      setContainerState(null);
+      setShowQr(false);
       return;
     }
 
-    if (detailTab === 'aktivitas' && eventsInstanceId !== selectedInstanceId) {
-      let cancelled = false;
-
-      const loadEvents = async () => {
-        try {
-          const eventsResponse = await fetchJson<{ instance_id: string; events: WhatsappInstanceEventRecord[] }>(
-            `/api/admin/whatsapp/instances/${selectedInstanceId}/events`,
-          );
-
-          if (cancelled) {
-            return;
-          }
-
-          setEvents(eventsResponse.events);
-          setEventsInstanceId(selectedInstanceId);
-          setEventsUpdatedAt(new Date().toISOString());
-          setErrorMessage(null);
-        } catch (error) {
-          if (!cancelled) {
-            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat aktivitas perangkat.');
-          }
-        }
-      };
-
-      void loadEvents();
-      return () => {
-        cancelled = true;
-      };
+    if (!selectedInstanceId) {
+      const nextSelected = overview.instances[0];
+      setSelectedInstance(nextSelected);
+      setShowQr(['qr_required', 'auth_failed'].includes(nextSelected.derived_status));
+      return;
     }
 
-  }, [detailTab, eventsInstanceId, selectedInstanceId]);
-
-  const selectedDerivedStatus = selectedDetail?.derived_status;
+    const nextSelected = overview.instances.find((instance) => instance.instance.id === selectedInstanceId);
+    if (!nextSelected) {
+      const fallback = overview.instances[0] || null;
+      setSelectedInstance(fallback);
+      setEvents([]);
+      setEventsInstanceId(null);
+      setContainerState(null);
+      setShowQr(Boolean(fallback && ['qr_required', 'auth_failed'].includes(fallback.derived_status)));
+    }
+  }, [overview.instances, selectedInstanceId]);
 
   useEffect(() => {
+    const selectedDerivedStatus = selectedDetail?.derived_status;
+
     if (
       !selectedInstanceId ||
-      detailTab !== 'ringkasan' ||
       !selectedDerivedStatus ||
       !['qr_required', 'auth_failed'].includes(selectedDerivedStatus)
     ) {
@@ -489,7 +756,7 @@ export default function WhatsappDashboard({
           return;
         }
 
-        if (!payload.detail) {
+        if (!payload.detail || activeSelectionRef.current !== payload.detail.instance.id) {
           return;
         }
 
@@ -505,14 +772,14 @@ export default function WhatsappDashboard({
     };
 
     eventSource.onerror = () => {
-      setErrorMessage('Sambungan QR langsung terputus. Gunakan tombol perbarui jika diperlukan.');
+      setErrorMessage('Sambungan pembaruan QR terputus. Gunakan refresh bila QR belum berubah.');
       eventSource.close();
     };
 
     return () => {
       eventSource.close();
     };
-  }, [detailTab, selectedDerivedStatus, selectedInstanceId]);
+  }, [selectedDetail?.derived_status, selectedInstanceId]);
 
   useEffect(() => {
     const qrCode = selectedDetail?.runtime?.qr_code;
@@ -535,7 +802,7 @@ export default function WhatsappDashboard({
           setQrImage({ code: qrCode, src: nextImageSrc });
         }
       } catch {
-        // Keep terminal output as the fallback if image generation fails.
+        // Keep terminal output as a fallback when image generation fails.
       }
     };
 
@@ -559,18 +826,57 @@ export default function WhatsappDashboard({
           return statusRankDiff;
         }
 
-        return getPendingMessageCount(b) - getPendingMessageCount(a);
+        const backlogDiff = getPendingMessageCount(b) - getPendingMessageCount(a);
+        if (backlogDiff !== 0) {
+          return backlogDiff;
+        }
+
+        return Date.parse(getLastActivityAt(b) || '') - Date.parse(getLastActivityAt(a) || '');
       }),
     [overview.instances],
   );
 
+  const filteredInstances = useMemo(() => {
+    return sortedInstances.filter((instance) => {
+      if (healthFilter === 'attention' && !isCriticalInstance(instance)) {
+        return false;
+      }
+
+      if (healthFilter === 'queue' && !hasQueuePressure(instance)) {
+        return false;
+      }
+
+      if (healthFilter === 'disabled' && instance.instance.is_enabled) {
+        return false;
+      }
+
+      if (healthFilter === 'ready' && instance.derived_status !== 'ready') {
+        return false;
+      }
+
+      if (!deferredInstanceSearch) {
+        return true;
+      }
+
+      const haystack = [
+        instance.instance.label,
+        instance.instance.id,
+        instance.instance.last_known_phone_number || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(deferredInstanceSearch);
+    });
+  }, [deferredInstanceSearch, healthFilter, sortedInstances]);
+
   const criticalInstances = useMemo(
-    () => sortedInstances.filter((instance) => isCriticalInstance(instance)),
+    () => sortedInstances.filter((instance) => isCriticalInstance(instance)).slice(0, 4),
     [sortedInstances],
   );
 
   const groupedEvents = useMemo(() => groupEvents(events), [events]);
-  const visibleEvents = showAllEvents ? groupedEvents : groupedEvents.slice(0, 5);
+  const visibleEvents = showAllEvents ? groupedEvents : groupedEvents.slice(0, 6);
 
   const filteredOutboundItems = useMemo(() => {
     if (!selectedDetail) {
@@ -588,1223 +894,1711 @@ export default function WhatsappDashboard({
     overview.summary.queued_blast_messages +
     outbound.summary.retrying;
 
-  const activePanelUpdatedAt = useMemo(() => {
-    if (detailTab === 'aktivitas') {
-      return eventsUpdatedAt;
-    }
-
-    if (detailTab === 'pengiriman') {
-      return outboundUpdatedAt;
-    }
-
-    return detailUpdatedAt;
-  }, [detailTab, detailUpdatedAt, eventsUpdatedAt, outboundUpdatedAt]);
   const overviewNowMs = Date.parse(overviewUpdatedAt);
-  const activePanelNowMs = Date.parse(activePanelUpdatedAt);
+  const detailNowMs = Date.parse(detailUpdatedAt);
+  const eventsNowMs = Date.parse(eventsUpdatedAt);
+  const outboundNowMs = Date.parse(outboundUpdatedAt);
+  const selectedInstanceName = selectedDetail?.instance.label || 'perangkat ini';
 
-  const refreshOverview = async () => {
+  const pushToast = (severity: AlertColor, message: string) => {
+    setToast({ severity, message });
+  };
+
+  const refreshOverview = async (): Promise<WhatsappDashboardOverview> => {
     const nextOverview = await fetchJson<WhatsappDashboardOverview>('/api/admin/whatsapp/instances');
+    const updatedAt = new Date().toISOString();
+    const nextSelected = getPreferredSelectedInstance(nextOverview, activeSelectionRef.current);
+
     setOverview(nextOverview);
-    setOverviewUpdatedAt(new Date().toISOString());
+    setOverviewUpdatedAt(updatedAt);
 
-    const selectedStillExists = nextOverview.instances.some(
-      (instance) => instance.instance.id === selectedInstanceId,
-    );
-
-    if (!selectedStillExists) {
-      const nextSelected = nextOverview.instances[0] || null;
-      setSelectedInstanceId(nextSelected?.instance.id || null);
-      setSelectedDetail(nextSelected);
+    if (!nextSelected) {
+      setSelectedInstance(null);
       setEvents([]);
-      setEventsInstanceId(nextSelected?.instance.id || null);
+      setEventsInstanceId(null);
+      setContainerState(null);
       setShowQr(false);
-      return;
+      return nextOverview;
     }
 
-    if (selectedInstanceId) {
-      const nextSelected = nextOverview.instances.find((instance) => instance.instance.id === selectedInstanceId);
-      if (nextSelected) {
-        setSelectedDetail((current) =>
-          current && current.instance.id === nextSelected.instance.id ? current : nextSelected,
-        );
+    activeSelectionRef.current = nextSelected.instance.id;
+    setSelectedInstanceId(nextSelected.instance.id);
+    setSelectedDetail((current) => {
+      if (current && current.instance.id === nextSelected.instance.id) {
+        return current;
       }
-    }
+
+      return nextSelected;
+    });
+
+    return nextOverview;
   };
 
-  const refreshSelectedDetail = async (instanceId = selectedInstanceId) => {
-    if (!instanceId) {
-      return;
-    }
-
+  const refreshSelectedDetail = async (instanceId: string) => {
     const detailResponse = await fetchJson<WhatsappInstanceSummary>(`/api/admin/whatsapp/instances/${instanceId}`);
-    setSelectedDetail(detailResponse);
     setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, detailResponse));
-    setDetailUpdatedAt(new Date().toISOString());
-  };
 
-  const refreshEvents = async (instanceId = selectedInstanceId) => {
-    if (!instanceId) {
-      return;
+    if (activeSelectionRef.current === instanceId) {
+      setSelectedDetail(detailResponse);
+      setDetailUpdatedAt(new Date().toISOString());
     }
 
+    return detailResponse;
+  };
+
+  const refreshEvents = async (instanceId: string) => {
     const eventsResponse = await fetchJson<{ instance_id: string; events: WhatsappInstanceEventRecord[] }>(
       `/api/admin/whatsapp/instances/${instanceId}/events`,
     );
-    setEvents(eventsResponse.events);
-    setEventsInstanceId(instanceId);
-    setEventsUpdatedAt(new Date().toISOString());
+
+    if (activeSelectionRef.current === instanceId) {
+      setEvents(eventsResponse.events);
+      setEventsInstanceId(instanceId);
+      setEventsUpdatedAt(new Date().toISOString());
+    }
+
+    return eventsResponse.events;
   };
 
   const refreshOutbound = async () => {
     const nextOutbound = await fetchJson<OutboundResponse>('/api/admin/whatsapp/outbound');
     setOutbound(nextOutbound);
     setOutboundUpdatedAt(new Date().toISOString());
+    return nextOutbound;
   };
 
-  const refreshContainerState = async (instanceId = selectedInstanceId) => {
-    if (!instanceId) {
-      return;
-    }
-
+  const refreshContainerState = async (instanceId: string) => {
     const nextContainerState = await fetchJson<WhatsappContainerState>(
       `/api/admin/whatsapp/instances/${instanceId}/container`,
     );
-    setContainerState(nextContainerState);
+
+    if (activeSelectionRef.current === instanceId) {
+      setContainerState(nextContainerState);
+      setContainerUpdatedAt(new Date().toISOString());
+    }
+
+    return nextContainerState;
   };
 
-  const runContainerAction = async (action: 'start' | 'stop' | 'restart') => {
-    if (!selectedDetail) {
-      return;
-    }
-
-    const actionCopy = {
-      start: 'start worker container untuk instance ini',
-      stop: 'stop worker container ini. Assignment blast/API tidak otomatis dinonaktifkan',
-      restart: 'restart worker container ini. Session/auth volume tetap dipertahankan',
-    }[action];
-
-    if (!window.confirm(`Lanjutkan untuk ${actionCopy}?`)) {
-      return;
-    }
-
-    try {
-      setContainerActionBusy(true);
-      const nextContainerState = await fetchJson<WhatsappContainerState>(
-        `/api/admin/whatsapp/instances/${selectedDetail.instance.id}/${action}`,
-        { method: 'POST' },
-      );
-      setContainerState(nextContainerState);
-      setErrorMessage(null);
-      await refreshSelectedDetail(selectedDetail.instance.id);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal menjalankan aksi container worker.');
-    } finally {
-      setContainerActionBusy(false);
-    }
+  const loadSelectedWorkspace = async (instanceId: string) => {
+    await Promise.all([
+      refreshSelectedDetail(instanceId),
+      refreshEvents(instanceId),
+      refreshOutbound(),
+      refreshContainerState(instanceId),
+    ]);
   };
 
   const handleManualRefresh = async () => {
     try {
-      await refreshOverview();
+      setRefreshing(true);
+      const nextOverview = await refreshOverview();
+      const nextSelected = getPreferredSelectedInstance(nextOverview, activeSelectionRef.current);
 
-      if (detailTab === 'aktivitas') {
-        await Promise.all([refreshSelectedDetail(), refreshEvents()]);
-      } else if (detailTab === 'pengiriman') {
-        await Promise.all([refreshSelectedDetail(), refreshOutbound()]);
+      if (nextSelected) {
+        await loadSelectedWorkspace(nextSelected.instance.id);
       } else {
-        await refreshSelectedDetail();
+        await refreshOutbound();
       }
 
       setErrorMessage(null);
+      pushToast('success', 'Dashboard WhatsApp berhasil diperbarui.');
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal memperbarui data dashboard.');
-    }
-  };
-
-  const handleCreateInstance = async () => {
-    const id = window.prompt('Masukkan instance ID baru, contoh: iom-wa-2');
-    if (!id) {
-      return;
-    }
-
-    const label = window.prompt('Masukkan label perangkat WhatsApp', id);
-    if (!label) {
-      return;
-    }
-
-    try {
-      setAdminActionBusy(true);
-      const createdInstance = await fetchJson<WhatsappInstanceSummary['instance']>('/api/admin/whatsapp/instances', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: id.trim(), label: label.trim(), is_enabled: true }),
-      });
-
-      await refreshOverview();
-      setSelectedInstanceId(createdInstance.id);
-      await refreshSelectedDetail(createdInstance.id);
-      setDetailTab('teknis');
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal membuat instance WhatsApp.');
+      const message = error instanceof Error ? error.message : 'Gagal memperbarui data dashboard.';
+      setErrorMessage(message);
+      pushToast('error', message);
     } finally {
-      setAdminActionBusy(false);
+      setRefreshing(false);
     }
   };
 
-  const handleToggleSelectedInstanceEnabled = async () => {
-    if (!selectedDetail) {
-      return;
-    }
-
-    const nextEnabled = !selectedDetail.instance.is_enabled;
-    try {
-      setAdminActionBusy(true);
-      const updatedInstance = await fetchJson<WhatsappInstanceSummary['instance']>(
-        `/api/admin/whatsapp/instances/${selectedDetail.instance.id}`,
-        {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ is_enabled: nextEnabled }),
-        },
-      );
-
-      const nextDetail = {
-        ...selectedDetail,
-        instance: updatedInstance,
-      };
-      setSelectedDetail(nextDetail);
-      setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, nextDetail));
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal mengubah status instance WhatsApp.');
-    } finally {
-      setAdminActionBusy(false);
-    }
-  };
-
-  const handleRenameSelectedInstance = async () => {
-    if (!selectedDetail) {
-      return;
-    }
-
-    const label = window.prompt('Masukkan label baru untuk instance ini', selectedDetail.instance.label);
-    if (!label || label.trim() === selectedDetail.instance.label) {
-      return;
-    }
-
-    try {
-      setAdminActionBusy(true);
-      const updatedInstance = await fetchJson<WhatsappInstanceSummary['instance']>(
-        `/api/admin/whatsapp/instances/${selectedDetail.instance.id}`,
-        {
-          method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ label: label.trim() }),
-        },
-      );
-
-      const nextDetail = {
-        ...selectedDetail,
-        instance: updatedInstance,
-      };
-      setSelectedDetail(nextDetail);
-      setOverview((currentOverview) => updateOverviewWithDetail(currentOverview, nextDetail));
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal mengganti label instance WhatsApp.');
-    } finally {
-      setAdminActionBusy(false);
-    }
-  };
-
-  const handleDeleteSelectedInstance = async (mode: DeleteWhatsappInstanceMode) => {
-    if (!selectedDetail) {
-      return;
-    }
-
-    const instance = selectedDetail.instance;
-    const copy = {
-      stop_only: 'disable assignment dan stop worker untuk instance ini? Data DB dan auth volume tetap disimpan.',
-      remove_runtime_resources: 'retire instance dan hapus runtime resources? Container dan auth volume akan dihapus, tetapi row DB dan histori tetap disimpan.',
-      delete_db_row: 'hapus row DB instance ini? Ini hanya cocok untuk instance test yang belum punya histori pengiriman.',
-    }[mode];
-
-    if (!window.confirm(`Lanjutkan untuk ${copy}`)) {
-      return;
-    }
-
-    if (mode === 'delete_db_row') {
-      const confirmation = window.prompt(`Ketik ${instance.id} untuk konfirmasi hapus permanen.`);
-      if (confirmation !== instance.id) {
-        return;
-      }
-    }
-
-    try {
-      setAdminActionBusy(true);
-      setContainerActionBusy(true);
-      const response = await fetchJson<{ container: WhatsappContainerState }>(
-        `/api/admin/whatsapp/instances/${instance.id}`,
-        {
-          method: 'DELETE',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ mode }),
-        },
-      );
-
-      setContainerState(response.container);
-      await refreshOverview();
-
-      if (mode === 'stop_only') {
-        await refreshSelectedDetail(instance.id);
-      }
-
-      setErrorMessage(null);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal menghapus instance WhatsApp.');
-    } finally {
-      setAdminActionBusy(false);
-      setContainerActionBusy(false);
-    }
-  };
-
-  const selectInstance = (instanceSummary: WhatsappInstanceSummary) => {
-    setSelectedInstanceId(instanceSummary.instance.id);
-    setSelectedDetail(instanceSummary);
-    setShowQr(instanceSummary.derived_status === 'qr_required' || instanceSummary.derived_status === 'auth_failed');
-    setShowAllEvents(false);
+  const handleSelectInstance = (instanceSummary: WhatsappInstanceSummary) => {
+    setSelectedInstance(instanceSummary);
+    setEvents([]);
+    setEventsInstanceId(null);
     setContainerState(null);
-    setDetailTab('ringkasan');
-    void refreshSelectedDetail(instanceSummary.instance.id).catch((error) => {
-      setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat detail perangkat.');
+    setShowQr(['qr_required', 'auth_failed'].includes(instanceSummary.derived_status));
+    setShowAllEvents(false);
+    setDetailSection('overview');
+    setErrorMessage(null);
+
+    void loadSelectedWorkspace(instanceSummary.instance.id).catch((error) => {
+      const message = error instanceof Error ? error.message : 'Gagal memuat detail perangkat.';
+      setErrorMessage(message);
+      pushToast('error', message);
     });
   };
 
+  const openCreateDialog = () => {
+    setEditorDialog({ mode: 'create', id: '', label: '' });
+    setErrorMessage(null);
+  };
+
+  const openRenameDialog = () => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    setEditorDialog({
+      mode: 'rename',
+      instanceId: selectedDetail.instance.id,
+      label: selectedDetail.instance.label,
+    });
+    setErrorMessage(null);
+  };
+
+  const handleSaveEditorDialog = async () => {
+    if (!editorDialog) {
+      return;
+    }
+
+    try {
+      if (editorDialog.mode === 'create') {
+        const id = editorDialog.id.trim();
+        const label = editorDialog.label.trim();
+
+        if (!id || !label) {
+          throw new Error('Instance ID dan nama perangkat wajib diisi.');
+        }
+
+        setBusyAction('create-instance');
+        const createdInstance = await fetchJson<WhatsappInstanceSummary['instance']>('/api/admin/whatsapp/instances', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id, label, is_enabled: true }),
+        });
+
+        setEditorDialog(null);
+        const nextOverview = await refreshOverview();
+        const createdOverviewItem = getPreferredSelectedInstance(nextOverview, createdInstance.id);
+
+        activeSelectionRef.current = createdInstance.id;
+        setSelectedInstanceId(createdInstance.id);
+        if (createdOverviewItem) {
+          setSelectedDetail(createdOverviewItem);
+        }
+        setShowQr(false);
+        setShowAllEvents(false);
+        await loadSelectedWorkspace(createdInstance.id);
+        setErrorMessage(null);
+        pushToast('success', `Instance ${label} berhasil ditambahkan.`);
+        return;
+      }
+
+      const label = editorDialog.label.trim();
+      if (!label) {
+        throw new Error('Nama perangkat wajib diisi.');
+      }
+
+      setBusyAction('rename-instance');
+      const updatedInstance = await fetchJson<WhatsappInstanceSummary['instance']>(
+        `/api/admin/whatsapp/instances/${editorDialog.instanceId}`,
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ label }),
+        },
+      );
+
+      setSelectedDetail((current) =>
+        current && current.instance.id === editorDialog.instanceId
+          ? { ...current, instance: updatedInstance }
+          : current,
+      );
+      setOverview((currentOverview) => ({
+        ...currentOverview,
+        instances: currentOverview.instances.map((item) =>
+          item.instance.id === editorDialog.instanceId
+            ? { ...item, instance: updatedInstance }
+            : item,
+        ),
+      }));
+      setEditorDialog(null);
+      setErrorMessage(null);
+      pushToast('success', `Nama perangkat diperbarui menjadi ${label}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Gagal menyimpan perubahan perangkat.';
+      setErrorMessage(message);
+      pushToast('error', message);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const openToggleAssignmentDialog = () => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    setConfirmInput('');
+    setConfirmAction({
+      kind: 'toggle-assignment',
+      instanceId: selectedDetail.instance.id,
+      instanceLabel: selectedDetail.instance.label,
+      nextEnabled: !selectedDetail.instance.is_enabled,
+    });
+  };
+
+  const openContainerActionDialog = (action: 'start' | 'stop' | 'restart') => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    setConfirmInput('');
+    setConfirmAction({
+      kind: 'container',
+      instanceId: selectedDetail.instance.id,
+      instanceLabel: selectedDetail.instance.label,
+      action,
+    });
+  };
+
+  const openRetireDialog = (mode: DeleteWhatsappInstanceMode) => {
+    if (!selectedDetail) {
+      return;
+    }
+
+    setConfirmInput('');
+    setConfirmAction({
+      kind: 'retire',
+      instanceId: selectedDetail.instance.id,
+      instanceLabel: selectedDetail.instance.label,
+      mode,
+    });
+  };
+
+  const confirmDialogConfig = useMemo(() => {
+    if (!confirmAction) {
+      return null;
+    }
+
+    if (confirmAction.kind === 'toggle-assignment') {
+      return confirmAction.nextEnabled
+        ? {
+            title: `Resume assignment untuk ${confirmAction.instanceLabel}?`,
+            description:
+              'Blast dan notifikasi API baru akan kembali diarahkan ke perangkat ini. Pesan tiket yang sudah ada tidak berubah.',
+            confirmLabel: 'Resume assignment',
+            color: 'primary' as const,
+            requiresText: null,
+          }
+        : {
+            title: `Pause assignment untuk ${confirmAction.instanceLabel}?`,
+            description:
+              'Blast dan notifikasi API baru tidak akan diarahkan ke perangkat ini. Antrean lama dan tiket yang sudah memakai instance ini tetap berjalan seperti biasa.',
+            confirmLabel: 'Pause assignment',
+            color: 'warning' as const,
+            requiresText: null,
+          };
+    }
+
+    if (confirmAction.kind === 'container') {
+      const copy = {
+        start: {
+          title: `Start worker ${confirmAction.instanceLabel}?`,
+          description: 'Sistem akan mencoba menyalakan worker container untuk instance ini.',
+          confirmLabel: 'Start worker',
+          color: 'primary' as const,
+        },
+        restart: {
+          title: `Restart worker ${confirmAction.instanceLabel}?`,
+          description:
+            'Worker akan di-restart. Sesi auth tetap dipertahankan, tetapi mungkin ada jeda singkat pada pengiriman.',
+          confirmLabel: 'Restart worker',
+          color: 'warning' as const,
+        },
+        stop: {
+          title: `Stop worker ${confirmAction.instanceLabel}?`,
+          description:
+            'Worker akan dihentikan. Assignment baru tidak otomatis dipause, jadi gunakan ini hanya bila Anda paham dampaknya.',
+          confirmLabel: 'Stop worker',
+          color: 'warning' as const,
+        },
+      };
+
+      return { ...copy[confirmAction.action], requiresText: null };
+    }
+
+    const copy = {
+      stop_only: {
+        title: `Retire perangkat ${confirmAction.instanceLabel}?`,
+        description:
+          'Assignment baru akan dipause dan worker dihentikan. Data database serta auth volume tetap disimpan.',
+        confirmLabel: 'Retire perangkat',
+        color: 'warning' as const,
+        requiresText: null,
+      },
+      remove_runtime_resources: {
+        title: `Hapus runtime ${confirmAction.instanceLabel}?`,
+        description:
+          'Container dan auth volume akan dihapus, tetapi row database dan histori pengiriman tetap disimpan.',
+        confirmLabel: 'Hapus runtime',
+        color: 'error' as const,
+        requiresText: null,
+      },
+      delete_db_row: {
+        title: `Hapus permanen ${confirmAction.instanceLabel}?`,
+        description:
+          'Gunakan hanya untuk instance test yang belum dipakai. Row database akan dihapus permanen dan tidak bisa dipulihkan dari layar ini.',
+        confirmLabel: 'Hapus permanen',
+        color: 'error' as const,
+        requiresText: confirmAction.instanceId,
+      },
+    };
+
+    return copy[confirmAction.mode];
+  }, [confirmAction]);
+
+  const handleConfirmDialog = async () => {
+    if (!confirmAction || !confirmDialogConfig) {
+      return;
+    }
+
+    if (confirmDialogConfig.requiresText && confirmInput.trim() !== confirmDialogConfig.requiresText) {
+      const message = `Ketik ${confirmDialogConfig.requiresText} dengan tepat untuk melanjutkan.`;
+      setErrorMessage(message);
+      pushToast('error', message);
+      return;
+    }
+
+    try {
+      if (confirmAction.kind === 'toggle-assignment') {
+        setBusyAction('toggle-assignment');
+        const updatedInstance = await fetchJson<WhatsappInstanceSummary['instance']>(
+          `/api/admin/whatsapp/instances/${confirmAction.instanceId}`,
+          {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ is_enabled: confirmAction.nextEnabled }),
+          },
+        );
+
+        setSelectedDetail((current) =>
+          current && current.instance.id === confirmAction.instanceId
+            ? { ...current, instance: updatedInstance }
+            : current,
+        );
+        setOverview((currentOverview) => ({
+          ...currentOverview,
+          instances: currentOverview.instances.map((item) =>
+            item.instance.id === confirmAction.instanceId
+              ? { ...item, instance: updatedInstance }
+              : item,
+          ),
+        }));
+        setConfirmAction(null);
+        setConfirmInput('');
+        setErrorMessage(null);
+        pushToast(
+          'success',
+          confirmAction.nextEnabled
+            ? 'Assignment baru kembali diarahkan ke perangkat ini.'
+            : 'Assignment baru berhasil dipause untuk perangkat ini.',
+        );
+        return;
+      }
+
+      if (confirmAction.kind === 'container') {
+        setBusyAction(`container-${confirmAction.action}`);
+        const nextContainerState = await fetchJson<WhatsappContainerState>(
+          `/api/admin/whatsapp/instances/${confirmAction.instanceId}/${confirmAction.action}`,
+          { method: 'POST' },
+        );
+
+        if (activeSelectionRef.current === confirmAction.instanceId) {
+          setContainerState(nextContainerState);
+          setContainerUpdatedAt(new Date().toISOString());
+        }
+
+        await refreshSelectedDetail(confirmAction.instanceId);
+        setConfirmAction(null);
+        setConfirmInput('');
+        setErrorMessage(null);
+        pushToast('success', `Permintaan ${confirmDialogConfig.confirmLabel.toLowerCase()} berhasil dikirim.`);
+        return;
+      }
+
+      setBusyAction(`retire-${confirmAction.mode}`);
+      const response = await fetchJson<{ container: WhatsappContainerState }>(
+        `/api/admin/whatsapp/instances/${confirmAction.instanceId}`,
+        {
+          method: 'DELETE',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode: confirmAction.mode }),
+        },
+      );
+
+      if (activeSelectionRef.current === confirmAction.instanceId) {
+        setContainerState(response.container);
+        setContainerUpdatedAt(new Date().toISOString());
+      }
+
+      const nextOverview = await refreshOverview();
+      const nextSelected = getPreferredSelectedInstance(nextOverview, confirmAction.instanceId);
+
+      if (nextSelected) {
+        await loadSelectedWorkspace(nextSelected.instance.id);
+      } else {
+        setEvents([]);
+        setContainerState(null);
+      }
+
+      setConfirmAction(null);
+      setConfirmInput('');
+      setErrorMessage(null);
+
+      const successMessage = {
+        stop_only: 'Perangkat berhasil di-retire: assignment dipause dan worker dihentikan.',
+        remove_runtime_resources: 'Runtime worker berhasil dibersihkan.',
+        delete_db_row: 'Instance test berhasil dihapus permanen dari database.',
+      }[confirmAction.mode];
+
+      pushToast('success', successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Aksi perangkat WhatsApp gagal diproses.';
+      setErrorMessage(message);
+      pushToast('error', message);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const selectedStatus = selectedDetail ? getStatusPresentation(selectedDetail.derived_status) : null;
+  const topPriorityInstance = criticalInstances[0] || null;
+  const detailSections: Array<{ value: DetailSection; label: string }> = [
+    { value: 'overview', label: 'Overview' },
+    { value: 'deliveries', label: 'Delivery' },
+    { value: 'activity', label: 'Activity' },
+    { value: 'technical', label: 'Technical' },
+  ];
+
   return (
-    <Stack spacing={3} sx={{ p: { xs: 2, md: 4 } }}>
-      <Box>
-        <Typography variant="h4" gutterBottom>
-          Status Operasional WhatsApp
-        </Typography>
-        <Typography color="text.secondary" sx={{ maxWidth: 760 }}>
-          Pantau koneksi perangkat, lihat masalah yang perlu ditangani, dan buka detail percakapan atau antrean pesan
-          dengan cepat.
-        </Typography>
-        <Button sx={{ mt: 2 }} variant="contained" onClick={handleCreateInstance} disabled={adminActionBusy}>
-          Tambah Instance WhatsApp
-        </Button>
-      </Box>
+    <Stack spacing={1.25} sx={dashboardTypography}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                WhatsApp Ops
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                WhatsApp Operations
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Monitor device health, QR login needs, queues, and delivery issues from one operational workspace.
+              </Typography>
+            </Box>
 
-      <Paper
-        sx={{
-          p: 2,
-          borderRadius: 3,
-          border: (theme) => `1px solid ${alpha(theme.palette.divider, 1)}`,
-          background: (theme) =>
-            `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.06)}, ${alpha(theme.palette.background.paper, 0.96)})`,
-        }}
-      >
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          spacing={2}
-          justifyContent="space-between"
-          alignItems={{ xs: 'flex-start', md: 'center' }}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', lg: 'auto' } }}>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<RefreshRoundedIcon />}
+                onClick={() => void handleManualRefresh()}
+                disabled={refreshing}
+                sx={{ ...secondaryButtonSx, whiteSpace: 'nowrap' }}
+              >
+                {refreshing ? 'Refreshing...' : 'Refresh dashboard'}
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<AddRoundedIcon />}
+                onClick={openCreateDialog}
+                disabled={Boolean(busyAction)}
+                sx={{ ...primaryButtonSx, whiteSpace: 'nowrap' }}
+              >
+                Add instance
+              </Button>
+            </Stack>
+          </Stack>
+
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
+              <MetricTile
+                label="Healthy devices"
+                value={`${numberFormatter.format(overview.summary.ready_instances)}/${numberFormatter.format(overview.summary.total_instances)}`}
+                helper={`${numberFormatter.format(overview.summary.degraded_instances)} devices need attention`}
+                tone={overview.summary.degraded_instances ? 'warning' : 'success'}
+                onClick={() => {
+                  setHealthFilter(overview.summary.degraded_instances ? 'attention' : 'ready');
+                  setDetailSection('overview');
+                }}
+              />
+              <MetricTile
+                label="Need QR login"
+                value={overview.summary.qr_required_instances}
+                helper="Re-authenticate before devices receive work"
+                tone={overview.summary.qr_required_instances ? 'warning' : 'default'}
+                onClick={() => {
+                  setHealthFilter('attention');
+                  setDetailSection('overview');
+                  const next = sortedInstances.find((instance) =>
+                    ['qr_required', 'auth_failed'].includes(instance.derived_status),
+                  );
+                  if (next) {
+                    handleSelectInstance(next);
+                  }
+                }}
+              />
+              <MetricTile
+                label="Active queue"
+                value={totalPendingMessages}
+                helper={`Oldest queued ${formatAgeWithNow(overview.summary.oldest_queued_at, overviewNowMs)}`}
+                tone={totalPendingMessages ? 'warning' : 'default'}
+                onClick={() => {
+                  setHealthFilter('queue');
+                  setOutboundFilter(totalPendingMessages ? 'queued' : 'all');
+                  setDetailSection('deliveries');
+                }}
+              />
+              <MetricTile
+                label="Failed or retrying"
+                value={overview.summary.failed_or_retrying_messages}
+                helper="Messages requiring stability review"
+                tone={overview.summary.failed_or_retrying_messages ? 'error' : 'default'}
+                onClick={() => {
+                  setOutboundFilter(overview.summary.failed_or_retrying_messages ? 'failed' : 'all');
+                  setDetailSection('deliveries');
+                }}
+              />
+            </Stack>
+            <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
+              Updated {formatAgeWithNow(overviewUpdatedAt, overviewNowMs)}
+            </Typography>
+          </Stack>
+        </Stack>
+      </Paper>
+
+      {errorMessage ? (
+        <Alert severity="warning" sx={{ borderRadius: 2.5 }}>
+          {errorMessage}
+        </Alert>
+      ) : null}
+
+      {topPriorityInstance ? (
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: 2.5,
+            border: `1px solid ${adminPalette.warningBorder}`,
+            background: `linear-gradient(90deg, ${adminPalette.warningBg} 0%, ${adminPalette.surface} 58%)`,
+            px: { xs: 1.75, md: 2.5 },
+            py: { xs: 1.5, md: 1.65 },
+            boxShadow: 'none',
+          }}
         >
-          <Box>
-            <Typography variant="subtitle2">Terakhir diperbarui</Typography>
-            <Typography color="text.secondary" variant="body2">
-              Ringkasan halaman: {formatDateTime(overviewUpdatedAt)}
-            </Typography>
-            <Typography color="text.secondary" variant="body2">
-              Panel aktif: {formatDateTime(activePanelUpdatedAt)}
-            </Typography>
-          </Box>
-          <Button variant="contained" onClick={() => void handleManualRefresh()}>
-            Perbarui Sekarang
-          </Button>
-        </Stack>
-      </Paper>
-
-      {errorMessage ? <Alert severity="warning">{errorMessage}</Alert> : null}
-
-      <Paper
-        sx={{
-          p: 2.5,
-          borderRadius: 3,
-          border: (theme) => `1px solid ${alpha(theme.palette.divider, 1)}`,
-        }}
-      >
-        <Stack spacing={2}>
-          <Box>
-            <Typography variant="h6">Butuh Perhatian Sekarang</Typography>
-            <Typography color="text.secondary" variant="body2">
-              Fokus pada perangkat yang perlu tindakan lebih dulu.
-            </Typography>
-          </Box>
-
-          {criticalInstances.length ? (
-            <Grid container spacing={2}>
-              {criticalInstances.slice(0, 4).map((instance) => {
-                const status = getStatusPresentation(instance.derived_status);
-                return (
-                  <Grid key={instance.instance.id} size={{ xs: 12, md: 6 }}>
-                    <Card
-                      elevation={0}
-                      sx={(theme) => ({
-                        height: '100%',
-                        borderRadius: 3,
-                        border: `1px solid ${alpha(
-                          status.color === 'error'
-                            ? theme.palette.error.main
-                            : theme.palette.warning.main,
-                          0.3,
-                        )}`,
-                        backgroundColor: alpha(
-                          status.color === 'error'
-                            ? theme.palette.error.main
-                            : theme.palette.warning.main,
-                          0.08,
-                        ),
-                      })}
-                    >
-                      <CardActionArea sx={{ height: '100%' }} onClick={() => selectInstance(instance)}>
-                        <CardContent>
-                          <Stack spacing={1.5}>
-                            <Stack direction="row" justifyContent="space-between" spacing={2}>
-                              <Box>
-                                <Typography fontWeight={700}>{instance.instance.label}</Typography>
-                                <Typography color="text.secondary" variant="body2">
-                                  {status.shortAction}
-                                </Typography>
-                              </Box>
-                              <Chip color={status.color} label={status.label} size="small" />
-                            </Stack>
-                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                              <Chip
-                                icon={<ScheduleRoundedIcon />}
-                                label={`Aktivitas terakhir ${formatAgeWithNow(getLastActivityAt(instance), overviewNowMs)}`}
-                                size="small"
-                                variant="outlined"
-                              />
-                              <Chip
-                                label={`${getPendingMessageCount(instance)} pesan perlu dipantau`}
-                                size="small"
-                                variant="outlined"
-                              />
-                            </Stack>
-                            <Box>
-                              <Chip color={status.color} label={getPrimaryActionLabel(instance)} size="small" />
-                            </Box>
-                          </Stack>
-                        </CardContent>
-                      </CardActionArea>
-                    </Card>
-                  </Grid>
-                );
-              })}
-            </Grid>
-          ) : (
-            <Alert severity="success">Semua perangkat utama dalam kondisi aman saat ini.</Alert>
-          )}
-        </Stack>
-      </Paper>
-
-      <Box>
-        <Typography variant="h6" gutterBottom>
-          Ringkasan Hari Ini
-        </Typography>
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <SummaryCard
-              label="Perangkat Aktif"
-              value={overview.summary.ready_instances}
-              helper={`${overview.summary.total_instances} perangkat terdaftar`}
-              icon={<CheckCircleOutlineRoundedIcon />}
-              tone="success"
-              onClick={() => {
-                const ready = sortedInstances.find((item) => item.derived_status === 'ready');
-                if (ready) {
-                  selectInstance(ready);
-                }
-              }}
-            />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <SummaryCard
-              label="Perlu Scan Ulang"
-              value={overview.summary.qr_required_instances}
-              helper="Perangkat belum bisa dipakai sebelum login ulang"
-              icon={<QrCode2RoundedIcon />}
-              tone={overview.summary.qr_required_instances ? 'warning' : 'default'}
-              onClick={() => {
-                const next = sortedInstances.find((item) =>
-                  ['qr_required', 'auth_failed'].includes(item.derived_status),
-                );
-                if (next) {
-                  selectInstance(next);
-                }
-              }}
-            />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <SummaryCard
-              label="Sedang Bermasalah"
-              value={overview.summary.degraded_instances}
-              helper="Perangkat terputus, gagal login, atau perlu dicek"
-              icon={<ErrorOutlineRoundedIcon />}
-              tone={overview.summary.degraded_instances ? 'error' : 'default'}
-              onClick={() => {
-                const next = sortedInstances.find((item) =>
-                  ['degraded', 'disconnected', 'auth_failed'].includes(item.derived_status),
-                );
-                if (next) {
-                  selectInstance(next);
-                }
-              }}
-            />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <SummaryCard
-              label="Pesan Tertunda"
-              value={totalPendingMessages}
-              helper={`Antrean terlama: ${formatAgeWithNow(overview.summary.oldest_queued_at, overviewNowMs)}`}
-              icon={<ScheduleRoundedIcon />}
-              tone={totalPendingMessages ? 'warning' : 'default'}
-              onClick={() => {
-                setOutboundFilter(totalPendingMessages ? 'queued' : 'all');
-                setDetailTab('pengiriman');
-              }}
-            />
-          </Grid>
-        </Grid>
-      </Box>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={1}
+            justifyContent="space-between"
+            alignItems={{ xs: 'flex-start', md: 'center' }}
+          >
+            <Stack spacing={0.45}>
+              <Typography sx={sectionLabelSx}>Priority queue</Typography>
+              <Typography sx={{ ...dashboardTypography, fontSize: { xs: '1rem', md: '1.1rem' }, fontWeight: 800, color: adminPalette.textPrimary }}>
+                {numberFormatter.format(criticalInstances.length)} device{criticalInstances.length !== 1 ? 's' : ''} need attention now
+              </Typography>
+              <Typography sx={{ fontSize: '0.86rem', lineHeight: 1.55, color: adminPalette.textSecondary }}>
+                Recommended next action: <strong>{getRecommendedActionLabel(topPriorityInstance)}</strong> for <strong>{topPriorityInstance.instance.label}</strong>.{' '}
+                {getStatusPresentation(topPriorityInstance.derived_status).shortAction}
+              </Typography>
+            </Stack>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => handleSelectInstance(topPriorityInstance)}
+              sx={{ ...secondaryButtonSx, borderColor: adminPalette.warningBorder, color: adminPalette.warningText }}
+            >
+              Open priority device
+            </Button>
+          </Stack>
+        </Paper>
+      ) : null}
 
       <Grid container spacing={2} alignItems="stretch">
-        <Grid size={{ xs: 12, lg: 5 }}>
+        <Grid size={{ xs: 12, xl: 4 }}>
           <Paper
+            elevation={0}
             sx={{
-              p: 2,
               height: '100%',
-              borderRadius: 3,
-              border: (theme) => `1px solid ${alpha(theme.palette.divider, 1)}`,
+              ...elevatedPanelSx,
+              backgroundColor: adminPalette.surface,
+              overflow: 'hidden',
+              position: { xl: 'sticky' },
+              top: { xl: 76 },
             }}
           >
-            <Stack spacing={2}>
-              <Box>
-                <Typography variant="h6">Daftar Perangkat</Typography>
-                <Typography color="text.secondary" variant="body2">
-                  Pilih perangkat untuk melihat tindakan, aktivitas, dan status pengiriman.
-                </Typography>
-              </Box>
+            <Stack spacing={1.4} sx={{ p: { xs: 1.75, md: 2 } }}>
+              <SectionHeading
+                eyebrow="Registry"
+                title="Device command list"
+                description="Prioritized by attention state, queue pressure, and latest activity."
+              />
 
-              <List disablePadding sx={{ display: 'grid', gap: 1.5 }}>
-                {sortedInstances.map((instance) => {
+              <TextField
+                size="small"
+                value={instanceSearch}
+                onChange={(event) => setInstanceSearch(event.target.value)}
+                placeholder="Search device, ID, or phone"
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchRoundedIcon sx={{ color: adminPalette.textMuted }} />
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    borderRadius: 2.5,
+                    minHeight: 42,
+                    backgroundColor: adminPalette.surfaceSoft,
+                    '& fieldset': { borderColor: adminPalette.border },
+                  },
+                  '& .MuiInputBase-input': { py: 0.95, fontSize: '0.86rem', fontWeight: 600 },
+                }}
+              />
+
+              <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                {HEALTH_FILTER_OPTIONS.map((option) => (
+                  <Button
+                    key={option.value}
+                    variant={healthFilter === option.value ? 'contained' : 'outlined'}
+                    size="small"
+                    onClick={() => setHealthFilter(option.value)}
+                    sx={{
+                      minHeight: 32,
+                      borderRadius: 999,
+                      px: 1.25,
+                      textTransform: 'none',
+                      fontWeight: 800,
+                      fontSize: '0.78rem',
+                      boxShadow: 'none',
+                      borderColor: adminPalette.borderStrong,
+                      color: healthFilter === option.value ? '#ffffff' : adminPalette.textSecondary,
+                      backgroundColor: healthFilter === option.value ? adminPalette.brand : adminPalette.surface,
+                      '&:hover': {
+                        boxShadow: 'none',
+                        backgroundColor:
+                          healthFilter === option.value ? adminPalette.brandDark : adminPalette.brandSoft,
+                      },
+                    }}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
+              </Stack>
+              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textMuted }}>
+                Showing {numberFormatter.format(filteredInstances.length)} of {numberFormatter.format(sortedInstances.length)} devices.
+              </Typography>
+            </Stack>
+
+            {filteredInstances.length ? (
+              <List disablePadding sx={{ display: 'grid', gap: 1, px: { xs: 1.25, md: 1.5 }, pb: { xs: 1.5, md: 1.75 } }}>
+                {filteredInstances.map((instance) => {
                   const isSelected = selectedInstanceId === instance.instance.id;
                   const status = getStatusPresentation(instance.derived_status);
 
                   return (
-                    <Paper
+                    <Box
                       key={instance.instance.id}
-                      elevation={0}
-                      sx={(theme) => ({
+                      sx={{
+                        borderRadius: 2.75,
+                        border: `1px solid ${isSelected ? adminPalette.brandSoftStrong : adminPalette.border}`,
+                        backgroundColor: isSelected ? adminPalette.brandSoft : adminPalette.surface,
+                        boxShadow: 'none',
                         overflow: 'hidden',
-                        borderRadius: 3,
-                        border: `1px solid ${
-                          isSelected
-                            ? theme.palette.primary.main
-                            : alpha(
-                                status.color === 'success'
-                                  ? theme.palette.success.main
-                                  : status.color === 'error'
-                                    ? theme.palette.error.main
-                                    : status.color === 'warning'
-                                      ? theme.palette.warning.main
-                                      : theme.palette.divider,
-                                isCriticalInstance(instance) ? 0.28 : 0.16,
-                              )
-                        }`,
-                        backgroundColor: isSelected ? alpha(theme.palette.primary.main, 0.06) : theme.palette.background.paper,
-                      })}
+                      }}
                     >
                       <ListItemButton
                         selected={isSelected}
-                        onClick={() => selectInstance(instance)}
-                        sx={{ alignItems: 'stretch', p: 2 }}
+                        onClick={() => handleSelectInstance(instance)}
+                        sx={{
+                          px: { xs: 1.35, md: 1.5 },
+                          py: 1.25,
+                          alignItems: 'flex-start',
+                          borderLeft: isSelected ? `4px solid ${adminPalette.brand}` : '4px solid transparent',
+                          '&.Mui-selected': { backgroundColor: 'transparent' },
+                          '&.Mui-selected:hover': { backgroundColor: 'transparent' },
+                          '&:hover': { backgroundColor: isSelected ? 'transparent' : adminPalette.surfaceSoft },
+                        }}
                       >
-                        <Stack spacing={1.5} sx={{ width: '100%' }}>
+                        <Stack spacing={0.9} sx={{ width: '100%' }}>
                           <Stack
                             direction={{ xs: 'column', sm: 'row' }}
+                            spacing={1}
                             justifyContent="space-between"
                             alignItems={{ xs: 'flex-start', sm: 'center' }}
-                            spacing={1}
                           >
-                            <Box>
-                              <Typography fontWeight={700}>{instance.instance.label}</Typography>
-                              <Typography color="text.secondary" variant="body2">
-                                Aktivitas terakhir {formatAgeWithNow(getLastActivityAt(instance), overviewNowMs)}
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography sx={{ ...dashboardTypography, fontSize: '0.95rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                                {instance.instance.label}
+                              </Typography>
+                              <Typography sx={{ mt: 0.15, fontSize: '0.76rem', color: adminPalette.textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {instance.instance.last_known_phone_number || instance.instance.id}
                               </Typography>
                             </Box>
-                            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                              <Chip color={status.color} label={status.label} size="small" />
-                              <Chip
-                                color={instance.instance.is_enabled ? 'success' : 'default'}
-                                label={instance.instance.is_enabled ? 'Enabled' : 'Disabled'}
-                                size="small"
-                                variant="outlined"
-                              />
+                            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                              <Chip label={status.label} size="small" sx={getStatusChipSx(status.color)} />
                             </Stack>
                           </Stack>
 
-                          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                            <Chip label={`${getPendingMessageCount(instance)} pesan tertunda`} size="small" variant="outlined" />
-                            <Chip
-                              label={
-                                instance.staff.active_ticket_count
-                                  ? `${instance.staff.active_ticket_count} tiket aktif`
-                                  : 'Tidak ada tiket aktif'
-                              }
-                              size="small"
-                              variant="outlined"
-                            />
-                            {instance.instance.last_known_phone_number ? (
-                              <Chip label={instance.instance.last_known_phone_number} size="small" variant="outlined" />
-                            ) : null}
-                          </Stack>
+                          <Typography sx={{ fontSize: '0.82rem', lineHeight: 1.5, color: adminPalette.textSecondary }}>
+                            {getInstanceOperationalNote(instance)}
+                          </Typography>
 
-                          <Stack direction="row" justifyContent="space-between" alignItems="center">
-                            <Typography color="text.secondary" variant="caption">
-                              {getInstanceOperationalNote(instance)}
+                          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                            <Typography sx={{ fontSize: '0.74rem', color: adminPalette.textSecondary }}>
+                              Last activity {formatAgeWithNow(getLastActivityAt(instance), overviewNowMs)}
                             </Typography>
-                            <Chip color={status.color} label={getPrimaryActionLabel(instance)} size="small" variant="outlined" />
+                            <Typography sx={{ fontSize: '0.72rem', color: adminPalette.textMuted }}>•</Typography>
+                            <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, color: getPendingMessageCount(instance) > 0 ? adminPalette.warningText : adminPalette.textSecondary }}>
+                              {numberFormatter.format(getPendingMessageCount(instance))} messages queued
+                            </Typography>
+                            {!instance.instance.is_enabled ? (
+                              <>
+                                <Typography sx={{ fontSize: '0.72rem', color: adminPalette.textMuted }}>•</Typography>
+                                <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, color: adminPalette.textMuted }}>Paused</Typography>
+                              </>
+                            ) : null}
                           </Stack>
                         </Stack>
                       </ListItemButton>
-                    </Paper>
+                    </Box>
                   );
                 })}
               </List>
-            </Stack>
+            ) : (
+              <Box sx={{ px: { xs: 1.5, md: 2 }, pb: { xs: 1.5, md: 2 } }}>
+                <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                  No devices match current search or filter.
+                </Alert>
+              </Box>
+            )}
           </Paper>
         </Grid>
 
-        <Grid size={{ xs: 12, lg: 7 }}>
+
+        <Grid size={{ xs: 12, xl: 8 }}>
           {selectedDetail ? (
             <Stack spacing={2}>
               <Paper
+                elevation={0}
                 sx={{
-                  p: 2,
-                  borderRadius: 3,
-                  border: (theme) => `1px solid ${alpha(theme.palette.divider, 1)}`,
+                  ...elevatedPanelSx,
+                  backgroundColor: adminPalette.surface,
+                  overflow: 'hidden',
                 }}
               >
+                <Stack spacing={2} sx={{ p: { xs: 1.75, md: 2.25 } }}>
+                  <Stack
+                    direction={{ xs: 'column', lg: 'row' }}
+                    spacing={2}
+                    justifyContent="space-between"
+                    alignItems={{ xs: 'flex-start', lg: 'flex-start' }}
+                  >
+                    <Stack spacing={1} sx={{ minWidth: 0 }}>
+                      <Box>
+                        <Typography sx={sectionLabelSx}>Selected device</Typography>
+                        <Typography sx={{ ...dashboardTypography, mt: 0.45, fontSize: { xs: '1.45rem', md: '1.65rem' }, fontWeight: 800, color: adminPalette.textPrimary, lineHeight: 1.1 }}>
+                          {selectedDetail.instance.label}
+                        </Typography>
+                        <Typography sx={{ mt: 0.45, fontSize: '0.86rem', color: adminPalette.textSecondary }}>
+                          {selectedDetail.instance.id} / Updated {formatAgeWithNow(detailUpdatedAt, detailNowMs)}
+                        </Typography>
+                      </Box>
+
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                        {selectedStatus ? <Chip label={selectedStatus.label} size="small" sx={getStatusChipSx(selectedStatus.color)} /> : null}
+                        <Chip
+                          size="small"
+                          label={selectedDetail.instance.is_enabled ? 'Active Assignment' : 'Assignment Paused'}
+                          sx={getStatusChipSx(selectedDetail.instance.is_enabled ? 'success' : 'default')}
+                        />
+                        {selectedDetail.instance.last_known_phone_number ? (
+                          <Chip size="small" label={selectedDetail.instance.last_known_phone_number} sx={getStatusChipSx('default')} />
+                        ) : null}
+                      </Stack>
+
+                      <Typography sx={{ fontSize: '0.9rem', lineHeight: 1.6, color: adminPalette.textSecondary, maxWidth: 720 }}>
+                        {selectedStatus?.detail} Next best action: <strong>{getRecommendedActionLabel(selectedDetail)}</strong>.
+                      </Typography>
+                    </Stack>
+
+                    <Stack direction={{ xs: 'column', sm: 'row', lg: 'column' }} spacing={1} sx={{ width: { xs: '100%', sm: 'auto', lg: 190 } }}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<RefreshRoundedIcon />}
+                        disabled={Boolean(busyAction)}
+                        onClick={() => {
+                          void loadSelectedWorkspace(selectedDetail.instance.id)
+                            .then(() => {
+                              setErrorMessage(null);
+                              pushToast('success', `Details for ${selectedInstanceName} updated.`);
+                            })
+                            .catch((error) => {
+                              const message = error instanceof Error ? error.message : 'Failed to update device details.';
+                              setErrorMessage(message);
+                              pushToast('error', message);
+                            });
+                        }}
+                        sx={{ ...secondaryButtonSx, whiteSpace: 'nowrap' }}
+                      >
+                        Refresh detail
+                      </Button>
+                      <Button
+                        size="small"
+                        component={Link}
+                        href={`/ticket?instanceId=${selectedDetail.instance.id}`}
+                        variant="outlined"
+                        startIcon={<OpenInNewRoundedIcon />}
+                        sx={{ ...secondaryButtonSx, whiteSpace: 'nowrap' }}
+                      >
+                        Open ticket
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        startIcon={<QrCode2RoundedIcon />}
+                        onClick={() => setShowQr((current) => !current)}
+                        disabled={
+                          !selectedDetail.has_qr &&
+                          selectedDetail.derived_status !== 'qr_required' &&
+                          selectedDetail.derived_status !== 'auth_failed'
+                        }
+                        sx={{ ...primaryButtonSx, whiteSpace: 'nowrap' }}
+                      >
+                        {showQr ? 'Hide QR' : 'Show QR'}
+                      </Button>
+                    </Stack>
+                  </Stack>
+
+                  <Grid container spacing={1} sx={{ p: 1.2, borderRadius: 3, backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <DetailStat
+                        label="Last Heartbeat"
+                        value={formatAgeWithNow(selectedDetail.runtime?.last_heartbeat_at || null, detailNowMs)}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <DetailStat
+                        label="Active Queue"
+                        value={numberFormatter.format(getPendingMessageCount(selectedDetail))}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <DetailStat
+                        label="Active Tickets"
+                        value={numberFormatter.format(selectedDetail.staff.active_ticket_count)}
+                      />
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <DetailStat
+                        label="Retry / Failed"
+                        value={`${numberFormatter.format(selectedDetail.queue.retrying_messages)} / ${numberFormatter.format(selectedDetail.queue.failed_messages)}`}
+                      />
+                    </Grid>
+                  </Grid>
+                </Stack>
+
+                <Divider />
+
+                <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ p: { xs: 1.25, md: 1.5 }, backgroundColor: '#fbfdff' }}>
+                  {detailSections.map((section) => (
+                    <Button
+                      key={section.value}
+                      variant={detailSection === section.value ? 'contained' : 'outlined'}
+                      size="small"
+                      onClick={() => setDetailSection(section.value)}
+                      sx={{
+                        minHeight: 34,
+                        borderRadius: 999,
+                        px: 1.45,
+                        fontSize: '0.78rem',
+                        textTransform: 'none',
+                        fontWeight: 800,
+                        boxShadow: 'none',
+                        borderColor: adminPalette.borderStrong,
+                        color: detailSection === section.value ? '#ffffff' : adminPalette.textSecondary,
+                        backgroundColor: detailSection === section.value ? adminPalette.brand : adminPalette.surface,
+                        '&:hover': {
+                          boxShadow: 'none',
+                          backgroundColor:
+                            detailSection === section.value ? adminPalette.brandDark : adminPalette.brandSoft,
+                        },
+                      }}
+                    >
+                      {section.label}
+                    </Button>
+                  ))}
+                </Stack>
+              </Paper>
+
+              {detailSection === 'overview' ? (
+                <Grid container spacing={2}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Paper elevation={0} sx={{ height: '100%', ...elevatedPanelSx, p: { xs: 1.75, md: 2 } }}>
+                      <Stack spacing={1.45}>
+                        <SectionHeading
+                          eyebrow="Overview"
+                          title="Operational summary"
+                          description="The latest signals used to determine device health and routing safety."
+                        />
+                        <DetailStat
+                          label="Last Activity"
+                          value={formatAgeWithNow(getLastActivityAt(selectedDetail), detailNowMs)}
+                          helper="Combined latest inbound, outbound, and heartbeat."
+                        />
+                        <DetailStat
+                          label="Connected Number"
+                          value={selectedDetail.instance.last_known_phone_number || '-'}
+                          helper="Latest phone number reported by the device."
+                        />
+                        <DetailStat
+                          label="Last Inbound Message"
+                          value={formatAgeWithNow(selectedDetail.staff.latest_inbound_at, detailNowMs)}
+                          helper={selectedDetail.staff.latest_inbound_preview || 'No recent inbound message preview available.'}
+                        />
+
+                        {!selectedDetail.runtime ? (
+                          <Alert severity="warning" sx={{ borderRadius: 2.5 }}>
+                            Worker is not active for this device. Start worker or check orchestrator before waiting for QR or delivery.
+                          </Alert>
+                        ) : null}
+
+                        {!selectedDetail.instance.is_enabled ? (
+                          <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                            New assignments are paused. New blasts and API notifications will not be routed here, but old queues will continue.
+                          </Alert>
+                        ) : null}
+
+                        {selectedDetail.runtime?.last_error || selectedDetail.instance.last_error ? (
+                          <Alert severity="warning" sx={{ borderRadius: 2.5 }}>
+                            Last error: {selectedDetail.runtime?.last_error || selectedDetail.instance.last_error}
+                          </Alert>
+                        ) : null}
+                      </Stack>
+                    </Paper>
+                  </Grid>
+
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Paper elevation={0} sx={{ height: '100%', ...elevatedPanelSx, p: { xs: 1.75, md: 2 } }}>
+                      <Stack spacing={1.45}>
+                        <SectionHeading
+                          eyebrow="Actions"
+                          title="Common controls"
+                          description="Frequent operational tasks stay here; high-risk runtime actions stay isolated under Technical."
+                        />
+
+                        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                          <Button
+                            variant="outlined"
+                            color={selectedDetail.instance.is_enabled ? 'warning' : 'success'}
+                            startIcon={selectedDetail.instance.is_enabled ? <PauseCircleOutlineRoundedIcon /> : <PlayCircleOutlineRoundedIcon />}
+                            onClick={openToggleAssignmentDialog}
+                            disabled={Boolean(busyAction)}
+                            sx={{ ...secondaryButtonSx, minHeight: 38 }}
+                          >
+                            {selectedDetail.instance.is_enabled ? 'Pause new assignments' : 'Resume new assignments'}
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            startIcon={<EditRoundedIcon />}
+                            onClick={openRenameDialog}
+                            disabled={Boolean(busyAction)}
+                            sx={{ ...secondaryButtonSx, minHeight: 38 }}
+                          >
+                            Rename device
+                          </Button>
+                        </Stack>
+
+                        <Divider />
+
+                        <DetailStat
+                          label="QR Available"
+                          value={selectedDetail.has_qr ? 'Yes' : 'No'}
+                          helper={`QR created ${formatDateTime(selectedDetail.runtime?.qr_generated_at || null)} and expires ${formatDateTime(selectedDetail.runtime?.qr_expires_at || null)}.`}
+                        />
+                        <DetailStat
+                          label="Container Status"
+                          value={containerState ? CONTAINER_STATUS_COPY[containerState.status].label : 'Not loaded'}
+                          helper="Use the Technical tab to start, restart, stop, or cleanup the worker."
+                        />
+                      </Stack>
+                    </Paper>
+                  </Grid>
+
+                  <Grid size={{ xs: 12 }}>
+                    <Collapse in={showQr}>
+                      <Paper elevation={0} sx={{ ...elevatedPanelSx, p: { xs: 1.75, md: 2 } }}>
+                        <Stack spacing={1.4}>
+                          <SectionHeading
+                            eyebrow="Authentication"
+                            title="QR login"
+                            description="Use only when the device needs re-login or the auth session failed to recover."
+                          />
+
+                          {qrImageSrc ? (
+                            <Box
+                              component="img"
+                              alt={`QR login WhatsApp ${selectedDetail.instance.id}`}
+                              src={qrImageSrc}
+                              sx={{
+                                width: '100%',
+                                maxWidth: 280,
+                                aspectRatio: '1 / 1',
+                                display: 'block',
+                                borderRadius: 2,
+                                border: `1px solid ${adminPalette.border}`,
+                                backgroundColor: '#fff',
+                                imageRendering: 'pixelated',
+                              }}
+                            />
+                          ) : selectedDetail.runtime?.qr_terminal ? (
+                            <Box
+                              component="pre"
+                              sx={{
+                                m: 0,
+                                p: 1.5,
+                                overflowX: 'auto',
+                                borderRadius: 2,
+                                backgroundColor: '#111827',
+                                color: '#f8fafc',
+                                fontSize: 7,
+                                lineHeight: 1,
+                                fontFamily: monoTypography,
+                                whiteSpace: 'pre',
+                              }}
+                            >
+                              {selectedDetail.runtime.qr_terminal}
+                            </Box>
+                          ) : (
+                            <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                              QR not yet available for this device.
+                            </Alert>
+                          )}
+                        </Stack>
+                      </Paper>
+                    </Collapse>
+                  </Grid>
+                </Grid>
+              ) : null}
+
+              {detailSection === 'deliveries' ? (
                 <Stack spacing={2}>
-                  <Box>
-                    <Typography variant="h6">Detail Perangkat</Typography>
-                    <Typography color="text.secondary" variant="body2">
-                      {selectedDetail.instance.label} dipilih untuk ditinjau lebih lanjut.
-                    </Typography>
-                  </Box>
+                  <Grid container spacing={1.25}>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <Paper elevation={0} sx={{ height: '100%', ...elevatedPanelSx, p: { xs: 1.5, md: 1.75 } }}>
+                        <DetailStat
+                          label="Total Queued"
+                          value={numberFormatter.format(
+                            selectedDetail.queue.queued_ticket_replies +
+                              selectedDetail.queue.queued_api_notifications +
+                              selectedDetail.queue.queued_blast_messages,
+                          )}
+                          helper={`Oldest queued ${formatAgeWithNow(selectedDetail.queue.oldest_queued_at, detailNowMs)}`}
+                        />
+                      </Paper>
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <Paper elevation={0} sx={{ height: '100%', ...elevatedPanelSx, p: { xs: 1.5, md: 1.75 } }}>
+                        <DetailStat
+                          label="Retrying"
+                          value={numberFormatter.format(selectedDetail.queue.retrying_messages)}
+                          helper="Messages waiting for next attempt"
+                        />
+                      </Paper>
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <Paper elevation={0} sx={{ height: '100%', ...elevatedPanelSx, p: { xs: 1.5, md: 1.75 } }}>
+                        <DetailStat
+                          label="Failed"
+                          value={numberFormatter.format(selectedDetail.queue.failed_messages)}
+                          helper="Check if this count increases continuously"
+                        />
+                      </Paper>
+                    </Grid>
+                    <Grid size={{ xs: 6, md: 3 }}>
+                      <Paper elevation={0} sx={{ height: '100%', ...elevatedPanelSx, p: { xs: 1.5, md: 1.75 } }}>
+                        <DetailStat
+                          label="Delivered"
+                          value={numberFormatter.format(selectedDetail.queue.sent_messages)}
+                          helper="Messages recorded as delivered"
+                        />
+                      </Paper>
+                    </Grid>
+                  </Grid>
+
                   <Paper
-                    variant="outlined"
+                    elevation={0}
                     sx={{
-                      borderRadius: 3,
+                      ...elevatedPanelSx,
+                      backgroundColor: adminPalette.surface,
                       overflow: 'hidden',
                     }}
                   >
-                    <Tabs
-                      value={detailTab}
-                      onChange={(_, nextValue: DetailTab) => {
-                        setDetailTab(nextValue);
+                    <Stack spacing={1.5} sx={{ p: { xs: 1.75, md: 2.25 } }}>
+                      <Stack
+                        direction={{ xs: 'column', md: 'row' }}
+                        spacing={1}
+                        justifyContent="space-between"
+                        alignItems={{ xs: 'flex-start', md: 'center' }}
+                      >
+                        <SectionHeading
+                          eyebrow="Delivery stream"
+                          title="Recent deliveries"
+                          description="Focus on statuses that need immediate follow-up."
+                        />
+                        <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textMuted }}>
+                          Updated {formatAgeWithNow(outboundUpdatedAt, outboundNowMs)}
+                        </Typography>
+                      </Stack>
 
-                        if (nextValue === 'aktivitas' && selectedInstanceId) {
-                          void refreshEvents(selectedInstanceId).catch((error) => {
-                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat aktivitas perangkat.');
-                          });
-                        }
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                        {(Object.keys(OUTBOUND_FILTER_COPY) as OutboundFilter[]).map((filterKey) => (
+                          <Button
+                            key={filterKey}
+                            variant={outboundFilter === filterKey ? 'contained' : 'outlined'}
+                            size="small"
+                            onClick={() => setOutboundFilter(filterKey)}
+                            sx={{
+                              minHeight: 34,
+                              borderRadius: 999,
+                              px: 1.45,
+                              textTransform: 'none',
+                              fontWeight: 800,
+                              boxShadow: 'none',
+                              borderColor: adminPalette.borderStrong,
+                              color: outboundFilter === filterKey ? '#ffffff' : adminPalette.textSecondary,
+                              backgroundColor:
+                                outboundFilter === filterKey
+                                  ? OUTBOUND_FILTER_COPY[filterKey].color === 'error'
+                                    ? adminPalette.dangerText
+                                    : OUTBOUND_FILTER_COPY[filterKey].color === 'warning'
+                                      ? adminPalette.warningText
+                                      : OUTBOUND_FILTER_COPY[filterKey].color === 'success'
+                                        ? adminPalette.successText
+                                        : adminPalette.brand
+                                  : adminPalette.surface,
+                            }}
+                          >
+                            {OUTBOUND_FILTER_COPY[filterKey].label}
+                          </Button>
+                        ))}
+                      </Stack>
+                    </Stack>
 
-                        if (nextValue === 'pengiriman') {
-                          void Promise.all([refreshSelectedDetail(), refreshOutbound()]).catch((error) => {
-                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat status pengiriman.');
-                          });
-                        }
-
-                        if ((nextValue === 'ringkasan' || nextValue === 'teknis') && selectedInstanceId) {
-                          void refreshSelectedDetail(selectedInstanceId).catch((error) => {
-                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat detail perangkat.');
-                          });
-                        }
-
-                        if (nextValue === 'teknis' && selectedInstanceId) {
-                          void refreshContainerState(selectedInstanceId).catch((error) => {
-                            setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat status container.');
-                          });
-                        }
-                      }}
-                      variant="scrollable"
-                      scrollButtons="auto"
-                      sx={{
-                        px: 1,
-                        backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
-                      }}
-                    >
-                      <Tab label="Ringkasan" value="ringkasan" />
-                      <Tab label="Aktivitas" value="aktivitas" />
-                      <Tab label="Pengiriman" value="pengiriman" />
-                      <Tab icon={<TuneRoundedIcon fontSize="small" />} iconPosition="start" label="Teknis" value="teknis" />
-                    </Tabs>
-
-                    <Box sx={{ p: 2 }}>
-                      {detailTab === 'ringkasan' ? (
-                        <Grid container spacing={2}>
-                          <Grid size={{ xs: 12, md: 7 }}>
-                            <Card sx={{ height: '100%', borderRadius: 3 }}>
-                              <CardContent>
-                                <Stack spacing={1.5}>
-                                  <Typography variant="h6">Status & Tindakan</Typography>
-                                  <Chip
-                                    color={getStatusPresentation(selectedDetail.derived_status).color}
-                                    label={getStatusPresentation(selectedDetail.derived_status).label}
-                                    size="small"
-                                    sx={{ alignSelf: 'flex-start' }}
-                                  />
-                                  <Chip
-                                    color={selectedDetail.instance.is_enabled ? 'success' : 'default'}
-                                    label={
-                                      selectedDetail.instance.is_enabled
-                                        ? 'Menerima blast/API baru'
-                                        : 'Tidak menerima blast/API baru'
-                                    }
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{ alignSelf: 'flex-start' }}
-                                  />
-                                  <Typography variant="body2">
-                                    Tindakan berikutnya: <strong>{getStatusPresentation(selectedDetail.derived_status).shortAction}</strong>
-                                  </Typography>
-                                  {!selectedDetail.runtime ? (
-                                    <Alert severity="warning">
-                                      Belum ada worker aktif untuk instance ini. Jalankan proses bot dengan env pada tab Teknis
-                                      agar QR dan status runtime muncul.
-                                    </Alert>
-                                  ) : null}
-                                  {!selectedDetail.instance.is_enabled ? (
-                                    <Alert severity="info">
-                                      Disable hanya mencegah assignment blast/API baru. Tiket dan pesan yang sudah terantre
-                                      tetap memakai instance asalnya.
-                                    </Alert>
-                                  ) : null}
-                                  <Typography variant="body2">
-                                    Dicek terakhir: <strong>{formatAgeWithNow(selectedDetail.runtime?.last_heartbeat_at || null, activePanelNowMs)}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Nomor terhubung: <strong>{selectedDetail.instance.last_known_phone_number || '-'}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Tiket aktif: <strong>{selectedDetail.staff.active_ticket_count}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Pesan tertunda:{' '}
-                                    <strong>{selectedDetail.queue.queued_ticket_replies + selectedDetail.queue.queued_api_notifications + selectedDetail.queue.queued_blast_messages}</strong>
-                                  </Typography>
-                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                    <Button
-                                      component={Link}
-                                      href={`/ticket?instanceId=${selectedDetail.instance.id}`}
-                                      size="small"
-                                      variant="outlined"
-                                    >
-                                      Buka Daftar Tiket
-                                    </Button>
-                                    {(selectedDetail.derived_status === 'qr_required' ||
-                                      selectedDetail.derived_status === 'auth_failed' ||
-                                      selectedDetail.has_qr) && (
-                                      <Button
-                                        variant={showQr ? 'outlined' : 'contained'}
-                                        startIcon={<QrCode2RoundedIcon />}
-                                        size="small"
-                                        onClick={() => setShowQr((current) => !current)}
-                                      >
-                                        {showQr ? 'Sembunyikan QR' : 'Tampilkan QR'}
-                                      </Button>
-                                    )}
-                                    <Button
-                                      color={selectedDetail.instance.is_enabled ? 'warning' : 'success'}
-                                      disabled={adminActionBusy}
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={handleToggleSelectedInstanceEnabled}
-                                    >
-                                      {selectedDetail.instance.is_enabled ? 'Disable Assignment' : 'Reactivate Assignment'}
-                                    </Button>
-                                    <Button
-                                      disabled={adminActionBusy}
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={handleRenameSelectedInstance}
-                                    >
-                                      Rename Label
-                                    </Button>
-                                    <Button
-                                      color="warning"
-                                      disabled={adminActionBusy || containerActionBusy}
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={() => {
-                                        void handleDeleteSelectedInstance('stop_only');
-                                      }}
-                                    >
-                                      Retire: Disable + Stop
-                                    </Button>
-                                  </Stack>
-                                </Stack>
-                              </CardContent>
-                            </Card>
-                          </Grid>
-
-                          <Grid size={{ xs: 12, md: 5 }}>
-                            <Card sx={{ height: '100%', borderRadius: 3 }}>
-                              <CardContent>
-                                <Stack spacing={1.5}>
-                                  <Typography variant="h6">QR & Login</Typography>
-                                  <Typography color="text.secondary" variant="body2">
-                                    QR hanya ditampilkan saat dibutuhkan agar layar tetap ringkas.
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    QR tersedia: <strong>{selectedDetail.has_qr ? 'Ya' : 'Tidak'}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Dibuat: <strong>{formatDateTime(selectedDetail.runtime?.qr_generated_at || null)}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Berakhir: <strong>{formatDateTime(selectedDetail.runtime?.qr_expires_at || null)}</strong>
-                                  </Typography>
-
-                                  <Collapse in={showQr}>
-                                    <Stack spacing={1.5} sx={{ pt: 1 }}>
-                                      {qrImageSrc ? (
-                                        <Box
-                                          component="img"
-                                          alt={`QR login WhatsApp ${selectedDetail.instance.id}`}
-                                          src={qrImageSrc}
-                                          sx={{
-                                            width: '100%',
-                                            maxWidth: 320,
-                                            aspectRatio: '1 / 1',
-                                            mx: 'auto',
-                                            display: 'block',
-                                            borderRadius: 2,
-                                            border: '1px solid',
-                                            borderColor: 'divider',
-                                            backgroundColor: '#fff',
-                                            imageRendering: 'pixelated',
-                                          }}
-                                        />
-                                      ) : selectedDetail.runtime?.qr_terminal ? (
-                                        <Box
-                                          component="pre"
-                                          sx={{
-                                            p: 1.5,
-                                            overflowX: 'auto',
-                                            borderRadius: 2,
-                                            backgroundColor: '#111',
-                                            color: '#f4f4f4',
-                                            fontSize: 7,
-                                            lineHeight: 1,
-                                            fontFamily:
-                                              'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                                            letterSpacing: 0,
-                                            whiteSpace: 'pre',
-                                            maxHeight: 220,
-                                          }}
-                                        >
-                                          {selectedDetail.runtime.qr_terminal}
-                                        </Box>
-                                      ) : (
-                                        <Alert severity="info">QR belum tersedia untuk perangkat ini.</Alert>
-                                      )}
-                                    </Stack>
-                                  </Collapse>
-                                </Stack>
-                              </CardContent>
-                            </Card>
-                          </Grid>
-                        </Grid>
-                      ) : null}
-
-                      {detailTab === 'aktivitas' ? (
-                        <Grid container spacing={2}>
-                          <Grid size={{ xs: 12, md: 5 }}>
-                            <Card sx={{ height: '100%', borderRadius: 3 }}>
-                              <CardContent>
-                                <Stack spacing={1.5}>
-                                  <Typography variant="h6">Aktivitas Terakhir</Typography>
-                                  <Typography variant="body2">
-                                    Pesan masuk terakhir: <strong>{formatAgeWithNow(selectedDetail.staff.latest_inbound_at, activePanelNowMs)}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Pesan keluar terakhir: <strong>{formatAgeWithNow(selectedDetail.runtime?.last_outbound_at || null, activePanelNowMs)}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Ringkasan pesan: <strong>{selectedDetail.staff.latest_inbound_preview || '-'}</strong>
-                                  </Typography>
-                                  <Typography variant="body2">
-                                    Tiket terbaru:{' '}
-                                    {selectedDetail.staff.latest_ticket_id ? (
-                                      <Link href={`/ticket/${selectedDetail.staff.latest_ticket_id}`}>
-                                        {selectedDetail.staff.latest_ticket_subject || selectedDetail.staff.latest_ticket_id}
-                                      </Link>
-                                    ) : (
-                                      '-'
-                                    )}
-                                  </Typography>
-                                </Stack>
-                              </CardContent>
-                            </Card>
-                          </Grid>
-
-                          <Grid size={{ xs: 12, md: 7 }}>
-                            <Card sx={{ height: '100%', borderRadius: 3 }}>
-                              <CardContent>
-                                <Stack spacing={2}>
-                                  <Box>
-                                    <Typography variant="h6">Aktivitas Terbaru</Typography>
-                                    <Typography color="text.secondary" variant="body2">
-                                      Ringkasan singkat aktivitas perangkat terbaru.
-                                    </Typography>
-                                  </Box>
-
-                                  <List disablePadding>
-                                    {visibleEvents.map((event, index) => (
-                                      <Box key={event.id}>
-                                        {index ? <Divider /> : null}
-                                        <Tooltip title={formatDateTime(event.createdAt)} placement="top-start">
-                                          <ListItemButton
-                                            disableGutters
-                                            sx={{ py: 1.5 }}
-                                            onClick={() => setShowAllEvents((current) => !current)}
-                                          >
-                                            <ListItemText
-                                              primary={
-                                                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                                                  <Typography fontWeight={600}>{event.title}</Typography>
-                                                  {event.count > 1 ? (
-                                                    <Chip label={`${event.count} kali`} size="small" variant="outlined" />
-                                                  ) : null}
-                                                </Stack>
-                                              }
-                                              secondary={`${event.description} • ${formatAgeWithNow(event.createdAt, activePanelNowMs)}`}
-                                            />
-                                          </ListItemButton>
-                                        </Tooltip>
-                                      </Box>
-                                    ))}
-                                    {!visibleEvents.length ? (
-                                      <Typography color="text.secondary" variant="body2">
-                                        Belum ada aktivitas yang tercatat.
-                                      </Typography>
-                                    ) : null}
-                                  </List>
-
-                                  {groupedEvents.length > 5 ? (
-                                    <Button size="small" onClick={() => setShowAllEvents((current) => !current)}>
-                                      {showAllEvents ? 'Tampilkan Lebih Sedikit' : 'Lihat Semua Aktivitas'}
-                                    </Button>
-                                  ) : null}
-                                </Stack>
-                              </CardContent>
-                            </Card>
-                          </Grid>
-                        </Grid>
-                      ) : null}
-
-                      {detailTab === 'pengiriman' ? (
-                        <Stack spacing={2}>
-                          <Card sx={{ borderRadius: 3 }}>
-                            <CardContent>
-                              <Stack spacing={1.5}>
-                                <Typography variant="h6">Status Pengiriman</Typography>
-                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                  <Chip label={`Tertunda ${selectedDetail.queue.queued_ticket_replies + selectedDetail.queue.queued_api_notifications + selectedDetail.queue.queued_blast_messages}`} size="small" color="warning" />
-                                  <Chip label={`Coba Lagi ${selectedDetail.queue.retrying_messages}`} size="small" color="warning" variant="outlined" />
-                                  <Chip label={`Gagal ${selectedDetail.queue.failed_messages}`} size="small" color="error" />
-                                  <Chip label={`Berhasil ${selectedDetail.queue.sent_messages}`} size="small" color="success" />
-                                </Stack>
-                                <Typography variant="body2">
-                                  Balasan tiket tertunda: <strong>{selectedDetail.queue.queued_ticket_replies}</strong>
+                    <TableContainer sx={{ overflowX: 'auto' }}>
+                      <Table size="small" sx={{ minWidth: 840 }}>
+                        <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                          <TableRow>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Status</TableCell>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Recipient</TableCell>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Source</TableCell>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Reference</TableCell>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Ticket</TableCell>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Time</TableCell>
+                            <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Latest Issue</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {filteredOutboundItems.slice(0, 8).map((item) => (
+                            <TableRow key={item.id} hover sx={{ '&:hover': { backgroundColor: adminPalette.brandSoft } }}>
+                              <TableCell>
+                                <Chip size="small" color={OUTBOUND_FILTER_COPY[item.delivery_status].color} label={OUTBOUND_FILTER_COPY[item.delivery_status].label} />
+                              </TableCell>
+                              <TableCell>
+                                <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: adminPalette.textPrimary }}>
+                                  {item.recipient_phone_number}
                                 </Typography>
-                                <Typography variant="body2">
-                                  Notifikasi API tertunda: <strong>{selectedDetail.queue.queued_api_notifications}</strong>
+                                <Typography sx={{ mt: 0.2, fontSize: '0.75rem', color: adminPalette.textMuted }}>
+                                  {item.instance_label || item.whatsapp_instance_id}
                                 </Typography>
-                                <Typography variant="body2">
-                                  Blast tertunda: <strong>{selectedDetail.queue.queued_blast_messages}</strong>
-                                </Typography>
-                                <Typography variant="body2">
-                                  Antrean terlama: <strong>{formatAgeWithNow(selectedDetail.queue.oldest_queued_at, activePanelNowMs)}</strong>
-                                </Typography>
-                                <Typography variant="body2">
-                                  Percobaan sambung ulang 24 jam: <strong>{selectedDetail.runtime?.reconnect_count_24h || 0}</strong>
-                                </Typography>
-                              </Stack>
-                            </CardContent>
-                          </Card>
-
-                          <Card sx={{ borderRadius: 3 }}>
-                            <CardContent>
-                              <Stack spacing={2}>
-                                <Box>
-                                  <Typography variant="h6">Aktivitas Pengiriman Terbaru</Typography>
-                                  <Typography color="text.secondary" variant="body2">
-                                    Filter status untuk melihat pesan yang perlu ditindaklanjuti.
-                                  </Typography>
-                                </Box>
-
-                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                  {(Object.keys(OUTBOUND_FILTER_COPY) as OutboundFilter[]).map((filterKey) => (
-                                    <Chip
-                                      key={filterKey}
-                                      clickable
-                                      color={outboundFilter === filterKey ? OUTBOUND_FILTER_COPY[filterKey].color || 'default' : 'default'}
-                                      label={OUTBOUND_FILTER_COPY[filterKey].label}
-                                      onClick={() => setOutboundFilter(filterKey)}
-                                      variant={outboundFilter === filterKey ? 'filled' : 'outlined'}
-                                    />
-                                  ))}
-                                </Stack>
-
-                                <TableContainer>
-                                  <Table size="small">
-                                    <TableHead>
-                                      <TableRow>
-                                        <TableCell>Status</TableCell>
-                                        <TableCell>Instance</TableCell>
-                                        <TableCell>Penerima</TableCell>
-                                        <TableCell>Sumber</TableCell>
-                                        <TableCell>Referensi</TableCell>
-                                        <TableCell>Tiket</TableCell>
-                                        <TableCell>Dibuat</TableCell>
-                                      </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                      {filteredOutboundItems.slice(0, 8).map((item) => (
-                                        <TableRow key={item.id} hover>
-                                          <TableCell>{OUTBOUND_FILTER_COPY[item.delivery_status].label}</TableCell>
-                                          <TableCell>
-                                            <Stack spacing={0.5}>
-                                              <Typography variant="body2" fontWeight={600}>
-                                                {item.instance_label || item.whatsapp_instance_id}
-                                              </Typography>
-                                              <Typography color="text.secondary" variant="caption">
-                                                {item.whatsapp_instance_id}
-                                              </Typography>
-                                            </Stack>
-                                          </TableCell>
-                                          <TableCell>{item.recipient_phone_number}</TableCell>
-                                          <TableCell>
-                                            <Chip label={OUTBOUND_SOURCE_COPY[item.source_type].chipLabel} size="small" variant="outlined" />
-                                          </TableCell>
-                                          <TableCell>{item.client_reference || '-'}</TableCell>
-                                          <TableCell>
-                                            {item.ticket_id ? <Link href={`/ticket/${item.ticket_id}`}>{item.ticket_id}</Link> : '-'}
-                                          </TableCell>
-                                          <TableCell title={item.created_at}>{formatDateTime(item.created_at)}</TableCell>
-                                        </TableRow>
-                                      ))}
-                                      {!filteredOutboundItems.length ? (
-                                        <TableRow>
-                                          <TableCell colSpan={7}>
-                                            <Typography color="text.secondary" variant="body2">
-                                              Tidak ada aktivitas pengiriman untuk filter ini.
-                                            </Typography>
-                                          </TableCell>
-                                        </TableRow>
-                                      ) : null}
-                                    </TableBody>
-                                  </Table>
-                                </TableContainer>
-                              </Stack>
-                            </CardContent>
-                          </Card>
-                        </Stack>
-                      ) : null}
-
-                      {detailTab === 'teknis' ? (
-                        <Card sx={{ borderRadius: 3 }}>
-                          <CardContent>
-                            <Stack spacing={1}>
-                              <Typography variant="h6">Detail Teknis</Typography>
-                              <Typography variant="body2">
-                                Worker ID: <strong>{selectedDetail.runtime?.worker_id || selectedDetail.instance.assigned_worker_id || '-'}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Host: <strong>{selectedDetail.runtime?.worker_host || '-'}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Versi Worker: <strong>{selectedDetail.runtime?.worker_version || '-'}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Konflik Worker: <strong>{selectedDetail.runtime?.has_worker_conflict ? 'Ya' : 'Tidak'}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Chat ID: <strong>{selectedDetail.instance.last_known_chat_id || '-'}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Siap sejak: <strong>{formatDateTime(selectedDetail.instance.last_ready_at)}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Terputus terakhir: <strong>{formatDateTime(selectedDetail.instance.last_disconnect_at)}</strong>
-                              </Typography>
-                              <Typography variant="body2">
-                                Error terakhir: <strong>{selectedDetail.runtime?.last_error || selectedDetail.instance.last_error || '-'}</strong>
-                              </Typography>
-                              <Divider />
-                              <Typography variant="subtitle2">Env worker manual</Typography>
-                              <Typography component="pre" variant="body2" sx={{ whiteSpace: 'pre-wrap', m: 0 }}>
-                                {`WHATSAPP_INSTANCE_ID=${selectedDetail.instance.id}\nWHATSAPP_INSTANCE_LABEL="${selectedDetail.instance.label}"\nWHATSAPP_WORKER_ID=${selectedDetail.instance.id}-worker`}
-                              </Typography>
-                              <Divider />
-                              <Stack spacing={1.5}>
-                                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'flex-start', sm: 'center' }} justifyContent="space-between">
-                                  <Box>
-                                    <Typography variant="subtitle2">Docker worker lifecycle</Typography>
-                                    <Typography color="text.secondary" variant="body2">
-                                      Kontrol ini memakai private Docker orchestrator. Saat belum dikonfigurasi, gunakan env manual di atas.
-                                    </Typography>
-                                  </Box>
-                                  <Button
-                                    disabled={containerActionBusy}
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => {
-                                      void refreshContainerState().catch((error) => {
-                                        setErrorMessage(error instanceof Error ? error.message : 'Gagal memuat status container.');
-                                      });
-                                    }}
-                                  >
-                                    Refresh Container
-                                  </Button>
-                                </Stack>
-                                {containerState ? (
-                                  <Stack spacing={1}>
-                                    <Chip
-                                      color={CONTAINER_STATUS_COPY[containerState.status].color}
-                                      label={CONTAINER_STATUS_COPY[containerState.status].label}
-                                      size="small"
-                                      sx={{ alignSelf: 'flex-start' }}
-                                    />
-                                    <Typography variant="body2">
-                                      Container: <strong>{containerState.container_name || '-'}</strong>
-                                    </Typography>
-                                    <Typography variant="body2">
-                                      Image: <strong>{containerState.image || '-'}</strong>
-                                    </Typography>
-                                    <Typography variant="body2">
-                                      Started: <strong>{formatDateTime(containerState.started_at)}</strong>
-                                    </Typography>
-                                    {containerState.last_error ? (
-                                      <Alert severity={containerState.status === 'not_configured' ? 'info' : 'warning'}>
-                                        {containerState.last_error}
-                                      </Alert>
-                                    ) : null}
-                                  </Stack>
+                              </TableCell>
+                              <TableCell>
+                                <Chip size="small" variant="outlined" label={OUTBOUND_SOURCE_COPY[item.source_type].chipLabel} />
+                              </TableCell>
+                              <TableCell sx={{ color: adminPalette.textSecondary }}>{item.client_reference || '-'}</TableCell>
+                              <TableCell>
+                                {item.ticket_id ? (
+                                  <Link href={`/ticket/${item.ticket_id}`} style={{ color: adminPalette.brandDark, fontWeight: 700 }}>
+                                    {item.ticket_id}
+                                  </Link>
                                 ) : (
-                                  <Alert severity="info">Klik Refresh Container untuk melihat status Docker worker.</Alert>
+                                  '-'
                                 )}
-                                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                  <Button
-                                    disabled={containerActionBusy || !containerState || containerState.status === 'not_configured'}
-                                    size="small"
-                                    variant="contained"
-                                    onClick={() => {
-                                      void runContainerAction('start');
-                                    }}
-                                  >
-                                    Start Worker
-                                  </Button>
-                                  <Button
-                                    disabled={containerActionBusy || !containerState || containerState.status === 'not_configured'}
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => {
-                                      void runContainerAction('restart');
-                                    }}
-                                  >
-                                    Restart Worker
-                                  </Button>
-                                  <Button
-                                    color="warning"
-                                    disabled={containerActionBusy || !containerState || containerState.status === 'not_configured'}
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => {
-                                      void runContainerAction('stop');
-                                    }}
-                                  >
-                                    Stop Worker
-                                  </Button>
-                                </Stack>
-                                <Divider />
-                                <Stack spacing={1}>
-                                  <Typography variant="subtitle2">Retire / cleanup instance</Typography>
-                                  <Alert severity="warning">
-                                    Cleanup runtime menghapus container dan auth volume, tetapi tetap menyimpan row DB agar
-                                    histori tiket dan pengiriman tidak rusak. Delete DB hanya untuk instance test yang belum dipakai.
-                                  </Alert>
-                                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-                                    <Button
-                                      color="warning"
-                                      disabled={adminActionBusy || containerActionBusy}
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={() => {
-                                        void handleDeleteSelectedInstance('stop_only');
-                                      }}
-                                    >
-                                      Retire: Disable + Stop
-                                    </Button>
-                                    <Button
-                                      color="error"
-                                      disabled={adminActionBusy || containerActionBusy}
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={() => {
-                                        void handleDeleteSelectedInstance('remove_runtime_resources');
-                                      }}
-                                    >
-                                      Retire + Remove Runtime Resources
-                                    </Button>
-                                    <Button
-                                      color="error"
-                                      disabled={
-                                        adminActionBusy ||
-                                        containerActionBusy ||
-                                        selectedDetail.instance.id === 'default'
-                                      }
-                                      size="small"
-                                      variant="outlined"
-                                      onClick={() => {
-                                        void handleDeleteSelectedInstance('delete_db_row');
-                                      }}
-                                    >
-                                      Delete DB Row
-                                    </Button>
-                                  </Stack>
-                                </Stack>
-                              </Stack>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      ) : null}
-                    </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Typography sx={{ fontSize: '0.82rem', color: adminPalette.textPrimary }}>
+                                  {formatDateTime(item.created_at)}
+                                </Typography>
+                              </TableCell>
+                              <TableCell sx={{ maxWidth: 260 }}>
+                                <Typography sx={{ fontSize: '0.8rem', lineHeight: 1.45, color: item.last_delivery_error ? adminPalette.dangerText : adminPalette.textMuted }}>
+                                  {item.last_delivery_error || '-'}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+
+                          {!filteredOutboundItems.length ? (
+                            <TableRow>
+                              <TableCell colSpan={7} sx={{ py: 5, textAlign: 'center' }}>
+                                <Typography sx={{ fontWeight: 700, color: adminPalette.textPrimary }}>
+                                  No deliveries found for this filter.
+                                </Typography>
+                                <Typography sx={{ mt: 0.5, color: adminPalette.textSecondary }}>
+                                  Change status filter or select another device to see delivery activity.
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   </Paper>
                 </Stack>
-              </Paper>
+              ) : null}
+
+              {detailSection === 'activity' ? (
+                <Paper
+                  elevation={0}
+                  sx={{
+                    ...elevatedPanelSx,
+                    backgroundColor: adminPalette.surface,
+                    p: { xs: 1.75, md: 2.25 },
+                  }}
+                  >
+                  <Stack spacing={1.75}>
+                    <Grid container spacing={2}>
+                      <Grid size={{ xs: 12, md: 4 }}>
+                        <Paper elevation={0} sx={{ height: '100%', borderRadius: 3, border: `1px solid ${adminPalette.border}`, p: { xs: 1.5, md: 1.75 }, backgroundColor: adminPalette.surfaceSoft }}>
+                          <Stack spacing={1.35}>
+                            <SectionHeading eyebrow="Activity" title="Message summary" />
+                            <DetailStat
+                              label="Last Inbound Message"
+                              value={formatAgeWithNow(selectedDetail.staff.latest_inbound_at, detailNowMs)}
+                            />
+                            <DetailStat
+                              label="Last Outbound Message"
+                              value={formatAgeWithNow(selectedDetail.runtime?.last_outbound_at || null, detailNowMs)}
+                            />
+                            <DetailStat
+                              label="Recent Ticket"
+                              value={selectedDetail.staff.latest_ticket_subject || selectedDetail.staff.latest_ticket_id || '-'}
+                            />
+                          </Stack>
+                        </Paper>
+                      </Grid>
+
+                      <Grid size={{ xs: 12, md: 8 }}>
+                          <Stack spacing={1.35}>
+                          <Stack
+                            direction={{ xs: 'column', md: 'row' }}
+                            spacing={1}
+                            justifyContent="space-between"
+                            alignItems={{ xs: 'flex-start', md: 'center' }}
+                          >
+                            <SectionHeading
+                              eyebrow="Timeline"
+                              title="Device event trail"
+                              description="Grouped events make reconnect and login-failure patterns easier to scan."
+                            />
+                            <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textMuted }}>
+                              Updated {formatAgeWithNow(eventsUpdatedAt, eventsNowMs)}
+                            </Typography>
+                          </Stack>
+
+                          {eventsInstanceId !== selectedDetail.instance.id ? (
+                            <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                              Latest activity is being loaded for the selected device.
+                            </Alert>
+                          ) : groupedEvents.length ? (
+                            <List disablePadding sx={{ display: 'grid', gap: 0.75 }}>
+                              {visibleEvents.map((event) => (
+                                <Paper
+                                  key={event.id}
+                                  elevation={0}
+                                  sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, boxShadow: 'none' }}
+                                >
+                                  <ListItemButton sx={{ px: 1.5, py: 1.2 }}>
+                                    <Stack spacing={0.55} sx={{ width: '100%' }}>
+                                      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap alignItems="center">
+                                        <Typography sx={{ ...dashboardTypography, fontSize: '0.95rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                                          {event.title}
+                                        </Typography>
+                                        {event.count > 1 ? <Chip size="small" variant="outlined" label={`${event.count} times`} /> : null}
+                                      </Stack>
+                                      <Typography sx={{ fontSize: '0.82rem', lineHeight: 1.45, color: adminPalette.textSecondary }}>
+                                        {event.description}
+                                      </Typography>
+                                      <Typography sx={{ fontSize: '0.75rem', color: adminPalette.textMuted }}>
+                                        {formatAgeWithNow(event.createdAt, eventsNowMs)} • {formatDateTime(event.createdAt)}
+                                      </Typography>
+                                    </Stack>
+                                  </ListItemButton>
+                                </Paper>
+                              ))}
+                            </List>
+                          ) : (
+                            <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                              No device activity recorded.
+                            </Alert>
+                          )}
+
+                          {groupedEvents.length > 6 ? (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              onClick={() => setShowAllEvents((current) => !current)}
+                              sx={{ ...secondaryButtonSx, alignSelf: 'flex-start' }}
+                            >
+                              {showAllEvents ? 'Show less' : 'View all activity'}
+                            </Button>
+                          ) : null}
+                        </Stack>
+                      </Grid>
+                    </Grid>
+                  </Stack>
+                </Paper>
+              ) : null}
+
+              {detailSection === 'technical' ? (
+                <Stack spacing={2}>
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      ...elevatedPanelSx,
+                      backgroundColor: adminPalette.surface,
+                      p: { xs: 1.75, md: 2.25 },
+                    }}
+                  >
+                    <Stack spacing={1.75}>
+                      <Stack
+                        direction={{ xs: 'column', md: 'row' }}
+                        spacing={1}
+                        justifyContent="space-between"
+                        alignItems={{ xs: 'flex-start', md: 'center' }}
+                      >
+                        <SectionHeading
+                          eyebrow="Runtime"
+                          title="Technical diagnostics"
+                          description="Advanced worker controls and runtime details for deeper troubleshooting."
+                        />
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={<SettingsRoundedIcon />}
+                          onClick={() => {
+                            void refreshContainerState(selectedDetail.instance.id)
+                              .then(() => {
+                                setErrorMessage(null);
+                                pushToast('success', `Status container ${selectedInstanceName} diperbarui.`);
+                              })
+                              .catch((error) => {
+                                const message = error instanceof Error ? error.message : 'Gagal memuat status container.';
+                                setErrorMessage(message);
+                                pushToast('error', message);
+                              });
+                          }}
+                          disabled={Boolean(busyAction)}
+                          sx={{ ...secondaryButtonSx }}
+                        >
+                          Refresh diagnostics
+                        </Button>
+                      </Stack>
+
+                      <Grid container spacing={1.5}>
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Paper elevation={0} sx={{ height: '100%', borderRadius: 3, border: `1px solid ${adminPalette.border}`, p: { xs: 1.5, md: 1.75 }, backgroundColor: adminPalette.surfaceSoft }}>
+                            <Stack spacing={0.85}>
+                              <Typography sx={{ ...dashboardTypography, fontSize: '0.95rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                                Runtime metadata
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
+                                Worker ID: <strong>{selectedDetail.runtime?.worker_id || selectedDetail.instance.assigned_worker_id || '-'}</strong>
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
+                                Host: <strong>{selectedDetail.runtime?.worker_host || '-'}</strong>
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
+                                Worker version: <strong>{selectedDetail.runtime?.worker_version || '-'}</strong>
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
+                                Worker conflict: <strong>{selectedDetail.runtime?.has_worker_conflict ? 'Yes' : 'No'}</strong>
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
+                                Container status: <strong>{containerState ? CONTAINER_STATUS_COPY[containerState.status].label : '-'}</strong>
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textSecondary }}>
+                                Updated: <strong>{formatDateTime(containerUpdatedAt)}</strong>
+                              </Typography>
+                            </Stack>
+                          </Paper>
+                        </Grid>
+
+                        <Grid size={{ xs: 12, md: 6 }}>
+                          <Paper elevation={0} sx={{ height: '100%', borderRadius: 3, border: `1px solid ${adminPalette.border}`, p: { xs: 1.5, md: 1.75 }, backgroundColor: adminPalette.surfaceSoft }}>
+                            <Stack spacing={1.1}>
+                              <Typography sx={{ ...dashboardTypography, fontSize: '0.95rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                                Worker controls
+                              </Typography>
+                              <Typography sx={{ fontSize: '0.78rem', lineHeight: 1.45, color: adminPalette.textSecondary }}>
+                                Use start, restart, or stop only when operational troubleshooting requires intervention.
+                              </Typography>
+                              <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  startIcon={<PlayCircleOutlineRoundedIcon />}
+                                  onClick={() => openContainerActionDialog('start')}
+                                  disabled={Boolean(busyAction) || containerState?.status === 'not_configured'}
+                                  sx={{ ...primaryButtonSx, minHeight: 34 }}
+                                >
+                                  Start worker
+                                </Button>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  startIcon={<RestartAltRoundedIcon />}
+                                  onClick={() => openContainerActionDialog('restart')}
+                                  disabled={Boolean(busyAction) || containerState?.status === 'not_configured'}
+                                  sx={{ ...secondaryButtonSx, minHeight: 34 }}
+                                >
+                                  Restart worker
+                                </Button>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color="warning"
+                                  startIcon={<PauseCircleOutlineRoundedIcon />}
+                                  onClick={() => openContainerActionDialog('stop')}
+                                  disabled={Boolean(busyAction) || containerState?.status === 'not_configured'}
+                                  sx={{ ...secondaryButtonSx, minHeight: 34 }}
+                                >
+                                  Stop worker
+                                </Button>
+                              </Stack>
+                            </Stack>
+                          </Paper>
+                        </Grid>
+
+                        <Grid size={{ xs: 12 }}>
+                          <Paper elevation={0} sx={{ borderRadius: 3, border: `1px solid ${adminPalette.border}`, p: { xs: 1.5, md: 1.75 }, backgroundColor: adminPalette.surfaceSoft }}>
+                            <Stack spacing={0.85}>
+                              <Typography sx={{ ...dashboardTypography, fontSize: '0.95rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                                Manual worker environment
+                              </Typography>
+                              <Typography
+                                component="pre"
+                                sx={{
+                                  m: 0,
+                                  p: 1.25,
+                                  borderRadius: 1.75,
+                                  border: `1px solid ${adminPalette.border}`,
+                                  backgroundColor: adminPalette.surface,
+                                  color: adminPalette.textSecondary,
+                                  fontSize: '0.77rem',
+                                  lineHeight: 1.55,
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                  fontFamily: monoTypography,
+                                }}
+                              >
+                                {`WHATSAPP_INSTANCE_ID=${selectedDetail.instance.id}\nWHATSAPP_INSTANCE_LABEL="${selectedDetail.instance.label}"\nWHATSAPP_WORKER_ID=${selectedDetail.instance.id}-worker`}
+                              </Typography>
+                            </Stack>
+                          </Paper>
+                        </Grid>
+                      </Grid>
+
+                      {containerState?.last_error ? (
+                        <Alert severity={containerState.status === 'not_configured' ? 'info' : 'warning'} sx={{ borderRadius: 2.5 }}>
+                          {containerState.last_error}
+                        </Alert>
+                      ) : null}
+                    </Stack>
+                  </Paper>
+
+                  <Paper
+                    elevation={0}
+                    sx={{
+                      ...elevatedPanelSx,
+                      borderColor: adminPalette.warningBorder,
+                      backgroundColor: adminPalette.surface,
+                      p: { xs: 1.75, md: 2.25 },
+                    }}
+                  >
+                    <Stack spacing={1.4}>
+                      <SectionHeading
+                        eyebrow="Risk zone"
+                        title="Destructive operations"
+                        description="Use these only when retiring a device or cleaning up test runtime resources."
+                      />
+                      <Alert severity="warning" sx={{ borderRadius: 2.5 }}>
+                        Runtime cleanup removes the container and auth volume while preserving database history. Permanent delete is only for unused test instances.
+                      </Alert>
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                        <Button
+                          variant="outlined"
+                          color="warning"
+                          onClick={() => openRetireDialog('stop_only')}
+                          disabled={Boolean(busyAction)}
+                          sx={{ ...secondaryButtonSx }}
+                        >
+                          Retire device
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          onClick={() => openRetireDialog('remove_runtime_resources')}
+                          disabled={Boolean(busyAction)}
+                          sx={{ ...secondaryButtonSx }}
+                        >
+                          Remove worker runtime
+                        </Button>
+                        <Button
+                          variant="outlined"
+                          color="error"
+                          startIcon={<DeleteOutlineRoundedIcon />}
+                          onClick={() => openRetireDialog('delete_db_row')}
+                          disabled={Boolean(busyAction) || selectedDetail.instance.id === 'default'}
+                          sx={{ ...secondaryButtonSx }}
+                        >
+                          Permanently delete test instance
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  </Paper>
+                </Stack>
+              ) : null}
             </Stack>
           ) : (
-            <Alert severity="info">Belum ada perangkat WhatsApp yang dikonfigurasi.</Alert>
+            <Paper
+              elevation={0}
+              sx={{
+                borderRadius: 2.5,
+                border: `1px solid ${adminPalette.border}`,
+                backgroundColor: adminPalette.surface,
+                p: { xs: 1.5, md: 2 },
+              }}
+            >
+              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                Belum ada perangkat WhatsApp yang dikonfigurasi. Tambahkan instance baru untuk mulai memantau worker dan antrean.
+              </Alert>
+            </Paper>
           )}
         </Grid>
       </Grid>
+
+      <Snackbar
+        open={Boolean(toast)}
+        autoHideDuration={4000}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') {
+            return;
+          }
+
+          setToast(null);
+        }}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert
+          severity={toast?.severity || 'success'}
+          variant="filled"
+          sx={{ width: '100%' }}
+          onClose={() => setToast(null)}
+        >
+          {toast?.message}
+        </Alert>
+      </Snackbar>
+
+      <Dialog open={Boolean(editorDialog)} onClose={() => setEditorDialog(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>
+          {editorDialog?.mode === 'create' ? 'Tambah instance WhatsApp' : 'Ubah nama perangkat'}
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            {editorDialog?.mode === 'create' ? (
+              <TextField
+                label="Instance ID"
+                value={editorDialog.id}
+                onChange={(event) =>
+                  setEditorDialog((current) =>
+                    current && current.mode === 'create'
+                      ? { ...current, id: event.target.value }
+                      : current,
+                  )
+                }
+                helperText="Contoh: iom-wa-2"
+                fullWidth
+              />
+            ) : null}
+
+            <TextField
+              label="Nama perangkat"
+              value={editorDialog?.label || ''}
+              onChange={(event) =>
+                setEditorDialog((current) => (current ? { ...current, label: event.target.value } : current))
+              }
+              helperText="Nama ini tampil di dashboard dan riwayat pengiriman."
+              fullWidth
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setEditorDialog(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Batal
+          </Button>
+          <Button
+            onClick={() => void handleSaveEditorDialog()}
+            variant="contained"
+            disabled={busyAction === 'create-instance' || busyAction === 'rename-instance'}
+            sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}
+          >
+            {busyAction === 'create-instance' || busyAction === 'rename-instance'
+              ? 'Menyimpan...'
+              : 'Simpan'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(confirmAction)} onClose={() => setConfirmAction(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>
+          {confirmDialogConfig?.title}
+        </DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+            <Typography sx={{ color: adminPalette.textSecondary }}>
+              {confirmDialogConfig?.description}
+            </Typography>
+
+            {confirmDialogConfig?.requiresText ? (
+              <TextField
+                label={`Ketik ${confirmDialogConfig.requiresText}`}
+                value={confirmInput}
+                onChange={(event) => setConfirmInput(event.target.value)}
+                fullWidth
+              />
+            ) : null}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setConfirmAction(null)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            Batal
+          </Button>
+          <Button
+            onClick={() => void handleConfirmDialog()}
+            variant="contained"
+            color={confirmDialogConfig?.color || 'primary'}
+            disabled={Boolean(busyAction)}
+            sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}
+          >
+            {busyAction ? 'Memproses...' : confirmDialogConfig?.confirmLabel}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }

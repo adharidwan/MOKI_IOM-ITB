@@ -11,6 +11,7 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import ImageNotSupportedRoundedIcon from '@mui/icons-material/ImageNotSupportedRounded';
 import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
@@ -46,7 +47,15 @@ import {
   Typography,
 } from '@mui/material';
 
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import {
+  adminMetricLabelSx,
+  adminMetricTileSx,
+  adminMetricValueSx,
+  adminPalette,
+  adminPanelSx,
+  adminSectionLabelSx,
+  adminTableSortLabelSx,
+} from '../lib/adminPalette';
 import type { ContentRecording, ContentRecordingPlatform, ContentRecordingType, ContentTag } from '../lib/types';
 import type { ContentRecordingSortKey, ContentRecordingsOverview, SortDirection } from '../lib/api';
 import type { ContentRecordingFormState } from './actions';
@@ -220,6 +229,35 @@ function getXEmbedUrl(link: string): string {
   return `https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&theme=light`;
 }
 
+function isDownloadableRecord(record: Pick<ContentRecording, 'platform' | 'link'>): boolean {
+  try {
+    const url = new URL(record.link);
+    const hostname = url.hostname.toLowerCase();
+
+    if (record.platform === 'youtube') {
+      return hostname === 'youtu.be' || hostname.endsWith('youtube.com');
+    }
+
+    if (record.platform === 'x') {
+      return (
+        (hostname === 'x.com' || hostname.endsWith('.x.com') || hostname === 'twitter.com' || hostname.endsWith('.twitter.com')) &&
+        /\/[^/]+\/status\/\d+/i.test(url.pathname)
+      );
+    }
+
+    if (record.platform === 'Instagram') {
+      return (
+        (hostname === 'instagram.com' || hostname.endsWith('.instagram.com')) &&
+        /\/(p|reel|tv)\//i.test(url.pathname)
+      );
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
+}
+
 function formatDateLabel(value: string): string {
   if (!value) {
     return '-';
@@ -291,19 +329,11 @@ function toForm(record: ContentRecording): ContentRecordingFormState {
 
 function MetricTile({ label, value }: { label: string; value: number }) {
   return (
-    <Box
-      sx={{
-        minWidth: 0,
-        px: { xs: 0, sm: 1.4 },
-        py: 0.1,
-        borderLeft: { sm: `1px solid ${adminPalette.border}` },
-        '&:first-of-type': { pl: 0, borderLeft: 'none' },
-      }}
-    >
-      <Typography sx={{ fontSize: '0.63rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+    <Box sx={adminMetricTileSx}>
+      <Typography sx={adminMetricLabelSx}>
         {label}
       </Typography>
-      <Typography sx={{ mt: 0.4, fontSize: { xs: '1rem', sm: '1.12rem' }, fontWeight: 700, lineHeight: 1, color: adminPalette.brandDark }}>
+      <Typography sx={adminMetricValueSx}>
         {value}
       </Typography>
     </Box>
@@ -312,7 +342,7 @@ function MetricTile({ label, value }: { label: string; value: number }) {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+    <Typography sx={adminSectionLabelSx}>
       {children}
     </Typography>
   );
@@ -580,6 +610,7 @@ export default function ContentRecordingWorkspace({
     tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
+  const [downloadingRecordId, setDownloadingRecordId] = useState<string | null>(null);
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -806,19 +837,67 @@ export default function ContentRecordingWorkspace({
     }
   }
 
+  async function handleDownload(record: ContentRecording) {
+    if (downloadingRecordId) {
+      return;
+    }
+
+    setDownloadingRecordId(record.id);
+    setFlash({ severity: 'info', message: 'Menyiapkan download media...' });
+
+    try {
+      const response = await fetch(`/api/admin/content-recordings/${record.id}/download`);
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || 'Gagal download media.');
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('Content-Disposition') || '';
+      const encodedFileName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)?.[1];
+      const quotedFileName = contentDisposition.match(/filename="([^"]+)"/)?.[1];
+      const fileName = encodedFileName
+        ? decodeURIComponent(encodedFileName)
+        : quotedFileName || `${record.source_post_id || record.id}.mp4`;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setFlash({ severity: 'success', message: 'Download media dimulai.' });
+    } catch (error) {
+      setFlash({
+        severity: 'error',
+        message: error instanceof Error ? error.message : 'Gagal download media.',
+      });
+    } finally {
+      setDownloadingRecordId(null);
+    }
+  }
+
   return (
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
-        <Stack spacing={1.1} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.2, md: 1.35 } }}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
           <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
-              <MetricTile label="Total records" value={overview.totalRecords} />
-              <MetricTile label="Platforms" value={overview.platformCount} />
-              <MetricTile label="This month" value={overview.thisMonthCount} />
-              <MetricTile label="Untagged" value={overview.untaggedCount} />
-            </Stack>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Content Library
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Content Library
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Kelola arsip konten yang sudah dipublikasikan dari berbagai kanal dalam satu tempat.
+              </Typography>
+            </Box>
 
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', lg: 'auto' } }}>
               <Button component={Link} href="/scrape" variant="outlined" startIcon={<UploadFileRoundedIcon />} sx={{ minHeight: 36, borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>
@@ -829,10 +908,17 @@ export default function ContentRecordingWorkspace({
               </Button>
             </Stack>
           </Stack>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
+            <MetricTile label="Total records" value={overview.totalRecords} />
+            <MetricTile label="Platforms" value={overview.platformCount} />
+            <MetricTile label="This month" value={overview.thisMonthCount} />
+            <MetricTile label="Untagged" value={overview.untaggedCount} />
+          </Stack>
         </Stack>
       </Paper>
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+      <Paper elevation={0} sx={adminPanelSx}>
         <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 } }}>
           <TextField
             size="small"
@@ -870,7 +956,7 @@ export default function ContentRecordingWorkspace({
         </Stack>
       </Paper>
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, overflow: 'hidden', backgroundColor: adminPalette.surface }}>
+      <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
           <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Content Library</Typography>
           <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>{totalCount} records total, page {currentPage} of {totalPages}</Typography>
@@ -977,15 +1063,25 @@ export default function ContentRecordingWorkspace({
                     <TableCell>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                         {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {!previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {record.platform !== 'x' && !previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
-                        {xEmbedUrl && !previewUrls.length ? <Chip size="small" label="No X preview" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                        {record.caption && (record.platform === 'x' || previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
                       <Stack direction="row" spacing={0.75} justifyContent="flex-end">
                         <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
+                        {isDownloadableRecord(record) ? (
+                          <Tooltip title={record.platform === 'youtube' ? 'Download YouTube video' : record.platform === 'x' ? 'Download X media' : 'Download Instagram media'} placement="top" arrow>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDownload(record)}
+                              disabled={downloadingRecordId === record.id}
+                            >
+                              <DownloadRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        ) : null}
                         <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
                         <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
                       </Stack>

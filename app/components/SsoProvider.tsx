@@ -29,7 +29,7 @@ const devSsoContext: SsoContextValue = {
   userName: 'Local Developer',
   userEmail: 'dev@local',
   roles: ['admin'],
-  features: ['contacts', 'groups', 'blast', 'ticket', 'whatsapp', 'scrape', 'content-record'],
+  features: ['contacts', 'groups', 'blast', 'ticket', 'whatsapp', 'scrape', 'content-record', 'content-assets'],
   logout: async () => {},
 };
 
@@ -210,7 +210,11 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
   );
 
   if (isLoginPage) {
-    return children;
+    return (
+      <SsoContext.Provider value={contextValue}>
+        {children}
+      </SsoContext.Provider>
+    );
   }
 
   if (error) {

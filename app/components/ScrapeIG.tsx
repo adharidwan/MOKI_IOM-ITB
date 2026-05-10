@@ -30,6 +30,7 @@ interface InstagramPost {
   link: string;
   thumbnail: string;
   media_urls?: string[];
+  owner_username?: string;
   upload_date?: string;
 }
 
@@ -121,7 +122,7 @@ export default function InstagramScraper() {
           platform: "Instagram" as const,
           upload_date: post.upload_date,
           link: post.link,
-          source_post_id: post.id,
+          source_post_id: post.owner_username ? `${post.owner_username}:${post.id}` : post.id,
           thumbnail_url: post.thumbnail,
           media_urls: post.media_urls || [],
         })),

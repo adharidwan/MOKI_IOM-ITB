@@ -67,6 +67,17 @@ const DASHBOARD_ITEMS = [
     buttonVariant: "outlined" as const,
     buttonColor: "#9a6506",
   },
+  {
+    featureKey: "content-assets",
+    title: "Content Assets",
+    description: "Upload dan kelola draft asset image/video per project konten.",
+    href: "/content-assets",
+    buttonLabel: "Buka content assets",
+    backgroundColor: "#f8fafc",
+    borderColor: "rgba(0, 55, 147, 0.16)",
+    buttonVariant: "outlined" as const,
+    buttonColor: "#003793",
+  },
 ];
 
 export default function HomePage() {

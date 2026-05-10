@@ -17,6 +17,7 @@ import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
 
 import { importCsvContactsAction } from '../csv/actions';
 import { adminPalette } from '../lib/adminPalette';
+import { downloadCsvContactTemplate } from '../lib/csv-template';
 
 interface CSVRow {
   no_telp: string;
@@ -190,6 +191,27 @@ export default function CSVDropZone() {
             Upload file CSV dengan kolom: <strong>nomor</strong>, <strong>nama</strong> (opsional).
             Jika nama kosong, sistem akan tetap menyimpan nomor teleponnya.
           </Typography>
+          <Box>
+            <Button
+              type="button"
+              variant="outlined"
+              onClick={() => downloadCsvContactTemplate()}
+              sx={{
+                minHeight: 36,
+                borderRadius: 2,
+                borderColor: adminPalette.borderStrong,
+                color: adminPalette.textSecondary,
+                textTransform: 'none',
+                fontWeight: 700,
+                '&:hover': {
+                  borderColor: adminPalette.brandSoftStrong,
+                  backgroundColor: adminPalette.brandSoft,
+                },
+              }}
+            >
+              Download template CSV
+            </Button>
+          </Box>
         </Stack>
 
         <Paper

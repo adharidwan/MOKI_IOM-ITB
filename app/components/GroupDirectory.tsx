@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
@@ -24,6 +25,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
@@ -32,7 +34,7 @@ import {
 
 import { createGroupMemberAction, createGroupWithFirstMemberAction } from '../group/actions';
 import type { PaginatedContactGroupsResponse, PaginatedGroupMembersResponse } from '../lib/group-directory-server';
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { CsvContact } from '../lib/types';
 
 const GENDER_OPTIONS = ['Laki-laki', 'Perempuan', 'Tidak diketahui'];
@@ -342,7 +344,35 @@ export default function GroupDirectory({
           boxShadow: 'none',
         }}
       >
-        <Stack spacing={1.1} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.2, md: 1.35 } }}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack
+            direction={{ xs: 'column', lg: 'row' }}
+            spacing={1.25}
+            justifyContent="space-between"
+            alignItems={{ xs: 'flex-start', lg: 'center' }}
+          >
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Groups
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Kelola grup penerima
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Pantau grup dan anggota agar segmentasi selalu siap dipakai untuk blast.
+              </Typography>
+            </Box>
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', lg: 'auto' } }}>
+              <Button component={Link} href="/contacts" variant="outlined" sx={QUIET_BUTTON_SX}>
+                Buka direktori kontak
+              </Button>
+              <Button component={Link} href="/blastmessage" variant="contained" sx={PRIMARY_BUTTON_SX}>
+                Buka blast
+              </Button>
+            </Stack>
+          </Stack>
+
           <Stack
             direction={{ xs: 'column', lg: 'row' }}
             spacing={1.25}
@@ -442,9 +472,9 @@ export default function GroupDirectory({
                     },
                   }}
                 >
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                    <TableRow>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentSortBy === 'name'}
                           direction={currentSortBy === 'name' ? currentSortDir : GROUP_SORT_DEFAULTS.name}
@@ -454,7 +484,7 @@ export default function GroupDirectory({
                           Nama grup
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentSortBy === 'memberCount'}
                           direction={currentSortBy === 'memberCount' ? currentSortDir : GROUP_SORT_DEFAULTS.memberCount}
@@ -464,7 +494,7 @@ export default function GroupDirectory({
                           Jumlah anggota
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         Preview
                       </TableCell>
                     </TableRow>
@@ -506,49 +536,30 @@ export default function GroupDirectory({
                 </Table>
               </TableContainer>
 
-              <Stack
-                direction={{ xs: 'column', md: 'row' }}
-                justifyContent="space-between"
-                spacing={1.25}
-                alignItems={{ xs: 'flex-start', md: 'center' }}
-                sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-              >
-                <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                  Menampilkan {groups.items.length} grup pada halaman ini.
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={() =>
-                      updateQuery({
-                        page: String(Math.max(1, groups.page - 1)),
-                        group: null,
-                        memberPage: null,
-                        memberSearch: null,
-                      })
-                    }
-                    disabled={groups.page <= 1}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Sebelumnya
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() =>
-                      updateQuery({
-                        page: String(Math.min(groups.totalPages, groups.page + 1)),
-                        group: null,
-                        memberPage: null,
-                        memberSearch: null,
-                      })
-                    }
-                    disabled={groups.page >= groups.totalPages}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Berikutnya
-                  </Button>
-                </Stack>
-              </Stack>
+              <TablePagination
+                component="div"
+                count={groups.total}
+                page={Math.max(0, groups.page - 1)}
+                rowsPerPage={groups.pageSize}
+                rowsPerPageOptions={[10, 20, 50, 100]}
+                onPageChange={(_, nextPage) =>
+                  updateQuery({
+                    page: String(nextPage + 1),
+                    group: null,
+                    memberPage: null,
+                    memberSearch: null,
+                  })
+                }
+                onRowsPerPageChange={(event) =>
+                  updateQuery({
+                    pageSize: event.target.value,
+                    page: '1',
+                    group: null,
+                    memberPage: null,
+                    memberSearch: null,
+                  })
+                }
+              />
             </>
           )}
         </Paper>
@@ -639,9 +650,9 @@ export default function GroupDirectory({
                     },
                   }}
                 >
-                  <TableHead>
-                    <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                    <TableRow>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentMemberSortBy === 'nama'}
                           direction={currentMemberSortBy === 'nama' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.nama}
@@ -651,7 +662,7 @@ export default function GroupDirectory({
                           Nama
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentMemberSortBy === 'no_telp'}
                           direction={currentMemberSortBy === 'no_telp' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.no_telp}
@@ -661,7 +672,7 @@ export default function GroupDirectory({
                           Nomor WhatsApp
                         </TableSortLabel>
                       </TableCell>
-                      <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                      <TableCell sx={adminTableHeaderCellSx}>
                         <TableSortLabel
                           active={currentMemberSortBy === 'jenis_kelamin'}
                           direction={currentMemberSortBy === 'jenis_kelamin' ? currentMemberSortDir : MEMBER_SORT_DEFAULTS.jenis_kelamin}
@@ -709,35 +720,15 @@ export default function GroupDirectory({
                 </Table>
               </TableContainer>
 
-              <Stack
-                direction={{ xs: 'column', md: 'row' }}
-                justifyContent="space-between"
-                spacing={1.25}
-                alignItems={{ xs: 'flex-start', md: 'center' }}
-                sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-              >
-                <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                  Menampilkan {members.items.length} anggota pada halaman ini.
-                </Typography>
-                <Stack direction="row" spacing={1}>
-                  <Button
-                    variant="outlined"
-                    onClick={() => updateQuery({ memberPage: String(Math.max(1, members.page - 1)) })}
-                    disabled={members.page <= 1}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Sebelumnya
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    onClick={() => updateQuery({ memberPage: String(Math.min(members.totalPages, members.page + 1)) })}
-                    disabled={members.page >= members.totalPages}
-                    sx={QUIET_BUTTON_SX}
-                  >
-                    Berikutnya
-                  </Button>
-                </Stack>
-              </Stack>
+              <TablePagination
+                component="div"
+                count={members.total}
+                page={Math.max(0, members.page - 1)}
+                rowsPerPage={members.pageSize}
+                rowsPerPageOptions={[10, 20, 50, 100]}
+                onPageChange={(_, nextPage) => updateQuery({ memberPage: String(nextPage + 1) })}
+                onRowsPerPageChange={(event) => updateQuery({ memberPageSize: event.target.value, memberPage: '1' })}
+              />
             </>
           )}
         </Paper>

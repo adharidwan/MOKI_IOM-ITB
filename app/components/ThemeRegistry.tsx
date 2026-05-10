@@ -2,12 +2,31 @@
 
 import { CacheProvider } from '@emotion/react';
 import createCache from '@emotion/cache';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { useServerInsertedHTML } from 'next/navigation';
 import { ReactNode, useState } from 'react';
 
 interface ThemeRegistryProps {
   children: ReactNode;
 }
+
+const adminTheme = createTheme({
+  typography: {
+    fontFamily: 'var(--font-geist-sans), sans-serif',
+    fontWeightMedium: 700,
+    fontWeightBold: 800,
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: 'none',
+          fontWeight: 700,
+        },
+      },
+    },
+  },
+});
 
 export default function ThemeRegistry({ children }: ThemeRegistryProps) {
   const [{ cache, flush }] = useState(() => {
@@ -61,5 +80,9 @@ export default function ThemeRegistry({ children }: ThemeRegistryProps) {
     );
   });
 
-  return <CacheProvider value={cache}>{children}</CacheProvider>;
+  return (
+    <CacheProvider value={cache}>
+      <ThemeProvider theme={adminTheme}>{children}</ThemeProvider>
+    </CacheProvider>
+  );
 }

@@ -984,6 +984,7 @@ async function main() {
         instanceContext,
       );
     }
+
   });
 
   client.on('auth_failure', async (message) => {

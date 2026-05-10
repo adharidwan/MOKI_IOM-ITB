@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
-  Button,
   Chip,
   InputAdornment,
   Paper,
@@ -14,6 +13,7 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TableSortLabel,
   TextField,
@@ -22,33 +22,17 @@ import {
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
 import type { TicketStatus, TicketWithReplies } from '../lib/types';
 
 interface TicketTableProps {
   initialData: TicketWithReplies[];
   totalCount: number;
+  pageSize: number;
 }
 
-const PAGE_SIZE = 10;
 type TicketSortKey = 'id' | 'subject' | 'status' | 'updated_at';
 type SortDirection = 'asc' | 'desc';
-
-const QUIET_BUTTON_SX = {
-  minHeight: 34,
-  borderRadius: 2,
-  borderColor: adminPalette.borderStrong,
-  color: adminPalette.textSecondary,
-  backgroundColor: adminPalette.surface,
-  textTransform: 'none',
-  fontWeight: 700,
-  boxShadow: 'none',
-  '&:hover': {
-    borderColor: adminPalette.brandSoftStrong,
-    backgroundColor: adminPalette.brandSoft,
-    boxShadow: 'none',
-  },
-} as const;
 
 const SORT_DEFAULTS: Record<TicketSortKey, SortDirection> = {
   id: 'asc',
@@ -120,7 +104,7 @@ function getStatusTone(status: TicketStatus) {
   };
 }
 
-export default function TicketTable({ initialData, totalCount }: TicketTableProps) {
+export default function TicketTable({ initialData, totalCount, pageSize }: TicketTableProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -129,7 +113,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
   const currentSort = normalizeSortKey(searchParams.get('sort'));
   const currentSortDir = normalizeSortDirection(searchParams.get('sortDir'), SORT_DEFAULTS[currentSort]);
   const currentPage = Number(searchParams.get('page') || '1') || 1;
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const [searchTerm, setSearchTerm] = useState(currentSearch);
 
   useEffect(() => {
@@ -168,9 +152,10 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
     return `Menampilkan ${initialData.length} tiket dari total ${totalCount}.`;
   }, [initialData.length, totalCount]);
 
-  const goToPage = (page: number) => {
+  const updatePagination = (page: number, nextPageSize = pageSize) => {
     const params = new URLSearchParams(currentQuery);
     params.set('page', String(page));
+    params.set('pageSize', String(nextPageSize));
     const nextQuery = params.toString();
     const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : pathname;
     router.replace(nextUrl, { scroll: false });
@@ -253,9 +238,9 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                 },
               }}
             >
-              <TableHead>
-                <TableRow sx={{ backgroundColor: adminPalette.brandDark }}>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+              <TableHead sx={{ backgroundColor: adminPalette.brand }}>
+                <TableRow>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'id'}
                       direction={currentSort === 'id' ? currentSortDir : SORT_DEFAULTS.id}
@@ -265,7 +250,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       ID
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'subject'}
                       direction={currentSort === 'subject' ? currentSortDir : SORT_DEFAULTS.subject}
@@ -275,7 +260,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       Subjek
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'status'}
                       direction={currentSort === 'status' ? currentSortDir : SORT_DEFAULTS.status}
@@ -285,10 +270,10 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       Status
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     Kanal
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     <TableSortLabel
                       active={currentSort === 'updated_at'}
                       direction={currentSort === 'updated_at' ? currentSortDir : SORT_DEFAULTS.updated_at}
@@ -298,7 +283,7 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
                       Update terakhir
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={{ py: 0.8, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.88)' }}>
+                  <TableCell sx={adminTableHeaderCellSx}>
                     Balasan
                   </TableCell>
                 </TableRow>
@@ -361,25 +346,15 @@ export default function TicketTable({ initialData, totalCount }: TicketTableProp
             </Table>
           </TableContainer>
 
-          <Stack
-            direction={{ xs: 'column', md: 'row' }}
-            justifyContent="space-between"
-            spacing={1.25}
-            alignItems={{ xs: 'flex-start', md: 'center' }}
-            sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2 }}
-          >
-            <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-              Klik satu baris untuk membuka detail percakapan tiket.
-            </Typography>
-            <Stack direction="row" spacing={1}>
-              <Button variant="outlined" onClick={() => goToPage(Math.max(1, currentPage - 1))} disabled={currentPage <= 1} sx={QUIET_BUTTON_SX}>
-                Sebelumnya
-              </Button>
-              <Button variant="outlined" onClick={() => goToPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage >= totalPages} sx={QUIET_BUTTON_SX}>
-                Berikutnya
-              </Button>
-            </Stack>
-          </Stack>
+          <TablePagination
+            component="div"
+            count={totalCount}
+            page={Math.max(0, currentPage - 1)}
+            rowsPerPage={pageSize}
+            rowsPerPageOptions={[10, 20, 50, 100]}
+            onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
+            onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
+          />
         </>
       )}
     </Paper>

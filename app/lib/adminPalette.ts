@@ -31,6 +31,54 @@ export const adminPalette = {
   sidebarActive: '#dbeafe',
 } as const;
 
+export const adminTypographySx = {
+  fontFamily: 'var(--font-geist-sans), sans-serif',
+} as const;
+
+export const adminPanelSx = {
+  borderRadius: 2.5,
+  border: `1px solid ${adminPalette.border}`,
+  backgroundColor: adminPalette.surface,
+  boxShadow: 'none',
+} as const;
+
+export const adminSectionLabelSx = {
+  fontSize: '0.72rem',
+  fontWeight: 800,
+  letterSpacing: '0.12em',
+  textTransform: 'uppercase',
+  color: adminPalette.textMuted,
+} as const;
+
+export const adminMetricTileSx = {
+  minWidth: 0,
+  px: { xs: 0, sm: 1.4 },
+  py: 0.1,
+  borderLeft: { sm: `1px solid ${adminPalette.border}` },
+  '&:first-of-type': { pl: 0, borderLeft: 'none' },
+} as const;
+
+export const adminMetricLabelSx = {
+  fontSize: '0.63rem',
+  fontWeight: 700,
+  letterSpacing: '0.1em',
+  textTransform: 'uppercase',
+  color: adminPalette.textMuted,
+} as const;
+
+export const adminMetricValueSx = {
+  mt: 0.4,
+  fontSize: { xs: '1rem', sm: '1.12rem' },
+  fontWeight: 700,
+  lineHeight: 1,
+  color: adminPalette.brandDark,
+} as const;
+
+export const adminTableHeaderCellSx = {
+  color: '#ffffff',
+  fontWeight: 800,
+} as const;
+
 export const adminTableSortLabelSx = {
   color: 'inherit',
   borderRadius: 999,

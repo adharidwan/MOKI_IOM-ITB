@@ -41,7 +41,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV YT_DLP_PATH=/usr/bin/yt-dlp
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends yt-dlp \
+    && apt-get install -y --no-install-recommends python3 python3-pip ca-certificates \
+    && pip3 install --break-system-packages --no-cache-dir -U yt-dlp \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder --chown=pwuser:pwuser /app/.next/standalone ./
 COPY --from=builder --chown=pwuser:pwuser /app/.next/static ./.next/static
