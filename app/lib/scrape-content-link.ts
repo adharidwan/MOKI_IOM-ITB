@@ -397,7 +397,7 @@ async function scrapeYoutubeLink(link: string): Promise<ScrapedContentDraft> {
 }
 
 async function scrapeBrowserMetadata(link: string): Promise<BrowserMetadata> {
-  const browser = await chromium.launch(getPlaywrightLaunchOptions());
+  const browser = await chromium.launch(await getPlaywrightLaunchOptions());
   const context = await browser.newContext({
     userAgent: USER_AGENT,
     viewport: { width: 1366, height: 900 },

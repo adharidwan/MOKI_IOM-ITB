@@ -1,6 +1,12 @@
 "use server";
 
+import { getPlaywrightLaunchOptions } from "./chromium-path";
+import { scrapeContentFromLink } from "./scrape-content-link";
+
 const SCRAPE_ERROR_MESSAGE = "Gagal mengambil data Instagram saat ini.";
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+const INSTAGRAM_PROFILE_MAX_POSTS = 12;
 
 interface InstagramPost {
   id: string;
@@ -24,9 +30,249 @@ const INSTAGRAM_MEDIA_INFO_API = "https://i.instagram.com/api/v1/media/";
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
 function normalizeUsername(rawUsername: string): string {
-  return String(rawUsername || "")
-    .trim()
-    .replace(/^@/, "");
+  return cleanText(rawUsername).replace(/^@/, "");
+}
+
+function cleanText(value: string | null | undefined): string {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pickFirstNonEmpty(
+  ...values: Array<string | null | undefined>
+): string {
+  return (
+    values.map((value) => cleanText(value)).find((value) => value.length > 0) ||
+    ""
+  );
+}
+
+function extractInstagramShortcode(link: string): string {
+  const candidate = cleanText(link);
+  if (!candidate) {
+    return "";
+  }
+
+  let url: URL | null = null;
+  try {
+    url = new URL(candidate);
+  } catch {
+    try {
+      url = new URL(`https://${candidate}`);
+    } catch {
+      url = null;
+    }
+  }
+
+  if (!url) {
+    return "";
+  }
+
+  const pathSegments = url.pathname.split("/").filter(Boolean);
+  const marker = pathSegments.findIndex((segment) =>
+    ["p", "reel", "tv"].includes(segment),
+  );
+
+  if (marker === -1) {
+    return "";
+  }
+
+  return cleanText(pathSegments[marker + 1] || "");
+}
+
+async function loadPlaywrightChromium(): Promise<any> {
+  const loader = new Function('return import("playwright-core")');
+  const module = await loader();
+  return module.chromium;
+}
+
+async function scrapeInstagramProfileLinks(
+  username: string,
+): Promise<string[]> {
+  const profileUrl = `https://www.instagram.com/${username}/`;
+  console.log(`[IG scrape] Starting profile link extraction for ${username}`);
+
+  const chromium = await loadPlaywrightChromium();
+  const browser = await chromium.launch(await getPlaywrightLaunchOptions());
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    viewport: { width: 1366, height: 900 },
+    locale: "id-ID",
+    timezoneId: "Asia/Jakarta",
+    extraHTTPHeaders: {
+      "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      Accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "sec-ch-ua":
+        '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+    },
+  });
+  const page = await context.newPage();
+
+  try {
+    console.log(`[IG scrape] Navigating to ${profileUrl}`);
+    await page.goto(profileUrl, {
+      waitUntil: "networkidle",
+      timeout: 60000,
+    });
+    console.log(`[IG scrape] Page loaded, waiting for DOM to settle`);
+    await page.waitForTimeout(4000);
+
+    const debugInfo = await page.evaluate(() => {
+      return {
+        url: window.location.href,
+        title: document.title,
+        bodySnippet: document.body.innerHTML.slice(0, 800),
+        allAnchors: Array.from(document.querySelectorAll("a[href]"))
+          .slice(0, 20)
+          .map((a) => a.getAttribute("href")),
+        hasLoginForm: !!document.querySelector('input[name="username"]'),
+        hasPostLinks: !!document.querySelector(
+          'a[href*="/p/"], a[href*="/reel/"]',
+        ),
+      };
+    });
+    console.log(
+      "[IG scrape] Page debug info:",
+      JSON.stringify(debugInfo, null, 2),
+    );
+
+    if (
+      debugInfo.title.includes("couldn't load") ||
+      debugInfo.title === "Instagram"
+    ) {
+      console.warn(
+        "[IG scrape] Page failed to load properly, retrying after delay...",
+      );
+      await page.waitForTimeout(3000);
+      await page.reload({ waitUntil: "networkidle", timeout: 60000 });
+      await page.waitForTimeout(4000);
+
+      // Re-check setelah reload
+      const retryTitle = await page.title();
+      console.log(`[IG scrape] After retry, title: ${retryTitle}`);
+    }
+
+    return await page.evaluate(() => {
+      const seen = new Set<string>();
+      const anchors = Array.from(
+        document.querySelectorAll(
+          'a[href*="/p/"], a[href*="/reel/"], a[href*="/tv/"]',
+        ),
+      );
+
+      const results = anchors
+        .map((anchor) => {
+          const href = anchor.getAttribute("href") || "";
+
+          try {
+            return href.startsWith("http")
+              ? href
+              : new URL(href, window.location.origin).toString();
+          } catch {
+            return "";
+          }
+        })
+        .filter((href) => {
+          if (!href || seen.has(href)) {
+            return false;
+          }
+
+          seen.add(href);
+          return true;
+        })
+        .slice(0, 12);
+
+      console.log(
+        `[IG scrape] Found ${anchors.length} total post links, ${results.length} unique`,
+      );
+      return results;
+    });
+  } catch (error) {
+    console.error(
+      `[IG scrape] Profile link extraction failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    throw error;
+  } finally {
+    await context.close();
+    await browser.close();
+  }
+}
+
+async function scrapeInstagramPostsFromPlaywright(
+  username: string,
+): Promise<InstagramPost[]> {
+  try {
+    const links = await scrapeInstagramProfileLinks(username);
+    console.log(
+      `[IG scrape] Retrieved ${links.length} profile links for ${username}`,
+    );
+
+    if (links.length === 0) {
+      console.warn(`[IG scrape] No post links found in profile ${username}`);
+      return [];
+    }
+
+    const results = await Promise.allSettled(
+      links.slice(0, INSTAGRAM_PROFILE_MAX_POSTS).map(async (link, index) => {
+        console.log(
+          `[IG scrape] Processing post ${index + 1}/${links.length}: ${link}`,
+        );
+        const scraped = await scrapeContentFromLink(link);
+        const shortcode =
+          extractInstagramShortcode(scraped.link || link) || `ig-${index}`;
+        const mediaUrls = normalizeMediaUrls([
+          ...(scraped.media_urls || []),
+          scraped.thumbnail_url,
+        ]);
+
+        return {
+          id: cleanText(scraped.source_post_id || shortcode),
+          title: pickFirstNonEmpty(
+            scraped.caption,
+            scraped.title,
+            `Instagram Post ${index + 1}`,
+          ),
+          link: cleanText(scraped.link || link),
+          thumbnail: mediaUrls[0] || cleanText(scraped.thumbnail_url || ""),
+          media_urls: mediaUrls,
+          upload_date: cleanText(scraped.upload_date || ""),
+        } as InstagramPost;
+      }),
+    );
+
+    const fulfilled = results.filter(
+      (result): result is PromiseFulfilledResult<InstagramPost> =>
+        result.status === "fulfilled",
+    );
+    const rejected = results.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    if (rejected.length > 0) {
+      console.warn(
+        `[IG scrape] ${rejected.length} posts failed to scrape:`,
+        rejected.map((r) =>
+          r.reason instanceof Error ? r.reason.message : String(r.reason),
+        ),
+      );
+    }
+
+    const posts = fulfilled
+      .map((result) => result.value)
+      .filter((item) => item.link.startsWith("http"));
+
+    console.log(`[IG scrape] Successfully scraped ${posts.length} posts`);
+    return posts;
+  } catch (error) {
+    console.error(
+      `[IG scrape] Playwright scrape error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    throw error;
+  }
 }
 
 function decodeXmlEntities(value: string): string {
@@ -59,7 +305,9 @@ function toIsoDate(value: string | number | undefined): string {
   return "";
 }
 
-function normalizeMediaUrls(values: string[]): string[] {
+function normalizeMediaUrls(
+  values: Array<string | null | undefined>,
+): string[] {
   const byUrl = new Map<string, string>();
 
   values.forEach((value) => {
@@ -116,7 +364,9 @@ function pickInstagramImageUrl(value: unknown): string {
 
   const candidates = record.image_versions2?.candidates || [];
   const sortedCandidates = [...candidates].sort(
-    (left, right) => (right.width || 0) * (right.height || 0) - (left.width || 0) * (left.height || 0),
+    (left, right) =>
+      (right.width || 0) * (right.height || 0) -
+      (left.width || 0) * (left.height || 0),
   );
 
   return String(
@@ -232,7 +482,9 @@ function parseXmlItems(xml: string): InstagramPost[] {
     .filter((item) => item.link.startsWith("http"));
 }
 
-async function parseInstagramProfilePosts(payload: unknown, ownerUsername: string): Promise<InstagramPost[]> {
+async function parseInstagramProfilePosts(
+  payload: unknown,
+): Promise<InstagramPost[]> {
   if (!payload || typeof payload !== "object") {
     return [];
   }
@@ -285,7 +537,13 @@ async function parseInstagramProfilePosts(payload: unknown, ownerUsername: strin
       ).trim();
       const mediaUrls = normalizeMediaUrls(
         (node?.edge_sidecar_to_children?.edges || [])
-          .map((child) => child.node?.display_url || child.node?.thumbnail_src || child.node?.video_url || "")
+          .map(
+            (child) =>
+              child.node?.display_url ||
+              child.node?.thumbnail_src ||
+              child.node?.video_url ||
+              "",
+          )
           .concat(thumbnail),
       );
       const uploadDate = toIsoDate(node?.taken_at_timestamp);
@@ -307,8 +565,13 @@ async function parseInstagramProfilePosts(payload: unknown, ownerUsername: strin
 
   return Promise.all(
     posts.map(async (post) => {
-      const shortcode = post.link.match(/\/(p|reel|tv)\/([^/?#]+)/i)?.[2] || post.id;
-      const mediaUrls = await fetchPostMediaUrls(post.id, shortcode, post.media_urls.length ? post.media_urls : [post.thumbnail]);
+      const shortcode =
+        post.link.match(/\/(p|reel|tv)\/([^/?#]+)/i)?.[2] || post.id;
+      const mediaUrls = await fetchPostMediaUrls(
+        post.id,
+        shortcode,
+        post.media_urls.length ? post.media_urls : [post.thumbnail],
+      );
 
       return {
         ...post,
@@ -408,34 +671,55 @@ export async function scrape_ig(username: string) {
   const normalizedUsername = normalizeUsername(username);
 
   if (!normalizedUsername) {
+    console.warn("[IG scrape] Empty username provided");
     return { error: "Username Instagram wajib diisi." };
   }
 
-  try {
-    const posts = await fetchProfilePosts(normalizedUsername);
-    return { channel: `@${normalizedUsername}`, videos: posts };
-  } catch (profileError) {
-    console.warn("[IG scrape] profile API failed, falling back to RSS", {
-      username: normalizedUsername,
-      message:
-        profileError instanceof Error
-          ? profileError.message
-          : String(profileError),
-    });
+  console.log(
+    `[IG scrape] Starting scrape for username: ${normalizedUsername}`,
+  );
 
-    try {
-      const xml = await fetchFeedXml(normalizedUsername);
-      const posts = parseXmlItems(xml).map((post) => ({
-        ...post,
-        owner_username: normalizedUsername,
-      }));
+  // Strategi 1: RSS feed (tidak butuh login)
+  try {
+    console.log(`[IG scrape] Trying RSS feed...`);
+    const xml = await fetchFeedXml(normalizedUsername);
+    const posts = parseXmlItems(xml);
+    console.log(`[IG scrape] RSS feed success: ${posts.length} posts`);
+    if (posts.length > 0) {
       return { channel: `@${normalizedUsername}`, videos: posts };
-    } catch (feedError) {
-      console.error(
-        "Scrape IG feed error:",
-        feedError instanceof Error ? feedError.message : String(feedError),
-      );
-      return { error: SCRAPE_ERROR_MESSAGE };
     }
+    console.warn(`[IG scrape] RSS returned 0 items, trying API...`);
+  } catch (rssError) {
+    console.warn(
+      `[IG scrape] RSS feed failed:`,
+      rssError instanceof Error ? rssError.message : String(rssError),
+    );
+  }
+
+  // Strategi 2: Instagram Profile API
+  try {
+    console.log(`[IG scrape] Trying Instagram Profile API...`);
+    const posts = await fetchProfilePosts(normalizedUsername);
+    console.log(`[IG scrape] Profile API success: ${posts.length} posts`);
+    return { channel: `@${normalizedUsername}`, videos: posts };
+  } catch (apiError) {
+    console.warn(
+      `[IG scrape] Profile API failed:`,
+      apiError instanceof Error ? apiError.message : String(apiError),
+    );
+  }
+
+  // Strategi 3: Playwright (last resort, kemungkinan besar kena login wall)
+  try {
+    console.log(`[IG scrape] Trying Playwright as last resort...`);
+    const posts = await scrapeInstagramPostsFromPlaywright(normalizedUsername);
+    console.log(`[IG scrape] Playwright success: ${posts.length} posts`);
+    return { channel: `@${normalizedUsername}`, videos: posts };
+  } catch (scrapeError) {
+    console.error(
+      `[IG scrape] All strategies failed:`,
+      scrapeError instanceof Error ? scrapeError.message : String(scrapeError),
+    );
+    return { error: SCRAPE_ERROR_MESSAGE };
   }
 }
