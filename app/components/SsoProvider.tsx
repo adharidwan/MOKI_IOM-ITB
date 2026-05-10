@@ -210,7 +210,11 @@ function AuthenticatedSsoProvider({ children }: { children: React.ReactNode }) {
   );
 
   if (isLoginPage) {
-    return children;
+    return (
+      <SsoContext.Provider value={contextValue}>
+        {children}
+      </SsoContext.Provider>
+    );
   }
 
   if (error) {
