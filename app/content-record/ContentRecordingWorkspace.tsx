@@ -11,6 +11,7 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import ImageNotSupportedRoundedIcon from '@mui/icons-material/ImageNotSupportedRounded';
 import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
@@ -226,6 +227,35 @@ function getXEmbedUrl(link: string): string {
   }
 
   return `https://platform.twitter.com/embed/Tweet.html?id=${match[1]}&theme=light`;
+}
+
+function isDownloadableRecord(record: Pick<ContentRecording, 'platform' | 'link'>): boolean {
+  try {
+    const url = new URL(record.link);
+    const hostname = url.hostname.toLowerCase();
+
+    if (record.platform === 'youtube') {
+      return hostname === 'youtu.be' || hostname.endsWith('youtube.com');
+    }
+
+    if (record.platform === 'x') {
+      return (
+        (hostname === 'x.com' || hostname.endsWith('.x.com') || hostname === 'twitter.com' || hostname.endsWith('.twitter.com')) &&
+        /\/[^/]+\/status\/\d+/i.test(url.pathname)
+      );
+    }
+
+    if (record.platform === 'Instagram') {
+      return (
+        (hostname === 'instagram.com' || hostname.endsWith('.instagram.com')) &&
+        /\/(p|reel|tv)\//i.test(url.pathname)
+      );
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 function formatDateLabel(value: string): string {
@@ -580,6 +610,7 @@ export default function ContentRecordingWorkspace({
     tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
+  const [downloadingRecordId, setDownloadingRecordId] = useState<string | null>(null);
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -806,6 +837,49 @@ export default function ContentRecordingWorkspace({
     }
   }
 
+  async function handleDownload(record: ContentRecording) {
+    if (downloadingRecordId) {
+      return;
+    }
+
+    setDownloadingRecordId(record.id);
+    setFlash({ severity: 'info', message: 'Menyiapkan download media...' });
+
+    try {
+      const response = await fetch(`/api/admin/content-recordings/${record.id}/download`);
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string } | null;
+        throw new Error(payload?.error || 'Gagal download media.');
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('Content-Disposition') || '';
+      const encodedFileName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)?.[1];
+      const quotedFileName = contentDisposition.match(/filename="([^"]+)"/)?.[1];
+      const fileName = encodedFileName
+        ? decodeURIComponent(encodedFileName)
+        : quotedFileName || `${record.source_post_id || record.id}.mp4`;
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setFlash({ severity: 'success', message: 'Download media dimulai.' });
+    } catch (error) {
+      setFlash({
+        severity: 'error',
+        message: error instanceof Error ? error.message : 'Gagal download media.',
+      });
+    } finally {
+      setDownloadingRecordId(null);
+    }
+  }
+
   return (
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
@@ -989,15 +1063,25 @@ export default function ContentRecordingWorkspace({
                     <TableCell>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                         {!record.caption ? <Chip size="small" label="No caption" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {!previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
+                        {record.platform !== 'x' && !previewUrls.length && !instagramEmbedUrl && !xEmbedUrl ? <Chip size="small" label="No thumbnail" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
                         {previewUrls.length > 1 ? <Chip size="small" label={`${previewUrls.length} media`} sx={{ color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} /> : null}
-                        {xEmbedUrl && !previewUrls.length ? <Chip size="small" label="No X preview" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} /> : null}
-                        {record.caption && (previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
+                        {record.caption && (record.platform === 'x' || previewUrls.length || instagramEmbedUrl) ? <Chip size="small" label="Complete" sx={{ color: adminPalette.successText, backgroundColor: adminPalette.successBg }} /> : null}
                       </Stack>
                     </TableCell>
                     <TableCell align="right">
                       <Stack direction="row" spacing={0.75} justifyContent="flex-end">
                         <IconButton component={Link} href={record.link} target="_blank" rel="noopener noreferrer" size="small"><OpenInNewRoundedIcon fontSize="small" /></IconButton>
+                        {isDownloadableRecord(record) ? (
+                          <Tooltip title={record.platform === 'youtube' ? 'Download YouTube video' : record.platform === 'x' ? 'Download X media' : 'Download Instagram media'} placement="top" arrow>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDownload(record)}
+                              disabled={downloadingRecordId === record.id}
+                            >
+                              <DownloadRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        ) : null}
                         <IconButton size="small" onClick={() => openEditDrawer(record)}><EditRoundedIcon fontSize="small" /></IconButton>
                         <IconButton size="small" color="error" onClick={() => setDeleteTarget(record)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>
                       </Stack>

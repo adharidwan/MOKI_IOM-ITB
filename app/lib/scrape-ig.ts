@@ -8,6 +8,7 @@ interface InstagramPost {
   link: string;
   thumbnail: string;
   media_urls: string[];
+  owner_username?: string;
   upload_date?: string;
 }
 
@@ -20,6 +21,7 @@ const FEED_URL_BUILDERS = [
 const INSTAGRAM_PROFILE_API =
   "https://i.instagram.com/api/v1/users/web_profile_info/";
 const INSTAGRAM_MEDIA_INFO_API = "https://i.instagram.com/api/v1/media/";
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
 
 function normalizeUsername(rawUsername: string): string {
   return String(rawUsername || "")
@@ -70,6 +72,34 @@ function normalizeMediaUrls(values: string[]): string[] {
   return Array.from(byUrl.values());
 }
 
+function getCookieValue(cookie: string, key: string): string {
+  return (
+    cookie
+      .split(";")
+      .map((entry) => entry.trim())
+      .find((entry) => entry.startsWith(`${key}=`))
+      ?.slice(key.length + 1) || ""
+  );
+}
+
+function getInstagramHeaders(referer: string): HeadersInit {
+  const cookie = String(process.env.INSTAGRAM_COOKIE || "").trim();
+  const csrfToken = getCookieValue(cookie, "csrftoken");
+
+  return {
+    Accept: "application/json",
+    "User-Agent": USER_AGENT,
+    "x-ig-app-id": "936619743392459",
+    ...(csrfToken ? { "x-csrftoken": csrfToken } : {}),
+    ...(cookie ? { Cookie: cookie } : {}),
+    Referer: referer,
+    Origin: "https://www.instagram.com",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+  };
+}
+
 function pickInstagramImageUrl(value: unknown): string {
   if (!value || typeof value !== "object") {
     return "";
@@ -90,10 +120,10 @@ function pickInstagramImageUrl(value: unknown): string {
   );
 
   return String(
-    sortedCandidates[0]?.url ||
+    record.video_versions?.[0]?.url ||
+      sortedCandidates[0]?.url ||
       record.display_url ||
       record.thumbnail_src ||
-      record.video_versions?.[0]?.url ||
       "",
   ).trim();
 }
@@ -139,16 +169,7 @@ async function fetchPostMediaUrls(
 
   try {
     const response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "x-ig-app-id": "936619743392459",
-        Referer: `https://www.instagram.com/p/${shortcode}/`,
-        Origin: "https://www.instagram.com",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-      },
+      headers: getInstagramHeaders(`https://www.instagram.com/p/${shortcode}/`),
       cache: "no-store",
     });
 
@@ -211,7 +232,7 @@ function parseXmlItems(xml: string): InstagramPost[] {
     .filter((item) => item.link.startsWith("http"));
 }
 
-async function parseInstagramProfilePosts(payload: unknown): Promise<InstagramPost[]> {
+async function parseInstagramProfilePosts(payload: unknown, ownerUsername: string): Promise<InstagramPost[]> {
   if (!payload || typeof payload !== "object") {
     return [];
   }
@@ -293,6 +314,7 @@ async function parseInstagramProfilePosts(payload: unknown): Promise<InstagramPo
         ...post,
         thumbnail: mediaUrls[0] || post.thumbnail,
         media_urls: mediaUrls,
+        owner_username: ownerUsername,
       };
     }),
   );
@@ -305,16 +327,7 @@ async function fetchProfilePosts(username: string): Promise<InstagramPost[]> {
   let response: Response;
   try {
     response = await fetch(url, {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "x-ig-app-id": "936619743392459",
-        Referer: referer,
-        Origin: "https://www.instagram.com",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-      },
+      headers: getInstagramHeaders(referer),
       cache: "no-store",
     });
   } catch (error) {
@@ -337,7 +350,7 @@ async function fetchProfilePosts(username: string): Promise<InstagramPost[]> {
   }
 
   const payload = await response.json();
-  const posts = await parseInstagramProfilePosts(payload);
+  const posts = await parseInstagramProfilePosts(payload, username);
 
   if (posts.length === 0) {
     throw new Error(
@@ -412,7 +425,10 @@ export async function scrape_ig(username: string) {
 
     try {
       const xml = await fetchFeedXml(normalizedUsername);
-      const posts = parseXmlItems(xml);
+      const posts = parseXmlItems(xml).map((post) => ({
+        ...post,
+        owner_username: normalizedUsername,
+      }));
       return { channel: `@${normalizedUsername}`, videos: posts };
     } catch (feedError) {
       console.error(
