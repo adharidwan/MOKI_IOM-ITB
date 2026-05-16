@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import AdminNotificationCenter from "./components/AdminNotificationCenter";
+import DownloadProvider from "./components/DownloadProvider";
 import OutboundTrackerOverlay from "./components/OutboundTrackerOverlay";
 import ThemeRegistry from "./components/ThemeRegistry";
 import SsoProvider from "./components/SsoProvider";
@@ -33,8 +34,10 @@ export default function RootLayout({
       >
         <ThemeRegistry>
           <SsoProvider>
-            <AdminNotificationCenter />
-            {children}
+            <DownloadProvider>
+              <AdminNotificationCenter />
+              {children}
+            </DownloadProvider>
           </SsoProvider>
           <OutboundTrackerOverlay />
         </ThemeRegistry>

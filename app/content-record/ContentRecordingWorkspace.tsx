@@ -1,7 +1,7 @@
 'use client';
 
 import type { ClipboardEvent } from 'react';
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
@@ -64,6 +64,7 @@ import {
   scrapeContentRecordingAction,
   saveContentRecordingAction,
 } from './actions';
+import { useDownloadManager } from '../components/DownloadProvider';
 
 interface WorkspaceProps {
   recordings: ContentRecording[];
@@ -595,6 +596,7 @@ export default function ContentRecordingWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { activeDownloadId, startContentRecordingDownload } = useDownloadManager();
   const [form, setForm] = useState<ContentRecordingFormState>(() => createEmptyForm());
   const [selectedTags, setSelectedTags] = useState<TagOption[]>([]);
   const [tagOptions, setTagOptions] = useState<TagOption[]>(tags);
@@ -610,8 +612,6 @@ export default function ContentRecordingWorkspace({
     tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
-  const [downloadingRecordId, setDownloadingRecordId] = useState<string | null>(null);
-  const downloadAbortControllerRef = useRef<AbortController | null>(null);
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -626,12 +626,6 @@ export default function ContentRecordingWorkspace({
   useEffect(() => {
     setTagOptions(tags);
   }, [tags]);
-
-  useEffect(() => {
-    return () => {
-      downloadAbortControllerRef.current?.abort();
-    };
-  }, []);
 
   useEffect(() => {
     setFilters({
@@ -844,88 +838,9 @@ export default function ContentRecordingWorkspace({
     }
   }
 
-  function cancelDownload() {
-    downloadAbortControllerRef.current?.abort();
-    downloadAbortControllerRef.current = null;
-    setDownloadingRecordId(null);
-    setFlash({ severity: 'info', message: 'Download media dibatalkan.' });
-  }
-
-  async function handleDownload(record: ContentRecording) {
-    if (downloadingRecordId) {
-      return;
-    }
-
-    const abortController = new AbortController();
-    downloadAbortControllerRef.current = abortController;
-    setDownloadingRecordId(record.id);
-    setFlash({ severity: 'info', message: 'Menyiapkan download media...' });
-
-    try {
-      const response = await fetch(`/api/admin/content-recordings/${record.id}/download`, {
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(payload?.error || 'Gagal download media.');
-      }
-
-      const blob = await response.blob();
-      const contentDisposition = response.headers.get('Content-Disposition') || '';
-      const encodedFileName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)?.[1];
-      const quotedFileName = contentDisposition.match(/filename="([^"]+)"/)?.[1];
-      const fileName = encodedFileName
-        ? decodeURIComponent(encodedFileName)
-        : quotedFileName || `${record.source_post_id || record.id}.mp4`;
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-
-      link.href = objectUrl;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(objectUrl);
-      setFlash({ severity: 'success', message: 'Download media dimulai.' });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return;
-      }
-
-      setFlash({
-        severity: 'error',
-        message: error instanceof Error ? error.message : 'Gagal download media.',
-      });
-    } finally {
-      if (downloadAbortControllerRef.current === abortController) {
-        downloadAbortControllerRef.current = null;
-        setDownloadingRecordId(null);
-      }
-    }
-  }
-
   return (
     <Stack spacing={1.25}>
-      {flash ? (
-        <Alert
-          severity={flash.severity}
-          action={downloadingRecordId ? (
-            <Tooltip title="Batalkan download" placement="left" arrow>
-              <IconButton
-                aria-label="Batalkan download"
-                color="inherit"
-                size="small"
-                onClick={cancelDownload}
-              >
-                <CloseRoundedIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          ) : undefined}
-        >
-          {flash.message}
-        </Alert>
-      ) : null}
+      {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
 
       <Paper elevation={0} sx={adminPanelSx}>
         <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
@@ -1118,8 +1033,13 @@ export default function ContentRecordingWorkspace({
                           <Tooltip title={record.platform === 'youtube' ? 'Download YouTube video' : record.platform === 'x' ? 'Download X media' : 'Download Instagram media'} placement="top" arrow>
                             <IconButton
                               size="small"
-                              onClick={() => handleDownload(record)}
-                              disabled={Boolean(downloadingRecordId)}
+                              onClick={() => {
+                                void startContentRecordingDownload({
+                                  id: record.id,
+                                  fallbackFileName: `${record.source_post_id || record.id}.mp4`,
+                                });
+                              }}
+                              disabled={Boolean(activeDownloadId)}
                             >
                               <DownloadRoundedIcon fontSize="small" />
                             </IconButton>
