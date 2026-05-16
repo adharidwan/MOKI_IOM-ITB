@@ -1,7 +1,7 @@
 'use client';
 
 import type { ClipboardEvent } from 'react';
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
@@ -611,6 +611,7 @@ export default function ContentRecordingWorkspace({
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
   const [downloadingRecordId, setDownloadingRecordId] = useState<string | null>(null);
+  const downloadAbortControllerRef = useRef<AbortController | null>(null);
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -625,6 +626,12 @@ export default function ContentRecordingWorkspace({
   useEffect(() => {
     setTagOptions(tags);
   }, [tags]);
+
+  useEffect(() => {
+    return () => {
+      downloadAbortControllerRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     setFilters({
@@ -837,16 +844,27 @@ export default function ContentRecordingWorkspace({
     }
   }
 
+  function cancelDownload() {
+    downloadAbortControllerRef.current?.abort();
+    downloadAbortControllerRef.current = null;
+    setDownloadingRecordId(null);
+    setFlash({ severity: 'info', message: 'Download media dibatalkan.' });
+  }
+
   async function handleDownload(record: ContentRecording) {
     if (downloadingRecordId) {
       return;
     }
 
+    const abortController = new AbortController();
+    downloadAbortControllerRef.current = abortController;
     setDownloadingRecordId(record.id);
     setFlash({ severity: 'info', message: 'Menyiapkan download media...' });
 
     try {
-      const response = await fetch(`/api/admin/content-recordings/${record.id}/download`);
+      const response = await fetch(`/api/admin/content-recordings/${record.id}/download`, {
+        signal: abortController.signal,
+      });
 
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
@@ -871,18 +889,43 @@ export default function ContentRecordingWorkspace({
       URL.revokeObjectURL(objectUrl);
       setFlash({ severity: 'success', message: 'Download media dimulai.' });
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+
       setFlash({
         severity: 'error',
         message: error instanceof Error ? error.message : 'Gagal download media.',
       });
     } finally {
-      setDownloadingRecordId(null);
+      if (downloadAbortControllerRef.current === abortController) {
+        downloadAbortControllerRef.current = null;
+        setDownloadingRecordId(null);
+      }
     }
   }
 
   return (
     <Stack spacing={1.25}>
-      {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
+      {flash ? (
+        <Alert
+          severity={flash.severity}
+          action={downloadingRecordId ? (
+            <Tooltip title="Batalkan download" placement="left" arrow>
+              <IconButton
+                aria-label="Batalkan download"
+                color="inherit"
+                size="small"
+                onClick={cancelDownload}
+              >
+                <CloseRoundedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ) : undefined}
+        >
+          {flash.message}
+        </Alert>
+      ) : null}
 
       <Paper elevation={0} sx={adminPanelSx}>
         <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
@@ -1076,7 +1119,7 @@ export default function ContentRecordingWorkspace({
                             <IconButton
                               size="small"
                               onClick={() => handleDownload(record)}
-                              disabled={downloadingRecordId === record.id}
+                              disabled={Boolean(downloadingRecordId)}
                             >
                               <DownloadRoundedIcon fontSize="small" />
                             </IconButton>
