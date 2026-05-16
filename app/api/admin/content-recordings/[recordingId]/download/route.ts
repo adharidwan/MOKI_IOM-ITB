@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import fs from 'fs';
-import { mkdir, readdir, readFile, rm, stat } from 'fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, stat } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { Readable } from 'stream';
@@ -37,6 +38,31 @@ const INSTAGRAM_FEED_URL_BUILDERS = [
 const INSTAGRAM_MEDIA_INFO_API = 'https://i.instagram.com/api/v1/media/';
 const INSTAGRAM_SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 const X_TWEET_SYNDICATION_API = 'https://cdn.syndication.twimg.com/widgets/tweet';
+const X_GRAPHQL_TWEET_RESULT_API = 'https://x.com/i/api/graphql/2ICDjqPd81tulZcYrtpTuQ/TweetResultByRestId';
+const X_GRAPHQL_BEARER_TOKEN = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
+const X_YT_DLP_COOKIES_PATH = String(process.env.X_YT_DLP_COOKIES_PATH || '').trim();
+const X_YT_DLP_TEMP_COOKIES_FILE_NAME = 'x-yt-dlp-cookies.txt';
+const X_GRAPHQL_FEATURES = {
+  creator_subscriptions_tweet_preview_api_enabled: true,
+  tweetypie_unmention_optimization_enabled: true,
+  responsive_web_edit_tweet_api_enabled: true,
+  graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+  view_counts_everywhere_api_enabled: true,
+  longform_notetweets_consumption_enabled: true,
+  responsive_web_twitter_article_tweet_consumption_enabled: false,
+  tweet_awards_web_tipping_enabled: false,
+  freedom_of_speech_not_reach_fetch_enabled: true,
+  standardized_nudges_misinfo: true,
+  tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+  longform_notetweets_rich_text_read_enabled: true,
+  longform_notetweets_inline_media_enabled: true,
+  responsive_web_graphql_exclude_directive_enabled: true,
+  verified_phone_label_enabled: false,
+  responsive_web_media_download_video_enabled: false,
+  responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+  responsive_web_graphql_timeline_navigation_enabled: true,
+  responsive_web_enhance_cards_enabled: false,
+};
 
 function resolveYtDlpBinaryPath(): string {
   return YT_DLP_CANDIDATE_PATHS.find((candidate) => candidate && fs.existsSync(candidate)) || 'yt-dlp';
@@ -60,6 +86,32 @@ function getCookieValue(cookie: string, key: string): string {
       .find((entry) => entry.startsWith(`${key}=`))
       ?.slice(key.length + 1) || ''
   );
+}
+
+function parseNetscapeCookieFile(value: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .forEach((line) => {
+      const parts = line.split('\t');
+      const name = parts[5];
+      const cookieValue = parts.slice(6).join('\t');
+
+      if (name && cookieValue) {
+        cookies[name] = cookieValue;
+      }
+    });
+
+  return cookies;
+}
+
+function buildCookieHeader(cookies: Record<string, string>): string {
+  return Object.entries(cookies)
+    .map(([name, value]) => `${name}=${value}`)
+    .join('; ');
 }
 
 function getInstagramHeaders(referer: string, accept = 'application/json'): HeadersInit {
@@ -465,7 +517,12 @@ function extensionFromUrl(rawUrl: string): string {
     : '';
 }
 
-function getYtDlpArgs(platform: ContentRecordingPlatform, link: string, outputTemplate: string): string[] {
+function getYtDlpArgs(
+  platform: ContentRecordingPlatform,
+  link: string,
+  outputTemplate: string,
+  cookiesPath = '',
+): string[] {
   const baseArgs = [
     link,
     '--no-warnings',
@@ -493,6 +550,7 @@ function getYtDlpArgs(platform: ContentRecordingPlatform, link: string, outputTe
       '--no-playlist',
       '--referer',
       'https://x.com/',
+      ...(cookiesPath ? ['--cookies', cookiesPath] : []),
       '--format',
       'best',
     ];
@@ -501,9 +559,14 @@ function getYtDlpArgs(platform: ContentRecordingPlatform, link: string, outputTe
   return baseArgs;
 }
 
-function runYtDlpDownload(platform: ContentRecordingPlatform, link: string, outputTemplate: string): Promise<void> {
+function runYtDlpDownload(
+  platform: ContentRecordingPlatform,
+  link: string,
+  outputTemplate: string,
+  cookiesPath = '',
+): Promise<void> {
   const command = resolveYtDlpBinaryPath();
-  const child = spawn(command, getYtDlpArgs(platform, link, outputTemplate), {
+  const child = spawn(command, getYtDlpArgs(platform, link, outputTemplate, cookiesPath), {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -561,11 +624,46 @@ function ensureUniqueName(fileName: string, usedNames: Set<string>): string {
 
 async function listDownloadedFiles(tempDir: string): Promise<string[]> {
   const entries = await readdir(tempDir);
-  const files = entries
-    .filter((entry) => !entry.endsWith('.part') && !entry.endsWith('.ytdl'))
-    .map((entry) => path.join(tempDir, entry));
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    if (
+      entry === X_YT_DLP_TEMP_COOKIES_FILE_NAME ||
+      entry.endsWith('.part') ||
+      entry.endsWith('.ytdl')
+    ) {
+      continue;
+    }
+
+    const filePath = path.join(tempDir, entry);
+    const fileStats = await stat(filePath);
+
+    if (fileStats.isFile()) {
+      files.push(filePath);
+    }
+  }
 
   return files.sort((left, right) => left.localeCompare(right));
+}
+
+async function removeDuplicateDownloadedFiles(files: string[]): Promise<string[]> {
+  const byHash = new Set<string>();
+  const uniqueFiles: string[] = [];
+
+  for (const filePath of files) {
+    const data = await readFile(filePath);
+    const hash = createHash('sha256').update(data).digest('hex');
+
+    if (byHash.has(hash)) {
+      await rm(filePath, { force: true });
+      continue;
+    }
+
+    byHash.add(hash);
+    uniqueFiles.push(filePath);
+  }
+
+  return uniqueFiles;
 }
 
 async function downloadFallbackMediaUrls(
@@ -606,6 +704,38 @@ async function downloadFallbackMediaUrls(
 
 function normalizeMediaUrls(values: Array<string | null | undefined>): string[] {
   return Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function normalizeXMediaIdentity(rawUrl: string): string {
+  const url = tryParseUrl(rawUrl);
+  if (!url) {
+    return rawUrl;
+  }
+
+  if (url.hostname.toLowerCase() !== 'pbs.twimg.com' || !url.pathname.startsWith('/media/')) {
+    return rawUrl;
+  }
+
+  const mediaId = url.pathname
+    .slice('/media/'.length)
+    .replace(/\.(jpg|jpeg|png|webp|gif)$/i, '');
+
+  return `${url.hostname.toLowerCase()}/media/${mediaId}`;
+}
+
+function normalizeXMediaUrls(values: Array<string | null | undefined>): string[] {
+  const byIdentity = new Map<string, string>();
+
+  values.forEach((value) => {
+    const rawUrl = String(value || '').trim();
+    if (!rawUrl) {
+      return;
+    }
+
+    byIdentity.set(normalizeXMediaIdentity(rawUrl), rawUrl);
+  });
+
+  return Array.from(byIdentity.values());
 }
 
 function extractXmlTagValues(xml: string, pattern: RegExp): string[] {
@@ -669,6 +799,87 @@ function parseXMediaUrlsFromSyndication(payload: unknown): string[] {
     ...(record.photos || []).map((photo) => photo.url),
     record.video?.poster,
   ]);
+}
+
+function collectXPhotoUrlsFromGraphqlPayload(value: unknown): string[] {
+  const urls: string[] = [];
+
+  function visit(entry: unknown) {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+
+    if (Array.isArray(entry)) {
+      entry.forEach(visit);
+      return;
+    }
+
+    const record = entry as Record<string, unknown>;
+    const mediaUrl = typeof record.media_url_https === 'string'
+      ? record.media_url_https
+      : typeof record.media_url === 'string'
+        ? record.media_url
+        : '';
+
+    if (record.type === 'photo' && /^https?:\/\/pbs\.twimg\.com\/media\//i.test(mediaUrl)) {
+      urls.push(mediaUrl.includes('?') ? mediaUrl : `${mediaUrl}?name=orig`);
+    }
+
+    Object.values(record).forEach(visit);
+  }
+
+  visit(value);
+
+  return normalizeXMediaUrls(urls);
+}
+
+async function fetchXPhotoUrlsFromGraphql(statusId: string, cookiesPath: string): Promise<string[]> {
+  if (!statusId || !cookiesPath) {
+    return [];
+  }
+
+  try {
+    const cookies = parseNetscapeCookieFile(await readFile(cookiesPath, 'utf8'));
+    const csrfToken = cookies.ct0 || '';
+    const cookieHeader = buildCookieHeader(cookies);
+
+    if (!csrfToken || !cookieHeader) {
+      return [];
+    }
+
+    const url = new URL(X_GRAPHQL_TWEET_RESULT_API);
+    url.searchParams.set('variables', JSON.stringify({
+      tweetId: statusId,
+      withCommunity: false,
+      includePromotedContent: false,
+      withVoice: false,
+    }));
+    url.searchParams.set('features', JSON.stringify(X_GRAPHQL_FEATURES));
+    url.searchParams.set('fieldToggles', JSON.stringify({ withArticleRichContentState: false }));
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${X_GRAPHQL_BEARER_TOKEN}`,
+        Cookie: cookieHeader,
+        Referer: 'https://x.com/',
+        'User-Agent': USER_AGENT,
+        'x-csrf-token': csrfToken,
+        'x-twitter-active-user': 'yes',
+        'x-twitter-auth-type': 'OAuth2Session',
+        'x-twitter-client-language': 'en',
+      },
+      cache: 'no-store',
+    }).catch(() => null);
+
+    if (!response?.ok) {
+      return [];
+    }
+
+    return collectXPhotoUrlsFromGraphqlPayload(await response.json().catch(() => null));
+  } catch {
+    return [];
+  }
 }
 
 async function fetchXMediaUrlsFromSyndication(statusId: string): Promise<string[]> {
@@ -761,12 +972,22 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     await mkdir(tempDir, { recursive: true });
 
     const downloadLink = await normalizeDownloadLink(recording.platform, recording.link, recording.source_post_id);
+    let xYtDlpCookiesPath = '';
 
     if (recording.platform === 'youtube' || recording.platform === 'x') {
+      xYtDlpCookiesPath = recording.platform === 'x' && X_YT_DLP_COOKIES_PATH
+        ? path.join(tempDir, X_YT_DLP_TEMP_COOKIES_FILE_NAME)
+        : '';
+
+      if (xYtDlpCookiesPath) {
+        await copyFile(X_YT_DLP_COOKIES_PATH, xYtDlpCookiesPath);
+      }
+
       await runYtDlpDownload(
         recording.platform,
         downloadLink,
         path.join(tempDir, 'media.%(ext)s'),
+        xYtDlpCookiesPath,
       ).catch((error) => {
         if (recording.platform === 'youtube') {
           throw error;
@@ -778,10 +999,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     if (!files.length && recording.platform === 'x') {
       const statusId = extractXStatusId(downloadLink);
       const username = extractXUsername(recording.link) || extractXUsername(downloadLink);
+      const graphqlPhotoUrls = await fetchXPhotoUrlsFromGraphql(statusId, xYtDlpCookiesPath);
       const syndicationMediaUrls = await fetchXMediaUrlsFromSyndication(statusId);
       const feedMediaUrls = await fetchXMediaUrlsFromFeeds(username, statusId);
       files = await downloadFallbackMediaUrls(
-        [...syndicationMediaUrls, ...feedMediaUrls, ...(recording.media_urls || [])],
+        normalizeXMediaUrls([...graphqlPhotoUrls, ...syndicationMediaUrls, ...feedMediaUrls, ...(recording.media_urls || [])]),
         tempDir,
         'https://x.com/',
       );
@@ -811,6 +1033,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
         'gambar',
       );
     }
+
+    files = await removeDuplicateDownloadedFiles(files);
 
     if (!files.length) {
       throw new Error(
