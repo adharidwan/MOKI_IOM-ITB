@@ -1000,10 +1000,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
       const statusId = extractXStatusId(downloadLink);
       const username = extractXUsername(recording.link) || extractXUsername(downloadLink);
       const graphqlPhotoUrls = await fetchXPhotoUrlsFromGraphql(statusId, xYtDlpCookiesPath);
-      const syndicationMediaUrls = await fetchXMediaUrlsFromSyndication(statusId);
-      const feedMediaUrls = await fetchXMediaUrlsFromFeeds(username, statusId);
+      const fallbackMediaUrls = graphqlPhotoUrls.length
+        ? graphqlPhotoUrls
+        : [
+            ...await fetchXMediaUrlsFromSyndication(statusId),
+            ...await fetchXMediaUrlsFromFeeds(username, statusId),
+            ...(recording.media_urls || []),
+          ];
+
       files = await downloadFallbackMediaUrls(
-        normalizeXMediaUrls([...graphqlPhotoUrls, ...syndicationMediaUrls, ...feedMediaUrls, ...(recording.media_urls || [])]),
+        normalizeXMediaUrls(fallbackMediaUrls),
         tempDir,
         'https://x.com/',
       );
