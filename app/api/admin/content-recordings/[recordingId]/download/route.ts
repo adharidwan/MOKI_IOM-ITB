@@ -36,6 +36,7 @@ const INSTAGRAM_FEED_URL_BUILDERS = [
 ];
 const INSTAGRAM_MEDIA_INFO_API = 'https://i.instagram.com/api/v1/media/';
 const INSTAGRAM_SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+const X_TWEET_SYNDICATION_API = 'https://cdn.syndication.twimg.com/widgets/tweet';
 
 function resolveYtDlpBinaryPath(): string {
   return YT_DLP_CANDIDATE_PATHS.find((candidate) => candidate && fs.existsSync(candidate)) || 'yt-dlp';
@@ -110,6 +111,11 @@ function extractXStatusId(rawUrl: string): string {
   const url = tryParseUrl(rawUrl);
   const match = url?.pathname.match(/\/[^/]+\/status\/(\d+)/i);
   return match?.[1] || '';
+}
+
+function extractXStatusIdFromSourcePostId(value: string | null | undefined): string {
+  const match = String(value || '').match(/\d{10,}/);
+  return match?.[0] || '';
 }
 
 function extractXUsername(rawUrl: string): string {
@@ -392,7 +398,11 @@ async function resolveRedirectUrl(rawUrl: string): Promise<string> {
   return currentUrl;
 }
 
-async function normalizeDownloadLink(platform: ContentRecordingPlatform, rawUrl: string): Promise<string> {
+async function normalizeDownloadLink(
+  platform: ContentRecordingPlatform,
+  rawUrl: string,
+  sourcePostId?: string | null,
+): Promise<string> {
   if (isSupportedPlatformUrl(platform, rawUrl)) {
     return rawUrl;
   }
@@ -400,6 +410,17 @@ async function normalizeDownloadLink(platform: ContentRecordingPlatform, rawUrl:
   const resolvedUrl = await resolveRedirectUrl(rawUrl);
   if (isSupportedPlatformUrl(platform, resolvedUrl)) {
     return resolvedUrl;
+  }
+
+  if (platform === 'x') {
+    const statusId =
+      extractXStatusId(rawUrl) ||
+      extractXStatusId(resolvedUrl) ||
+      extractXStatusIdFromSourcePostId(sourcePostId);
+
+    if (statusId) {
+      return `https://x.com/i/status/${statusId}`;
+    }
   }
 
   const label = platform === 'youtube' ? 'YouTube' : platform === 'x' ? 'X/Twitter' : 'Instagram';
@@ -634,6 +655,43 @@ async function fetchXMediaUrlsFromFeeds(username: string, statusId: string): Pro
   return [];
 }
 
+function parseXMediaUrlsFromSyndication(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const record = payload as {
+    photos?: Array<{ url?: string }>;
+    video?: { poster?: string };
+  };
+
+  return normalizeMediaUrls([
+    ...(record.photos || []).map((photo) => photo.url),
+    record.video?.poster,
+  ]);
+}
+
+async function fetchXMediaUrlsFromSyndication(statusId: string): Promise<string[]> {
+  if (!statusId) {
+    return [];
+  }
+
+  const response = await fetch(`${X_TWEET_SYNDICATION_API}?id=${encodeURIComponent(statusId)}`, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': USER_AGENT,
+      Referer: 'https://platform.twitter.com/',
+    },
+    cache: 'no-store',
+  }).catch(() => null);
+
+  if (!response?.ok) {
+    return [];
+  }
+
+  return parseXMediaUrlsFromSyndication(await response.json().catch(() => null));
+}
+
 async function fetchInstagramMediaUrlsFromFeeds(username: string, shortcode: string): Promise<string[]> {
   if (!username || !shortcode) {
     return [];
@@ -702,21 +760,31 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     tempDir = path.join(os.tmpdir(), 'content-recording-downloads', crypto.randomUUID());
     await mkdir(tempDir, { recursive: true });
 
-    const downloadLink = await normalizeDownloadLink(recording.platform, recording.link);
+    const downloadLink = await normalizeDownloadLink(recording.platform, recording.link, recording.source_post_id);
 
-    if (recording.platform === 'youtube') {
+    if (recording.platform === 'youtube' || recording.platform === 'x') {
       await runYtDlpDownload(
         recording.platform,
         downloadLink,
         path.join(tempDir, 'media.%(ext)s'),
-      );
+      ).catch((error) => {
+        if (recording.platform === 'youtube') {
+          throw error;
+        }
+      });
     }
 
     let files = await listDownloadedFiles(tempDir);
     if (!files.length && recording.platform === 'x') {
       const statusId = extractXStatusId(downloadLink);
-      const feedMediaUrls = await fetchXMediaUrlsFromFeeds(extractXUsername(downloadLink), statusId);
-      files = await downloadFallbackMediaUrls(feedMediaUrls, tempDir, 'https://x.com/');
+      const username = extractXUsername(recording.link) || extractXUsername(downloadLink);
+      const syndicationMediaUrls = await fetchXMediaUrlsFromSyndication(statusId);
+      const feedMediaUrls = await fetchXMediaUrlsFromFeeds(username, statusId);
+      files = await downloadFallbackMediaUrls(
+        [...syndicationMediaUrls, ...feedMediaUrls, ...(recording.media_urls || [])],
+        tempDir,
+        'https://x.com/',
+      );
     }
 
     if (!files.length && recording.platform === 'Instagram') {
