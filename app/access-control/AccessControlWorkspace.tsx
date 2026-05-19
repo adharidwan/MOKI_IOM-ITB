@@ -1,19 +1,24 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
+import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
+import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
+import HelpOutlineRoundedIcon from "@mui/icons-material/HelpOutlineRounded";
+import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 import {
   Alert,
   Box,
   Button,
   Chip,
   FormControlLabel,
+  IconButton,
   Paper,
   Stack,
   Switch,
+  Tooltip,
   Typography,
 } from "@mui/material";
-import AdminPanelSettingsRoundedIcon from "@mui/icons-material/AdminPanelSettingsRounded";
-import SaveRoundedIcon from "@mui/icons-material/SaveRounded";
 
 import { adminPalette } from "../lib/adminPalette";
 import type { FeatureKey, ManagedAccessUser } from "../lib/access-control";
@@ -115,16 +120,27 @@ export default function AccessControlWorkspace({ initialUsers, features }: Acces
         }}
       >
         <Stack spacing={1.25} sx={{ p: { xs: 1.5, md: 2 } }}>
-          <Stack direction="row" spacing={1} alignItems="center">
-            <AdminPanelSettingsRoundedIcon sx={{ color: adminPalette.brand }} />
-            <Box>
-              <Typography sx={{ fontSize: "1rem", fontWeight: 800, color: adminPalette.textPrimary }}>
-                Daftar akun SSO
-              </Typography>
-              <Typography sx={{ mt: 0.25, fontSize: "0.84rem", color: adminPalette.textSecondary }}>
-                Admin selalu memiliki semua akses. Akun non-admin hanya mendapat fitur yang dicentang.
-              </Typography>
-            </Box>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <AdminPanelSettingsRoundedIcon sx={{ color: adminPalette.brand }} />
+              <Box>
+                <Typography sx={{ fontSize: "1rem", fontWeight: 800, color: adminPalette.textPrimary }}>
+                  Detail akses akun
+                </Typography>
+                <Typography sx={{ mt: 0.25, fontSize: "0.84rem", color: adminPalette.textSecondary }}>
+                  Admin selalu memiliki semua akses. Akun non-admin hanya mendapat fitur yang dicentang.
+                </Typography>
+              </Box>
+            </Stack>
+            <Button
+              component={Link}
+              href="/access-control"
+              variant="outlined"
+              startIcon={<ArrowBackRoundedIcon />}
+              sx={{ borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: "none", fontWeight: 800 }}
+            >
+              Kembali ke dashboard
+            </Button>
           </Stack>
         </Stack>
       </Paper>
@@ -212,11 +228,18 @@ export default function AccessControlWorkspace({ initialUsers, features }: Acces
                           }
                           label={
                             <Box>
-                              <Typography sx={{ fontSize: "0.9rem", fontWeight: 800, color: adminPalette.textPrimary }}>
-                                {featureByKey.get(feature.key)?.label || feature.label}
-                              </Typography>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <Typography sx={{ fontSize: "0.9rem", fontWeight: 800, color: adminPalette.textPrimary }}>
+                                  {featureByKey.get(feature.key)?.label || feature.label}
+                                </Typography>
+                                <Tooltip title={feature.description} placement="top" arrow>
+                                  <IconButton size="small" aria-label={`Info ${feature.label}`} sx={{ width: 22, height: 22, color: adminPalette.textMuted }}>
+                                    <HelpOutlineRoundedIcon sx={{ fontSize: 16 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              </Stack>
                               <Typography sx={{ fontSize: "0.76rem", color: adminPalette.textSecondary }}>
-                                {feature.description}
+                                {enabled ? "Toggle aktif: akun dapat membuka fitur ini." : "Toggle nonaktif: akun akan diarahkan ke access denied untuk fitur ini."}
                               </Typography>
                             </Box>
                           }
