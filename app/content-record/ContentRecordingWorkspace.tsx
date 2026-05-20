@@ -9,7 +9,6 @@ import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
 import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
@@ -116,7 +115,7 @@ const SORT_LABELS: Record<ContentRecordingSortKey, string> = {
   platform: 'Platform',
   content_type: 'Type',
   upload_date: 'Date Uploaded',
-  created_at: 'Created',
+  created_at: 'Added',
   updated_at: 'Updated',
 };
 
@@ -286,10 +285,6 @@ function formatContentTypeLabel(value: ContentRecordingType | null | ''): string
   }
 
   return CONTENT_TYPE_OPTIONS.find((option) => option.value === value)?.label || value;
-}
-
-function formatDisplayId(value: number | null | undefined): string {
-  return value ? String(value) : '-';
 }
 
 function normalizeTagOption(option: TagOption | string): TagOption {
@@ -824,20 +819,6 @@ export default function ContentRecordingWorkspace({
     });
   }
 
-  async function copyUniqueId(id: number | null | undefined) {
-    const value = id ? String(id) : '';
-    if (!value) {
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(value);
-      setFlash({ severity: 'success', message: 'Unique ID copied.' });
-    } catch {
-      setFlash({ severity: 'error', message: 'Gagal menyalin Unique ID.' });
-    }
-  }
-
   return (
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity}>{flash.message}</Alert> : null}
@@ -921,7 +902,7 @@ export default function ContentRecordingWorkspace({
         </Box>
 
         <TableContainer sx={{ overflowX: 'auto' }}>
-          <Table size="small" sx={{ minWidth: 1280 }}>
+          <Table size="small" sx={{ minWidth: 1360 }}>
             <TableHead sx={{ backgroundColor: adminPalette.brand }}>
               <TableRow>
                 <TableCell sx={{ width: 132, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
@@ -932,7 +913,12 @@ export default function ContentRecordingWorkspace({
                     </TableSortLabel>
                   </TableCell>
                 ))}
-                <TableCell align="center" sx={{ color: '#ffffff', fontWeight: 800 }}>Unique ID</TableCell>
+                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>
+                  <TableSortLabel active={currentSortBy === 'created_at'} direction={currentSortBy === 'created_at' ? currentSortDir : 'asc'} onClick={() => handleSortChange('created_at')} sx={adminTableSortLabelSx}>
+                    {SORT_LABELS.created_at}
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell align="center" sx={{ width: 92, color: '#ffffff', fontWeight: 800 }}>ID</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Metadata</TableCell>
                 <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Actions</TableCell>
@@ -941,16 +927,17 @@ export default function ContentRecordingWorkspace({
             <TableBody>
               {recordings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} sx={{ py: 6, textAlign: 'center' }}>
+                  <TableCell colSpan={10} sx={{ py: 6, textAlign: 'center' }}>
                     <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{totalCount === 0 ? 'Belum ada konten yang tercatat.' : 'Tidak ada konten yang cocok.'}</Typography>
                     <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>{totalCount === 0 ? 'Tambahkan konten manual atau import dari workflow channel.' : 'Coba ubah pencarian atau hapus filter aktif.'}</Typography>
                   </TableCell>
                 </TableRow>
-              ) : recordings.map((record) => {
+              ) : recordings.map((record, index) => {
                 const hiddenTags = record.tags.slice(VISIBLE_TAG_LIMIT);
                 const previewUrls = getPreviewUrls(record);
                 const instagramEmbedUrl = record.platform === 'Instagram' ? getInstagramEmbedUrl(record.link) : '';
                 const xEmbedUrl = record.platform === 'x' ? getXEmbedUrl(record.link) : '';
+                const frontendDisplayId = ((currentPage - 1) * pageSize) + index + 1;
 
                 return (
                   <TableRow key={record.id} hover>
@@ -975,29 +962,19 @@ export default function ContentRecordingWorkspace({
                     <TableCell><Chip size="small" label={formatPlatformLabel(record.platform)} sx={{ fontWeight: 700, color: adminPalette.brand, backgroundColor: adminPalette.brandSoft }} /></TableCell>
                     <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
                     <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
-                    <TableCell align="center" sx={{ maxWidth: 230 }}>
-                      <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="center" sx={{ minWidth: 0 }}>
-                        <Typography
-                          title={formatDisplayId(record.display_id)}
-                          sx={{
-                            minWidth: 0,
-                            color: adminPalette.textSecondary,
-                            fontFamily: 'var(--font-geist-mono), monospace',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                          }}
-                        >
-                          {formatDisplayId(record.display_id)}
-                        </Typography>
-                        <Tooltip title="Copy Unique ID" placement="top" arrow>
-                          <IconButton size="small" onClick={() => copyUniqueId(record.display_id)} sx={{ color: adminPalette.textMuted }}>
-                            <ContentCopyRoundedIcon sx={{ fontSize: 15 }} />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
+                    <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.created_at)}</TableCell>
+                    <TableCell align="center">
+                      <Typography
+                        title={`Content nomor ${frontendDisplayId}`}
+                        sx={{
+                          color: adminPalette.textSecondary,
+                          fontFamily: 'var(--font-geist-mono), monospace',
+                          fontSize: '0.78rem',
+                          fontWeight: 800,
+                        }}
+                      >
+                        {frontendDisplayId}
+                      </Typography>
                     </TableCell>
                     <TableCell sx={{ maxWidth: 220 }}>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
