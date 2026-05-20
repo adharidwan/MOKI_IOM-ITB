@@ -22,13 +22,20 @@ import {
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
 
-import { adminPalette } from '../lib/adminPalette';
+import {
+  adminMetricLabelSx,
+  adminMetricTileSx,
+  adminMetricValueSx,
+  adminPalette,
+  adminPanelSx,
+} from '../lib/adminPalette';
 import type { ManagedContentTag } from '../lib/content-tags';
 import { deleteUnusedContentTagAction } from './actions';
 
@@ -73,9 +80,24 @@ function UsageChip({ label, value }: { label: string; value: number }) {
   );
 }
 
+function MetricTile({ label, value }: { label: string; value: number }) {
+  return (
+    <Box sx={adminMetricTileSx}>
+      <Typography sx={adminMetricLabelSx}>
+        {label}
+      </Typography>
+      <Typography sx={adminMetricValueSx}>
+        {value}
+      </Typography>
+    </Box>
+  );
+}
+
 export default function ContentTagsWorkspace({ tags, initialLoadError }: ContentTagsWorkspaceProps) {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
   const [flash, setFlash] = useState<FlashState>(
     initialLoadError ? { severity: 'warning', message: initialLoadError } : null,
   );
@@ -92,6 +114,11 @@ export default function ContentTagsWorkspace({ tags, initialLoadError }: Content
   }, [search, tags]);
 
   const unusedCount = tags.filter((tag) => tag.total_usage_count === 0).length;
+  const usedCount = tags.length - unusedCount;
+  const libraryUsageCount = tags.filter((tag) => tag.library_usage_count > 0).length;
+  const assetUsageCount = tags.filter((tag) => tag.asset_project_usage_count > 0 || tag.asset_usage_count > 0).length;
+  const safePage = Math.min(page, Math.max(Math.ceil(filteredTags.length / rowsPerPage) - 1, 0));
+  const paginatedTags = filteredTags.slice(safePage * rowsPerPage, safePage * rowsPerPage + rowsPerPage);
 
   function handleDelete() {
     if (!deleteTarget) {
@@ -117,16 +144,39 @@ export default function ContentTagsWorkspace({ tags, initialLoadError }: Content
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity} onClose={() => setFlash(null)}>{flash.message}</Alert> : null}
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
-        <Stack spacing={1.3} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.5} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Box>
+            <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+              Content Tags
+            </Typography>
+            <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+              Content Tags
+            </Typography>
+            <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+              Kelola daftar tag yang dipakai di Content Library dan Content Assets.
+            </Typography>
+          </Box>
+
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
-            <Chip size="small" label={`${tags.length} tags`} sx={{ fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} />
-            <Chip size="small" label={`${unusedCount} unused`} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }} />
+            <MetricTile label="Total tags" value={tags.length} />
+            <MetricTile label="Used tags" value={usedCount} />
+            <MetricTile label="Unused" value={unusedCount} />
+            <MetricTile label="Library" value={libraryUsageCount} />
+            <MetricTile label="Assets" value={assetUsageCount} />
           </Stack>
+        </Stack>
+      </Paper>
+
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.3} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
           <TextField
             size="small"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(0);
+            }}
             placeholder="Search tag"
             sx={{ maxWidth: { md: 420 } }}
             InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon sx={{ color: adminPalette.textMuted }} /></InputAdornment> }}
@@ -134,10 +184,10 @@ export default function ContentTagsWorkspace({ tags, initialLoadError }: Content
         </Stack>
       </Paper>
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, overflow: 'hidden', backgroundColor: adminPalette.surface }}>
+      <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
           <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Tags</Typography>
-          <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>{filteredTags.length} tags shown.</Typography>
+          <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>{filteredTags.length} tags total, page {safePage + 1} of {Math.max(Math.ceil(filteredTags.length / rowsPerPage), 1)}</Typography>
         </Box>
 
         <TableContainer sx={{ overflowX: 'auto' }}>
@@ -158,7 +208,7 @@ export default function ContentTagsWorkspace({ tags, initialLoadError }: Content
                     <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Coba ubah pencarian tag.</Typography>
                   </TableCell>
                 </TableRow>
-              ) : filteredTags.map((tag) => (
+              ) : paginatedTags.map((tag) => (
                 <TableRow key={tag.id} hover>
                   <TableCell>
                     <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>{tag.name}</Typography>
@@ -187,6 +237,18 @@ export default function ContentTagsWorkspace({ tags, initialLoadError }: Content
             </TableBody>
           </Table>
         </TableContainer>
+        <TablePagination
+          component="div"
+          count={filteredTags.length}
+          page={safePage}
+          rowsPerPage={rowsPerPage}
+          rowsPerPageOptions={[10, 20, 50, 100]}
+          onPageChange={(_, nextPage) => setPage(nextPage)}
+          onRowsPerPageChange={(event) => {
+            setRowsPerPage(Number(event.target.value));
+            setPage(0);
+          }}
+        />
       </Paper>
 
       <Dialog open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
