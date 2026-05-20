@@ -49,6 +49,8 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    volumes:
+      - ./secret/x.com_cookies.txt:/app/secrets/x-cookies.txt:ro
 
   bot:
     build:

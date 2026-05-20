@@ -51,3 +51,6 @@ supabase/*
 
 # cache
 .cache/
+
+# X cookies
+x.com_cookies.txt
