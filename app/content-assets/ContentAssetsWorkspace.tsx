@@ -36,7 +36,15 @@ import {
   Typography,
 } from '@mui/material';
 
-import { adminPalette, adminTableSortLabelSx } from '../lib/adminPalette';
+import {
+  adminMetricLabelSx,
+  adminMetricTileSx,
+  adminMetricValueSx,
+  adminPalette,
+  adminPanelSx,
+  adminTableHeaderCellSx,
+  adminTableSortLabelSx,
+} from '../lib/adminPalette';
 import type { ContentAsset, ContentAssetProject, ContentTag } from '../lib/types';
 import {
   createContentAssetProjectAction,
@@ -67,7 +75,15 @@ interface TagOption {
 }
 
 const VISIBLE_TAG_LIMIT = 2;
-const CONTENT_TAG_SX = { height: 22, borderRadius: 1.75, fontSize: '0.71rem', fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft };
+const CONTENT_TAG_SX = {
+  height: 22,
+  borderRadius: 1.75,
+  backgroundColor: adminPalette.brandSoft,
+  color: adminPalette.brandDark,
+  border: `1px solid ${adminPalette.brandSoftStrong}`,
+  fontSize: '0.71rem',
+  fontWeight: 600,
+} as const;
 const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
   tooltip: {
     sx: {
@@ -177,19 +193,11 @@ function formatBytes(value: number): string {
 
 function MetricTile({ label, value }: { label: string; value: number | string }) {
   return (
-    <Box
-      sx={{
-        minWidth: 0,
-        px: { xs: 0, sm: 1.4 },
-        py: 0.1,
-        borderLeft: { sm: `1px solid ${adminPalette.border}` },
-        '&:first-of-type': { pl: 0, borderLeft: 'none' },
-      }}
-    >
-      <Typography sx={{ fontSize: '0.63rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+    <Box sx={adminMetricTileSx}>
+      <Typography sx={adminMetricLabelSx}>
         {label}
       </Typography>
-      <Typography sx={{ mt: 0.4, fontSize: { xs: '1rem', sm: '1.12rem' }, fontWeight: 700, lineHeight: 1, color: adminPalette.brandDark }}>
+      <Typography sx={adminMetricValueSx}>
         {value}
       </Typography>
     </Box>
@@ -388,15 +396,20 @@ export default function ContentAssetsWorkspace({
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity} onClose={() => setFlash(null)}>{flash.message}</Alert> : null}
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, boxShadow: 'none' }}>
-        <Stack spacing={1.5} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
-          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: 'stretch', lg: 'center' }}>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
-              <MetricTile label="Projects" value={projects.length} />
-              <MetricTile label="Assets" value={totalAssets} />
-              <MetricTile label="Images" value={totalImages} />
-              <MetricTile label="Videos" value={totalVideos} />
-            </Stack>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Asset Drafting
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Content Assets
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Init project asset, lalu kelola kumpulan file image/video di halaman detail project.
+              </Typography>
+            </Box>
           </Stack>
 
           <Box component="form" action={handleCreateProject}>
@@ -408,11 +421,18 @@ export default function ContentAssetsWorkspace({
               </Button>
             </Stack>
           </Box>
+
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
+            <MetricTile label="Projects" value={projects.length} />
+            <MetricTile label="Assets" value={totalAssets} />
+            <MetricTile label="Images" value={totalImages} />
+            <MetricTile label="Videos" value={totalVideos} />
+          </Stack>
         </Stack>
       </Paper>
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, overflow: 'hidden', backgroundColor: adminPalette.surface }}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 }, borderBottom: `1px solid ${adminPalette.border}` }}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 } }}>
           <TextField
             size="small"
             value={filters.search}
@@ -445,6 +465,9 @@ export default function ContentAssetsWorkspace({
           />
           {[currentSearch, currentAssetFilter].filter(Boolean).length + currentTagIds.length > 0 ? <Button onClick={clearFilters} sx={{ color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>Clear filters</Button> : null}
         </Stack>
+      </Paper>
+
+      <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
           <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Asset Projects</Typography>
           <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>Klik project untuk membuka detail dan upload kumpulan asset.</Typography>
@@ -454,17 +477,17 @@ export default function ContentAssetsWorkspace({
           <Table size="small" sx={{ minWidth: 980 }}>
             <TableHead sx={{ backgroundColor: adminPalette.brand }}>
               <TableRow>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Project</TableCell>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Assets</TableCell>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Created By</TableCell>
-                <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>
+                <TableCell sx={adminTableHeaderCellSx}>Preview</TableCell>
+                <TableCell sx={adminTableHeaderCellSx}>Project</TableCell>
+                <TableCell sx={adminTableHeaderCellSx}>Tags</TableCell>
+                <TableCell sx={adminTableHeaderCellSx}>Assets</TableCell>
+                <TableCell sx={adminTableHeaderCellSx}>Created By</TableCell>
+                <TableCell sx={adminTableHeaderCellSx}>
                   <TableSortLabel active direction={currentSortDir} onClick={handleSortLatestAsset} sx={adminTableSortLabelSx}>
                     Latest Asset
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Action</TableCell>
+                <TableCell align="right" sx={adminTableHeaderCellSx}>Action</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>

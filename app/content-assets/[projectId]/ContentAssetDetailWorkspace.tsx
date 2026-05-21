@@ -32,7 +32,13 @@ import {
   Typography,
 } from '@mui/material';
 
-import { adminPalette } from '../../lib/adminPalette';
+import {
+  adminMetricLabelSx,
+  adminMetricTileSx,
+  adminMetricValueSx,
+  adminPalette,
+  adminPanelSx,
+} from '../../lib/adminPalette';
 import type { ContentAsset, ContentAssetProject, ContentTag } from '../../lib/types';
 import {
   deleteContentAssetAction,
@@ -61,7 +67,15 @@ interface TagOption {
   isNew?: boolean;
 }
 
-const CONTENT_TAG_SX = { height: 22, borderRadius: 1.75, fontSize: '0.71rem', fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft };
+const CONTENT_TAG_SX = {
+  height: 22,
+  borderRadius: 1.75,
+  backgroundColor: adminPalette.brandSoft,
+  color: adminPalette.brandDark,
+  border: `1px solid ${adminPalette.brandSoftStrong}`,
+  fontSize: '0.71rem',
+  fontWeight: 600,
+} as const;
 const VISIBLE_TAG_LIMIT = 2;
 const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
   tooltip: {
@@ -180,19 +194,11 @@ function formatSelectedFiles(files: readonly File[]): string {
 
 function MetricTile({ label, value }: { label: string; value: number | string }) {
   return (
-    <Box
-      sx={{
-        minWidth: 0,
-        px: { xs: 0, sm: 1.4 },
-        py: 0.1,
-        borderLeft: { sm: `1px solid ${adminPalette.border}` },
-        '&:first-of-type': { pl: 0, borderLeft: 'none' },
-      }}
-    >
-      <Typography sx={{ fontSize: '0.63rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: adminPalette.textMuted }}>
+    <Box sx={adminMetricTileSx}>
+      <Typography sx={adminMetricLabelSx}>
         {label}
       </Typography>
-      <Typography sx={{ mt: 0.4, fontSize: { xs: '1rem', sm: '1.12rem' }, fontWeight: 700, lineHeight: 1, color: adminPalette.brandDark }}>
+      <Typography sx={adminMetricValueSx}>
         {value}
       </Typography>
     </Box>
@@ -437,35 +443,49 @@ export default function ContentAssetDetailWorkspace({
     <Stack spacing={1.25}>
       {flash ? <Alert severity={flash.severity} onClose={() => setFlash(null)}>{flash.message}</Alert> : null}
 
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}>
-        <Button component={Link} href="/content-assets" startIcon={<ArrowBackRoundedIcon />} sx={{ alignSelf: { xs: 'flex-start', sm: 'center' }, textTransform: 'none', fontWeight: 700 }}>
-          Back to projects
-        </Button>
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.2} alignItems={{ xs: 'stretch', md: 'center' }}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: 'flex-start', lg: 'center' }}>
+            <Box>
+              <Button component={Link} href="/content-assets" startIcon={<ArrowBackRoundedIcon />} sx={{ mb: 1, px: 0, alignSelf: 'flex-start', textTransform: 'none', fontWeight: 700 }}>
+                Back to projects
+              </Button>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Asset Drafting
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                {project.project_name}
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Upload dan preview kumpulan asset image/video untuk project ini.
+              </Typography>
+            </Box>
+            <Button
+              component="a"
+              href={assets.length ? `/api/admin/content-assets/projects/${project.id}/download` : undefined}
+              variant="outlined"
+              startIcon={<ArchiveRoundedIcon />}
+              disabled={assets.length === 0}
+              sx={{ alignSelf: { xs: 'flex-start', lg: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }}
+            >
+              Download ZIP
+            </Button>
+          </Stack>
+
           <Stack direction="row" spacing={{ xs: 1, sm: 0.5 }} useFlexGap flexWrap="wrap">
             <MetricTile label="Assets" value={assets.length} />
             <MetricTile label="Images" value={imageCount} />
             <MetricTile label="Videos" value={videoCount} />
             <MetricTile label="Size" value={formatBytes(totalSize)} />
           </Stack>
-          <Button
-            component="a"
-            href={assets.length ? `/api/admin/content-assets/projects/${project.id}/download` : undefined}
-            variant="outlined"
-            startIcon={<ArchiveRoundedIcon />}
-            disabled={assets.length === 0}
-            sx={{ alignSelf: { xs: 'flex-start', md: 'center' }, minHeight: 36, borderRadius: 2, textTransform: 'none', fontWeight: 700, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary }}
-          >
-            Download ZIP
-          </Button>
+
+          <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
+            <TagChips tags={project.tags} />
+          </Stack>
         </Stack>
-      </Stack>
+      </Paper>
 
-      <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-        <TagChips tags={project.tags} />
-      </Stack>
-
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface, boxShadow: 'none' }}>
+      <Paper elevation={0} sx={adminPanelSx}>
         <Box component="form" ref={formRef} action={handleUpload} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
           <Box component="input" type="hidden" name="project_id" value={project.id} />
           <Stack spacing={1.25}>
@@ -524,8 +544,8 @@ export default function ContentAssetDetailWorkspace({
         </Box>
       </Paper>
 
-      <Paper elevation={0} sx={{ borderRadius: 2.5, border: `1px solid ${adminPalette.border}`, overflow: 'hidden', backgroundColor: adminPalette.surface }}>
-        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 }, borderBottom: `1px solid ${adminPalette.border}` }}>
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1} alignItems={{ xs: 'stretch', lg: 'center' }} sx={{ p: { xs: 1.5, md: 2 } }}>
           <TextField
             size="small"
             value={filters.search}
@@ -557,6 +577,9 @@ export default function ContentAssetDetailWorkspace({
           />
           {[currentSearch, currentContentType].filter(Boolean).length + currentTagIds.length > 0 ? <Button onClick={clearFilters} sx={{ color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>Clear filters</Button> : null}
         </Stack>
+      </Paper>
+
+      <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Box sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
           <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Uploaded Assets</Typography>
           <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>Preview asset yang sudah tersimpan untuk project ini.</Typography>
