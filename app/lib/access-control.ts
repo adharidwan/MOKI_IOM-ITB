@@ -2,8 +2,9 @@ import 'server-only';
 
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { sql } from 'drizzle-orm';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { db } from './db/client';
 import { SSO_SESSION_COOKIE } from './sso-config';
 import { verifySsoAccessToken, type VerifiedSsoToken } from './sso-server';
 
@@ -100,6 +101,14 @@ function mapManagedAccessUser(user: {
   };
 }
 
+function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
+  return (Array.isArray(result.rows) ? result.rows : []) as T[];
+}
+
+function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
+  return rowsFromResult<T>(result)[0] ?? null;
+}
+
 function applyAccessUserSearch<T extends { sso_sub: unknown; email: unknown; name: unknown }>(
   users: T[],
   search: string,
@@ -189,23 +198,16 @@ export async function getCurrentUserFromCookies(): Promise<AccessControlledUser>
 }
 
 export async function upsertManagedUser(user: AccessControlledUser): Promise<void> {
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('admin_app_users')
-    .upsert(
-      {
-        sso_sub: user.sub,
-        email: user.email,
-        name: user.name,
-        roles: user.roles,
-        last_seen_at: new Date().toISOString(),
-      },
-      { onConflict: 'sso_sub' },
-    );
-
-  if (error) {
-    throw new Error(`Gagal menyimpan akun SSO: ${error.message}`);
-  }
+  await db.execute(sql`
+    insert into public.admin_app_users (sso_sub, email, name, roles, last_seen_at)
+    values (${user.sub}, ${user.email}, ${user.name}, ${user.roles}::text[], ${new Date().toISOString()})
+    on conflict (sso_sub) do update
+    set
+      email = excluded.email,
+      name = excluded.name,
+      roles = excluded.roles,
+      last_seen_at = excluded.last_seen_at
+  `);
 }
 
 export async function getGrantedFeaturesForUser(user: AccessControlledUser): Promise<FeatureKey[]> {
@@ -213,17 +215,13 @@ export async function getGrantedFeaturesForUser(user: AccessControlledUser): Pro
     return FEATURE_DEFINITIONS.map((feature) => feature.key);
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('admin_feature_permissions')
-    .select('feature_key')
-    .eq('sso_sub', user.sub);
+  const result = await db.execute(sql`
+    select feature_key
+    from public.admin_feature_permissions
+    where sso_sub = ${user.sub}
+  `);
 
-  if (error) {
-    throw new Error(`Gagal memuat akses fitur: ${error.message}`);
-  }
-
-  return normalizeFeatureKeys((data || []).map((row) => String(row.feature_key)));
+  return normalizeFeatureKeys(rowsFromResult<{ feature_key: unknown }>(result).map((row) => String(row.feature_key)));
 }
 
 export async function hasFeatureAccess(user: AccessControlledUser, featureKey: FeatureKey): Promise<boolean> {
@@ -290,27 +288,22 @@ export async function requireAdminAccess(): Promise<AccessControlledUser> {
 }
 
 export async function listManagedAccessUsers(): Promise<ManagedAccessUser[]> {
-  const supabase = getSupabaseAdminClient();
-  const [{ data: users, error: usersError }, { data: permissions, error: permissionsError }] = await Promise.all([
-    supabase.from('admin_app_users').select('sso_sub,email,name,roles,first_seen_at,last_seen_at').order('last_seen_at', { ascending: false }),
-    supabase.from('admin_feature_permissions').select('sso_sub,feature_key'),
+  const [usersResult, permissionsResult] = await Promise.all([
+    db.execute(sql`
+      select sso_sub, email, name, roles, first_seen_at::text, last_seen_at::text
+      from public.admin_app_users
+      order by last_seen_at desc
+    `),
+    db.execute(sql`select sso_sub, feature_key from public.admin_feature_permissions`),
   ]);
 
-  if (usersError) {
-    throw new Error(`Gagal memuat akun: ${usersError.message}`);
-  }
-
-  if (permissionsError) {
-    throw new Error(`Gagal memuat permission: ${permissionsError.message}`);
-  }
-
   const featuresBySub = new Map<string, string[]>();
-  (permissions || []).forEach((permission) => {
+  rowsFromResult<{ sso_sub: unknown; feature_key: unknown }>(permissionsResult).forEach((permission) => {
     const key = String(permission.sso_sub);
     featuresBySub.set(key, [...(featuresBySub.get(key) || []), String(permission.feature_key)]);
   });
 
-  return (users || []).map((user) => mapManagedAccessUser(user, featuresBySub));
+  return rowsFromResult<Parameters<typeof mapManagedAccessUser>[0]>(usersResult).map((user) => mapManagedAccessUser(user, featuresBySub));
 }
 
 export async function getAccessControlOverview(): Promise<AccessControlOverview> {
@@ -325,30 +318,28 @@ export async function getAccessControlOverview(): Promise<AccessControlOverview>
 }
 
 export async function getManagedAccessUser(ssoSub: string): Promise<ManagedAccessUser | null> {
-  const supabase = getSupabaseAdminClient();
-  const [{ data: user, error: userError }, { data: permissions, error: permissionsError }] = await Promise.all([
-    supabase
-      .from('admin_app_users')
-      .select('sso_sub,email,name,roles,first_seen_at,last_seen_at')
-      .eq('sso_sub', ssoSub)
-      .maybeSingle(),
-    supabase.from('admin_feature_permissions').select('sso_sub,feature_key').eq('sso_sub', ssoSub),
+  const [userResult, permissionsResult] = await Promise.all([
+    db.execute(sql`
+      select sso_sub, email, name, roles, first_seen_at::text, last_seen_at::text
+      from public.admin_app_users
+      where sso_sub = ${ssoSub}
+      limit 1
+    `),
+    db.execute(sql`
+      select sso_sub, feature_key
+      from public.admin_feature_permissions
+      where sso_sub = ${ssoSub}
+    `),
   ]);
 
-  if (userError) {
-    throw new Error(`Gagal memuat akun: ${userError.message}`);
-  }
-
-  if (permissionsError) {
-    throw new Error(`Gagal memuat permission: ${permissionsError.message}`);
-  }
+  const user = firstRowFromResult<Parameters<typeof mapManagedAccessUser>[0]>(userResult);
 
   if (!user) {
     return null;
   }
 
   const featuresBySub = new Map<string, string[]>();
-  (permissions || []).forEach((permission) => {
+  rowsFromResult<{ sso_sub: unknown; feature_key: unknown }>(permissionsResult).forEach((permission) => {
     const key = String(permission.sso_sub);
     featuresBySub.set(key, [...(featuresBySub.get(key) || []), String(permission.feature_key)]);
   });

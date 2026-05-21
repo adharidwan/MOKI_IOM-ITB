@@ -19,6 +19,37 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iom4}
+      POSTGRES_USER: ${POSTGRES_USER:-iom4}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iom4_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
   web:
     build:
       context: .
@@ -41,13 +72,19 @@ services:
     env_file:
       - .env.local
     environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://iom4:iom4_password@postgres:5432/iom4}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      S3_ENDPOINT: ${S3_ENDPOINT_DOCKER:-http://minio:9000}
       WHATSAPP_ORCHESTRATOR_ENABLED: ${WHATSAPP_ORCHESTRATOR_ENABLED:-false}
       WHATSAPP_ORCHESTRATOR_BASE_URL: ${WHATSAPP_ORCHESTRATOR_BASE_URL:-http://orchestrator:3099}
       WHATSAPP_ORCHESTRATOR_TOKEN: ${WHATSAPP_ORCHESTRATOR_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
     restart: unless-stopped
     volumes:
       - ./secret/x.com_cookies.txt:/app/secrets/x-cookies.txt:ro
@@ -60,12 +97,15 @@ services:
     env_file:
       - .env.local
     environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql://iom4:iom4_password@postgres:5432/iom4}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       WHATSAPP_CHROMIUM_PATH: /usr/bin/chromium
     volumes:
       - bot_auth:/app/.wwebjs_auth
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -96,4 +136,6 @@ services:
 
 volumes:
   bot_auth:
+  minio_data:
+  postgres_data:
   redis_data:

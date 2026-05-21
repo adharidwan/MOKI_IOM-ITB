@@ -205,6 +205,10 @@ class InMemoryNotificationRepository implements NotificationRepository {
       last_delivery_error: null,
       whatsapp_message_id: null,
       delivered_at: null,
+      media_bucket: null,
+      media_path: null,
+      media_mime_type: null,
+      media_file_name: null,
       created_at: input.acceptedAt,
       updated_at: input.acceptedAt,
     };

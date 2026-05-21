@@ -1,6 +1,8 @@
 import 'server-only';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { sql } from 'drizzle-orm';
+
+import { db } from './db/client';
 
 export interface ManagedContentTag {
   id: string;
@@ -26,33 +28,23 @@ function countByTagId(rows: Array<{ tag_id?: unknown }> | null): Map<string, num
   return counts;
 }
 
+function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
+  return (Array.isArray(result.rows) ? result.rows : []) as T[];
+}
+
 export async function listManagedContentTags(): Promise<ManagedContentTag[]> {
-  const supabase = getSupabaseAdminClient();
   const [tagsResult, libraryResult, assetProjectResult, assetResult] = await Promise.all([
-    supabase.from('content_tags').select('id, name, created_at').order('name', { ascending: true }),
-    supabase.from('content_recording_tags').select('tag_id'),
-    supabase.from('content_asset_project_tags').select('tag_id'),
-    supabase.from('content_asset_tags').select('tag_id'),
+    db.execute(sql`select id, name, created_at::text from public.content_tags order by name asc`),
+    db.execute(sql`select tag_id from public.content_recording_tags`),
+    db.execute(sql`select tag_id from public.content_asset_project_tags`),
+    db.execute(sql`select tag_id from public.content_asset_tags`),
   ]);
 
-  if (tagsResult.error) {
-    throw new Error(`Gagal memuat tags: ${tagsResult.error.message}`);
-  }
-  if (libraryResult.error) {
-    throw new Error(`Gagal memuat usage tag library: ${libraryResult.error.message}`);
-  }
-  if (assetProjectResult.error) {
-    throw new Error(`Gagal memuat usage tag project asset: ${assetProjectResult.error.message}`);
-  }
-  if (assetResult.error) {
-    throw new Error(`Gagal memuat usage tag asset: ${assetResult.error.message}`);
-  }
+  const libraryCounts = countByTagId(rowsFromResult(libraryResult));
+  const assetProjectCounts = countByTagId(rowsFromResult(assetProjectResult));
+  const assetCounts = countByTagId(rowsFromResult(assetResult));
 
-  const libraryCounts = countByTagId(libraryResult.data);
-  const assetProjectCounts = countByTagId(assetProjectResult.data);
-  const assetCounts = countByTagId(assetResult.data);
-
-  return (tagsResult.data || []).map((tag) => {
+  return rowsFromResult<{ id: unknown; name: unknown; created_at: unknown }>(tagsResult).map((tag) => {
     const id = String(tag.id || '');
     const libraryUsageCount = libraryCounts.get(id) || 0;
     const assetProjectUsageCount = assetProjectCounts.get(id) || 0;
@@ -87,13 +79,5 @@ export async function deleteUnusedContentTag(id: string): Promise<void> {
     throw new Error(`Tag "${tag.name}" masih dipakai oleh ${tag.total_usage_count} item.`);
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('content_tags')
-    .delete()
-    .eq('id', normalizedId);
-
-  if (error) {
-    throw new Error(`Gagal menghapus tag: ${error.message}`);
-  }
+  await db.execute(sql`delete from public.content_tags where id = ${normalizedId}`);
 }

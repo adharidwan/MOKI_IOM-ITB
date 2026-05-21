@@ -1,6 +1,8 @@
 import 'server-only';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { sql } from 'drizzle-orm';
+
+import { db } from './db/client';
 
 const MAX_TEMPLATE_TITLE_LENGTH = 120;
 const MAX_TEMPLATE_DESCRIPTION_LENGTH = 240;
@@ -75,34 +77,32 @@ function validateTemplateInput(input: SaveBlastTemplateInput, partial = false): 
   }
 }
 
+function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
+  return (Array.isArray(result.rows) ? result.rows : []) as T[];
+}
+
+function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
+  return rowsFromResult<T>(result)[0] ?? null;
+}
+
 export async function listBlastTemplates(input: ListBlastTemplatesInput = {}): Promise<ListBlastTemplatesResult> {
-  const supabase = getSupabaseAdminClient();
   const page = Math.max(1, Number(input.page || 1));
   const pageSize = Math.min(100, Math.max(5, Number(input.pageSize || 10)));
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize - 1;
+  const offset = (page - 1) * pageSize;
   const search = String(input.search || '').trim();
-  let query = supabase
-    .from('blast_message_templates')
-    .select('*', { count: 'exact' })
-    .is('deleted_at', null);
-
-  if (search) {
-    const escapedSearch = search.replace(/[%_]/g, (value) => `\\${value}`);
-    query = query.or(`title.ilike.%${escapedSearch}%,description.ilike.%${escapedSearch}%,content.ilike.%${escapedSearch}%`);
-  }
-
-  const { data, error, count } = await query
-    .order('updated_at', { ascending: false })
-    .range(from, to);
-
-  if (error) {
-    throw new Error(`Gagal memuat template blast: ${error.message}`);
-  }
-
-  const total = count || 0;
+  const result = await db.execute(sql`
+    select *, count(*) over ()::integer as total_count
+    from public.blast_message_templates
+    where deleted_at is null
+      and (${search || null}::text is null or title ilike ${`%${search}%`} or description ilike ${`%${search}%`} or content ilike ${`%${search}%`})
+    order by updated_at desc
+    limit ${pageSize}
+    offset ${offset}
+  `);
+  const rows = rowsFromResult<BlastTemplateRecord & { total_count?: number }>(result);
+  const total = Number(rows[0]?.total_count || 0);
   return {
-    items: ((data || []) as BlastTemplateRecord[]).map(toSummary),
+    items: rows.map(toSummary),
     total,
     page,
     pageSize,
@@ -113,58 +113,47 @@ export async function listBlastTemplates(input: ListBlastTemplatesInput = {}): P
 export async function createBlastTemplate(input: SaveBlastTemplateInput): Promise<BlastTemplateSummary> {
   validateTemplateInput(input);
   const now = new Date().toISOString();
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('blast_message_templates')
-    .insert({
-      title: String(input.title || '').trim(),
-      description: String(input.description || '').trim(),
-      content: String(input.content || '').trim(),
-      created_at: now,
-      updated_at: now,
-    })
-    .select('*')
-    .single();
+  const result = await db.execute(sql`
+    insert into public.blast_message_templates (title, description, content, created_at, updated_at)
+    values (${String(input.title || '').trim()}, ${String(input.description || '').trim()}, ${String(input.content || '').trim()}, ${now}, ${now})
+    returning *
+  `);
 
-  if (error) {
-    throw new Error(`Gagal menyimpan template blast: ${error.message}`);
-  }
-
-  return toSummary(data as BlastTemplateRecord);
+  return toSummary(firstRowFromResult<BlastTemplateRecord>(result)!);
 }
 
 export async function updateBlastTemplate(id: string, input: SaveBlastTemplateInput): Promise<BlastTemplateSummary> {
   validateTemplateInput(input, true);
-  const supabase = getSupabaseAdminClient();
-  const changes: Record<string, string> = { updated_at: new Date().toISOString() };
-
-  if (input.title !== undefined) changes.title = String(input.title).trim();
-  if (input.description !== undefined) changes.description = String(input.description).trim();
-  if (input.content !== undefined) changes.content = String(input.content).trim();
-
-  const { data, error } = await supabase
-    .from('blast_message_templates')
-    .update(changes)
-    .eq('id', id)
-    .is('deleted_at', null)
-    .select('*')
-    .single();
-
-  if (error) {
-    throw new Error(`Gagal memperbarui template blast: ${error.message}`);
+  const currentResult = await db.execute(sql`
+    select *
+    from public.blast_message_templates
+    where id = ${id}
+      and deleted_at is null
+    limit 1
+  `);
+  const current = firstRowFromResult<BlastTemplateRecord>(currentResult);
+  if (!current) {
+    throw new Error('Template blast tidak ditemukan.');
   }
+  const result = await db.execute(sql`
+    update public.blast_message_templates
+    set
+      title = ${input.title !== undefined ? String(input.title).trim() : current.title},
+      description = ${input.description !== undefined ? String(input.description).trim() : current.description || ''},
+      content = ${input.content !== undefined ? String(input.content).trim() : current.content},
+      updated_at = ${new Date().toISOString()}
+    where id = ${id}
+    returning *
+  `);
 
-  return toSummary(data as BlastTemplateRecord);
+  return toSummary(firstRowFromResult<BlastTemplateRecord>(result)!);
 }
 
 export async function deleteBlastTemplate(id: string): Promise<void> {
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('blast_message_templates')
-    .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', id);
-
-  if (error) {
-    throw new Error(`Gagal menghapus template blast: ${error.message}`);
-  }
+  const now = new Date().toISOString();
+  await db.execute(sql`
+    update public.blast_message_templates
+    set deleted_at = ${now}, updated_at = ${now}
+    where id = ${id}
+  `);
 }

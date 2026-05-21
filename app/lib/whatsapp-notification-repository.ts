@@ -2,10 +2,11 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
-import { PostgrestError } from '@supabase/supabase-js';
+import { sql } from 'drizzle-orm';
 
 import type { BlastMediaInput } from './blast-media';
 import type { TicketMediaInput } from './ticket-media';
+import { db } from './db/client';
 import { enqueueOutboundDispatchJob, getOutboundDispatchQueue } from './outbound-dispatch-queue';
 import {
   cacheApiClientByKeyPrefix,
@@ -22,7 +23,6 @@ import {
 } from './outbound-dispatch-redis';
 import { buildOutboundDispatchJobData } from './outbound-dispatch-job';
 import { readWhatsappInstanceRuntime, WHATSAPP_RUNTIME_TTL_SECONDS } from './whatsapp-ops-runtime';
-import { getSupabaseAdminClient } from './supabase-server';
 import {
   API_NOTIFICATION_PRIORITY,
   BLAST_PRIORITY,
@@ -43,6 +43,11 @@ import {
   NotificationRepository,
   NotificationRepositoryError,
 } from './whatsapp-notification-service';
+
+type PgErrorLike = {
+  code?: string;
+  message?: string;
+};
 
 export interface UpdateDispatchSettingsInput {
   global_messages_per_minute?: number;
@@ -177,45 +182,47 @@ function buildBlastSourceId(requestId: string, recipientPhoneNumber: string): st
   return `blast:${requestId}:${recipientPhoneNumber}`;
 }
 
-function isUniqueViolation(error: PostgrestError): boolean {
-  return error.code === '23505';
+function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
+  return (Array.isArray(result.rows) ? result.rows : []) as T[];
+}
+
+function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
+  return rowsFromResult<T>(result)[0] ?? null;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as PgErrorLike).code === '23505';
 }
 
 async function loadBlastOutboundMessageBySourceId(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
   sourceId: string,
 ): Promise<OutboundMessageRecord | null> {
-  const { data, error } = await supabase
-    .from('outbound_messages')
-    .select('*')
-    .eq('source_type', 'blast')
-    .eq('source_id', sourceId)
-    .maybeSingle();
+  const result = await db.execute(sql`
+    select *
+    from public.outbound_messages
+    where source_type = 'blast'
+      and source_id = ${sourceId}
+    limit 1
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to load existing blast delivery ledger entry.', error);
-  }
-
-  return (data as OutboundMessageRecord | null) ?? null;
+  return firstRowFromResult<OutboundMessageRecord>(result);
 }
 
 async function markOutboundMessageAsQueued(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
   outboundMessageId: string,
 ): Promise<void> {
-  await supabase
-    .from('outbound_messages')
-    .update({
-      delivery_status: 'queued',
-      next_retry_at: null,
-      last_delivery_error: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', outboundMessageId);
+  await db.execute(sql`
+    update public.outbound_messages
+    set
+      delivery_status = 'queued',
+      next_retry_at = null,
+      last_delivery_error = null,
+      updated_at = ${new Date().toISOString()}
+    where id = ${outboundMessageId}
+  `);
 }
 
 async function createOrReuseBlastOutboundMessage(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
   input: {
     requestId: string;
     recipientPhoneNumber: string;
@@ -257,53 +264,48 @@ async function createOrReuseBlastOutboundMessage(
     updated_at: now,
   };
 
-  const { data, error } = await supabase
-    .from('outbound_messages')
-    .insert(outboundMessage)
-    .select('*')
-    .single();
-
-  if (!error) {
+  try {
+    const data = await insertOutboundMessage(outboundMessage);
     return {
-      outboundMessage: data as OutboundMessageRecord,
+      outboundMessage: data,
       shouldEnqueue: true,
       alreadyAccepted: false,
     };
-  }
+  } catch (error) {
+    if (!isUniqueViolation(error)) {
+      throw toRepositoryError('Failed to write blast delivery ledger entry.', error);
+    }
 
-  if (!isUniqueViolation(error)) {
-    throw toRepositoryError('Failed to write blast delivery ledger entry.', error);
-  }
+    const existingMessage = await loadBlastOutboundMessageBySourceId(outboundMessage.source_id);
 
-  const existingMessage = await loadBlastOutboundMessageBySourceId(supabase, outboundMessage.source_id);
+    if (!existingMessage) {
+      throw new NotificationRepositoryError(
+        'Blast delivery ledger entry already exists but could not be reloaded.',
+        getErrorCode(error),
+      );
+    }
 
-  if (!existingMessage) {
-    throw new NotificationRepositoryError(
-      'Blast delivery ledger entry already exists but could not be reloaded.',
-      error.code,
-    );
-  }
+    if (existingMessage.delivery_status === 'failed' && existingMessage.delivery_attempts === 0) {
+      await markOutboundMessageAsQueued(existingMessage.id);
+      return {
+        outboundMessage: {
+          ...existingMessage,
+          delivery_status: 'queued',
+          next_retry_at: null,
+          last_delivery_error: null,
+          updated_at: new Date().toISOString(),
+        },
+        shouldEnqueue: true,
+        alreadyAccepted: false,
+      };
+    }
 
-  if (existingMessage.delivery_status === 'failed' && existingMessage.delivery_attempts === 0) {
-    await markOutboundMessageAsQueued(supabase, existingMessage.id);
     return {
-      outboundMessage: {
-        ...existingMessage,
-        delivery_status: 'queued',
-        next_retry_at: null,
-        last_delivery_error: null,
-        updated_at: new Date().toISOString(),
-      },
-      shouldEnqueue: true,
-      alreadyAccepted: false,
+      outboundMessage: existingMessage,
+      shouldEnqueue: false,
+      alreadyAccepted: true,
     };
   }
-
-  return {
-    outboundMessage: existingMessage,
-    shouldEnqueue: false,
-    alreadyAccepted: true,
-  };
 }
 
 function isRuntimeHeartbeatStale(lastHeartbeatAt: string | null, nowMs = Date.now()): boolean {
@@ -319,37 +321,94 @@ function isRuntimeHeartbeatStale(lastHeartbeatAt: string | null, nowMs = Date.no
   return nowMs - lastHeartbeatMs > WHATSAPP_RUNTIME_TTL_SECONDS * 1000;
 }
 
-async function countQueuedOutboundMessagesForInstance(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-  whatsappInstanceId: string,
-): Promise<number> {
-  const { count, error } = await supabase
-    .from('outbound_messages')
-    .select('id', { count: 'exact', head: true })
-    .eq('whatsapp_instance_id', whatsappInstanceId)
-    .in('delivery_status', ['queued', 'retrying']);
+async function insertOutboundMessage(outboundMessage: OutboundMessageRecord): Promise<OutboundMessageRecord> {
+  const result = await db.execute(sql`
+    insert into public.outbound_messages (
+      id,
+      client_id,
+      idempotency_key,
+      request_fingerprint,
+      source_type,
+      source_id,
+      ticket_id,
+      whatsapp_instance_id,
+      priority,
+      recipient_phone_number,
+      recipient_chat_id,
+      content,
+      media_bucket,
+      media_path,
+      media_mime_type,
+      media_file_name,
+      client_reference,
+      delivery_status,
+      delivery_attempts,
+      next_retry_at,
+      last_delivery_error,
+      whatsapp_message_id,
+      delivered_at,
+      created_at,
+      updated_at
+    )
+    values (
+      ${outboundMessage.id},
+      ${outboundMessage.client_id},
+      ${outboundMessage.idempotency_key},
+      ${outboundMessage.request_fingerprint},
+      ${outboundMessage.source_type},
+      ${outboundMessage.source_id},
+      ${outboundMessage.ticket_id},
+      ${outboundMessage.whatsapp_instance_id},
+      ${outboundMessage.priority},
+      ${outboundMessage.recipient_phone_number},
+      ${outboundMessage.recipient_chat_id},
+      ${outboundMessage.content},
+      ${outboundMessage.media_bucket},
+      ${outboundMessage.media_path},
+      ${outboundMessage.media_mime_type},
+      ${outboundMessage.media_file_name},
+      ${outboundMessage.client_reference},
+      ${outboundMessage.delivery_status},
+      ${outboundMessage.delivery_attempts},
+      ${outboundMessage.next_retry_at},
+      ${outboundMessage.last_delivery_error},
+      ${outboundMessage.whatsapp_message_id},
+      ${outboundMessage.delivered_at},
+      ${outboundMessage.created_at},
+      ${outboundMessage.updated_at}
+    )
+    returning *
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to load WhatsApp instance queue pressure.', error);
+  const row = firstRowFromResult<OutboundMessageRecord>(result);
+  if (!row) {
+    throw new NotificationRepositoryError('Failed to write outbound delivery ledger entry.');
   }
 
-  return count || 0;
+  return row;
 }
 
-async function listEligibleWhatsappInstances(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-): Promise<EligibleWhatsappInstance[]> {
-  const { data, error } = await supabase
-    .from('whatsapp_instances')
-    .select('*')
-    .eq('is_enabled', true)
-    .order('id', { ascending: true });
+async function countQueuedOutboundMessagesForInstance(
+  whatsappInstanceId: string,
+): Promise<number> {
+  const result = await db.execute(sql`
+    select count(*)::integer as count
+    from public.outbound_messages
+    where whatsapp_instance_id = ${whatsappInstanceId}
+      and delivery_status = any(${['queued', 'retrying']}::text[])
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to load WhatsApp instances for outbound assignment.', error);
-  }
+  return Number(firstRowFromResult<{ count: number }>(result)?.count || 0);
+}
 
-  const instances = ((data as WhatsappInstanceRecord[]) || []);
+async function listEligibleWhatsappInstances(): Promise<EligibleWhatsappInstance[]> {
+  const result = await db.execute(sql`
+    select *
+    from public.whatsapp_instances
+    where is_enabled = true
+    order by id asc
+  `);
+  const instances = rowsFromResult<WhatsappInstanceRecord>(result);
   const eligibleInstances = await Promise.all(
     instances.map(async (instance) => {
       const runtime = await readWhatsappInstanceRuntime(instance.id);
@@ -365,7 +424,7 @@ async function listEligibleWhatsappInstances(
 
       return {
         id: instance.id,
-        queuedCount: await countQueuedOutboundMessagesForInstance(supabase, instance.id),
+        queuedCount: await countQueuedOutboundMessagesForInstance(instance.id),
       };
     }),
   );
@@ -381,10 +440,8 @@ async function listEligibleWhatsappInstances(
     });
 }
 
-async function selectWhatsappInstanceForOutbound(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-): Promise<string> {
-  const eligibleInstances = await listEligibleWhatsappInstances(supabase);
+async function selectWhatsappInstanceForOutbound(): Promise<string> {
+  const eligibleInstances = await listEligibleWhatsappInstances();
 
   if (!eligibleInstances.length) {
     throw new NotificationRepositoryError(
@@ -417,7 +474,6 @@ async function dispatchPersonalizedBlastMessages(
   requestId: string,
   media?: BlastMediaInput | null,
 ): Promise<BlastDispatchResult> {
-  const supabase = getSupabaseAdminClient();
   const normalizedRecipients = Array.from(
     recipients.reduce((deduped, recipient) => {
       const normalizedPhoneNumber = String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim();
@@ -451,7 +507,7 @@ async function dispatchPersonalizedBlastMessages(
   let alreadyAcceptedCount = 0;
   let failedCount = 0;
   const trackedMessageIds: string[] = [];
-  const eligibleInstances = await listEligibleWhatsappInstances(supabase);
+  const eligibleInstances = await listEligibleWhatsappInstances();
 
   if (!eligibleInstances.length) {
     throw new NotificationRepositoryError(
@@ -463,7 +519,7 @@ async function dispatchPersonalizedBlastMessages(
   for (const [index, recipient] of normalizedRecipients.entries()) {
     const whatsappInstanceId = eligibleInstances[index % eligibleInstances.length].id;
     const { outboundMessage, shouldEnqueue, alreadyAccepted } =
-      await createOrReuseBlastOutboundMessage(supabase, {
+      await createOrReuseBlastOutboundMessage({
         requestId,
         recipientPhoneNumber: recipient.recipientPhoneNumber,
         content: recipient.content,
@@ -489,7 +545,6 @@ async function dispatchPersonalizedBlastMessages(
       queuedCount += 1;
     } catch (queueError) {
       await markOutboundMessageAsFailed(
-        supabase,
         outboundMessage.id,
         summarizeOperationalQueueError(queueError),
       );
@@ -509,8 +564,6 @@ async function dispatchPersonalizedBlastMessages(
 }
 
 export function createSupabaseNotificationRepository(): NotificationRepository {
-  const supabase = getSupabaseAdminClient();
-
   return {
     async findApiClientByKeyPrefix(keyPrefix: string): Promise<ApiClientRecord | null> {
       const cachedClient = await getCachedApiClientByKeyPrefix(keyPrefix);
@@ -519,17 +572,13 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         return cachedClient;
       }
 
-      const { data, error } = await supabase
-        .from('api_clients')
-        .select('*')
-        .eq('key_prefix', keyPrefix)
-        .maybeSingle();
-
-      if (error) {
-        throw toRepositoryError('Failed to load API client.', error);
-      }
-
-      const apiClient = (data as ApiClientRecord | null) ?? null;
+      const result = await db.execute(sql`
+        select *
+        from public.api_clients
+        where key_prefix = ${keyPrefix}
+        limit 1
+      `);
+      const apiClient = firstRowFromResult<ApiClientRecord>(result);
 
       if (apiClient) {
         void cacheApiClientByKeyPrefix(apiClient);
@@ -539,17 +588,11 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
     },
 
     async touchApiClientLastUsedAt(clientId: string, isoTimestamp: string): Promise<void> {
-      const { error } = await supabase
-        .from('api_clients')
-        .update({
-          last_used_at: isoTimestamp,
-          updated_at: isoTimestamp,
-        })
-        .eq('id', clientId);
-
-      if (error) {
-        throw toRepositoryError('Failed to update API client usage metadata.', error);
-      }
+      await db.execute(sql`
+        update public.api_clients
+        set last_used_at = ${isoTimestamp}, updated_at = ${isoTimestamp}
+        where id = ${clientId}
+      `);
     },
 
     reserveApiNotificationIdempotency,
@@ -568,7 +611,7 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
       input: CreateOutboundMessageInput,
     ): Promise<OutboundMessageRecord> {
       await getOrCreateDefaultWhatsappInstance();
-      const whatsappInstanceId = await selectWhatsappInstanceForOutbound(supabase);
+      const whatsappInstanceId = await selectWhatsappInstanceForOutbound();
       const outboundMessage: OutboundMessageRecord = {
         id: crypto.randomUUID(),
         client_id: input.clientId,
@@ -597,13 +640,7 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         updated_at: input.acceptedAt,
       };
 
-      const { error } = await supabase
-        .from('outbound_messages')
-        .insert(outboundMessage);
-
-      if (error) {
-        throw toRepositoryError('Failed to write outbound delivery ledger entry.', error);
-      }
+      await insertOutboundMessage(outboundMessage);
 
       try {
         await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
@@ -611,7 +648,6 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         await recordAcceptedApiNotification(outboundMessage.client_id!, input.acceptedAt);
       } catch (queueError) {
         await markOutboundMessageAsFailed(
-          supabase,
           outboundMessage.id,
           summarizeOperationalQueueError(queueError),
         );
@@ -627,7 +663,6 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
 export async function createGroupBlastOutboundMessages(
   input: CreateGroupBlastOutboundMessagesInput,
 ): Promise<BlastDispatchResult> {
-  const supabase = getSupabaseAdminClient();
   const targetGroups = normalizeList(input.groupNames);
 
   if (!targetGroups.length) {
@@ -642,17 +677,16 @@ export async function createGroupBlastOutboundMessages(
     };
   }
 
-  const { data, error } = await supabase.rpc('resolve_csv_contact_group_recipients', {
-    p_group_names: targetGroups,
-    p_limit: null,
-    p_sort_by: 'created_at',
-  });
+  const result = await db.execute(sql`
+    select *
+    from public.resolve_csv_contact_group_recipients(
+      ${targetGroups}::text[],
+      null,
+      'created_at'
+    )
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to load blast recipients.', error);
-  }
-
-  const recipientPhoneNumbers = (Array.isArray(data) ? data : []).map((record: { no_telp?: unknown }) =>
+  const recipientPhoneNumbers = rowsFromResult<{ no_telp?: unknown }>(result).map((record) =>
     String(record.no_telp || '').trim(),
   );
 
@@ -696,53 +730,42 @@ export async function createPersonalizedBlastOutboundMessages(
 export async function createTicketReplyOutboundMessage(
   input: CreateTicketReplyOutboundMessageInput,
 ): Promise<OutboundMessageRecord> {
-  const supabase = getSupabaseAdminClient();
   await getOrCreateDefaultWhatsappInstance();
   const now = new Date().toISOString();
   const media = input.media || null;
-  const { data, error } = await supabase
-    .from('outbound_messages')
-    .insert({
-      client_id: null,
-      idempotency_key: null,
-      request_fingerprint: null,
-      source_type: 'ticket_reply',
-      source_id: input.replyId,
-      ticket_id: input.ticketId,
-      whatsapp_instance_id: input.whatsappInstanceId,
-      priority: TICKET_REPLY_PRIORITY,
-      recipient_phone_number: input.recipientPhoneNumber,
-      recipient_chat_id: input.recipientChatId,
-      content: input.content,
-      media_bucket: media?.bucket || null,
-      media_path: media?.path || null,
-      media_mime_type: media?.mimeType || null,
-      media_file_name: media?.fileName || null,
-      client_reference: null,
-      delivery_status: 'queued',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: null,
-      whatsapp_message_id: null,
-      delivered_at: null,
-      created_at: now,
-      updated_at: now,
-    })
-    .select('*')
-    .single();
-
-  if (error) {
-    throw toRepositoryError('Failed to write ticket reply delivery ledger entry.', error);
-  }
-
-  const outboundMessage = data as OutboundMessageRecord;
+  const outboundMessage = await insertOutboundMessage({
+    id: crypto.randomUUID(),
+    client_id: null,
+    idempotency_key: null,
+    request_fingerprint: null,
+    source_type: 'ticket_reply',
+    source_id: input.replyId,
+    ticket_id: input.ticketId,
+    whatsapp_instance_id: input.whatsappInstanceId,
+    priority: TICKET_REPLY_PRIORITY,
+    recipient_phone_number: input.recipientPhoneNumber || '',
+    recipient_chat_id: input.recipientChatId,
+    content: input.content,
+    media_bucket: media?.bucket || null,
+    media_path: media?.path || null,
+    media_mime_type: media?.mimeType || null,
+    media_file_name: media?.fileName || null,
+    client_reference: null,
+    delivery_status: 'queued',
+    delivery_attempts: 0,
+    next_retry_at: null,
+    last_delivery_error: null,
+    whatsapp_message_id: null,
+    delivered_at: null,
+    created_at: now,
+    updated_at: now,
+  });
 
   try {
     await enqueueOutboundDispatchJob(buildOutboundDispatchJobData(outboundMessage));
     await incrementPendingOutboundCounts(outboundMessage.source_type, outboundMessage.client_id);
   } catch (queueError) {
     await markOutboundMessageAsFailed(
-      supabase,
       outboundMessage.id,
       summarizeOperationalQueueError(queueError),
     );
@@ -757,16 +780,13 @@ export async function createTicketReplyOutboundMessage(
 }
 
 export async function getDispatchSettings(): Promise<DispatchSettingsRecord> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('bot_dispatch_settings')
-    .select('*')
-    .eq('id', DEFAULT_DISPATCH_SETTINGS_ID)
-    .maybeSingle();
-
-  if (error) {
-    throw toRepositoryError('Failed to load dispatch settings.', error);
-  }
+  const result = await db.execute(sql`
+    select *
+    from public.bot_dispatch_settings
+    where id = ${DEFAULT_DISPATCH_SETTINGS_ID}
+    limit 1
+  `);
+  const data = firstRowFromResult<DispatchSettingsRecord>(result);
 
   if (data) {
     return data as DispatchSettingsRecord;
@@ -778,27 +798,30 @@ export async function getDispatchSettings(): Promise<DispatchSettingsRecord> {
 export async function updateDispatchSettings(
   patch: UpdateDispatchSettingsInput,
 ): Promise<DispatchSettingsRecord> {
-  const supabase = getSupabaseAdminClient();
   const current = await getDispatchSettings();
   const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from('bot_dispatch_settings')
-    .upsert({
-      id: DEFAULT_DISPATCH_SETTINGS_ID,
-      global_messages_per_minute:
-        patch.global_messages_per_minute ?? current.global_messages_per_minute,
-      api_notifications_paused:
-        patch.api_notifications_paused ?? current.api_notifications_paused,
-      updated_at: now,
-    })
-    .select('*')
-    .single();
+  const result = await db.execute(sql`
+    insert into public.bot_dispatch_settings (
+      id,
+      global_messages_per_minute,
+      api_notifications_paused,
+      updated_at
+    )
+    values (
+      ${DEFAULT_DISPATCH_SETTINGS_ID},
+      ${patch.global_messages_per_minute ?? current.global_messages_per_minute},
+      ${patch.api_notifications_paused ?? current.api_notifications_paused},
+      ${now}
+    )
+    on conflict (id) do update
+    set
+      global_messages_per_minute = excluded.global_messages_per_minute,
+      api_notifications_paused = excluded.api_notifications_paused,
+      updated_at = excluded.updated_at
+    returning *
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to update dispatch settings.', error);
-  }
-
-  return data as DispatchSettingsRecord;
+  return firstRowFromResult<DispatchSettingsRecord>(result)!;
 }
 
 export async function countQueuedOutboundMessagesBySource(
@@ -808,24 +831,28 @@ export async function countQueuedOutboundMessagesBySource(
 }
 
 export async function getOrCreateDefaultWhatsappInstance(): Promise<WhatsappInstanceRecord> {
-  const supabase = getSupabaseAdminClient();
   const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from('whatsapp_instances')
-    .upsert({
-      id: DEFAULT_WHATSAPP_INSTANCE_ID,
-      label: DEFAULT_WHATSAPP_INSTANCE_LABEL,
-      status: 'starting',
-      updated_at: now,
-    })
-    .select('*')
-    .single();
+  const result = await db.execute(sql`
+    insert into public.whatsapp_instances (
+      id,
+      label,
+      status,
+      updated_at
+    )
+    values (
+      ${DEFAULT_WHATSAPP_INSTANCE_ID},
+      ${DEFAULT_WHATSAPP_INSTANCE_LABEL},
+      'starting',
+      ${now}
+    )
+    on conflict (id) do update
+    set
+      label = excluded.label,
+      updated_at = excluded.updated_at
+    returning *
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to initialize default WhatsApp instance.', error);
-  }
-
-  return data as WhatsappInstanceRecord;
+  return firstRowFromResult<WhatsappInstanceRecord>(result)!;
 }
 
 export async function releasePendingOutboundMessageCounts(
@@ -835,21 +862,17 @@ export async function releasePendingOutboundMessageCounts(
   await decrementPendingOutboundCounts(sourceType, clientId);
 }
 
-async function markOutboundMessageAsFailed(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-  outboundMessageId: string,
-  errorMessage: string,
-): Promise<void> {
-  await supabase
-    .from('outbound_messages')
-    .update({
-      delivery_status: 'failed',
-      delivery_attempts: 0,
-      next_retry_at: null,
-      last_delivery_error: errorMessage,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', outboundMessageId);
+async function markOutboundMessageAsFailed(outboundMessageId: string, errorMessage: string): Promise<void> {
+  await db.execute(sql`
+    update public.outbound_messages
+    set
+      delivery_status = 'failed',
+      delivery_attempts = 0,
+      next_retry_at = null,
+      last_delivery_error = ${errorMessage},
+      updated_at = ${new Date().toISOString()}
+    where id = ${outboundMessageId}
+  `);
 }
 
 function summarizeOperationalQueueError(error: unknown): string {
@@ -857,8 +880,13 @@ function summarizeOperationalQueueError(error: unknown): string {
   return message.replace(/\s+/g, ' ').trim().slice(0, 240);
 }
 
-function toRepositoryError(message: string, error: PostgrestError): NotificationRepositoryError {
-  return new NotificationRepositoryError(`${message} ${error.message}`, error.code);
+function getErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null ? (error as PgErrorLike).code : undefined;
+}
+
+function toRepositoryError(message: string, error: unknown): NotificationRepositoryError {
+  const suffix = error instanceof Error ? error.message : String(error);
+  return new NotificationRepositoryError(`${message} ${suffix}`, getErrorCode(error));
 }
 
 function toOperationalRepositoryError(
@@ -870,24 +898,26 @@ function toOperationalRepositoryError(
 }
 
 async function upsertDefaultDispatchSettings(): Promise<DispatchSettingsRecord> {
-  const supabase = getSupabaseAdminClient();
   const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from('bot_dispatch_settings')
-    .upsert({
-      id: DEFAULT_DISPATCH_SETTINGS_ID,
-      global_messages_per_minute: DEFAULT_GLOBAL_MESSAGES_PER_MINUTE,
-      api_notifications_paused: false,
-      updated_at: now,
-    })
-    .select('*')
-    .single();
+  const result = await db.execute(sql`
+    insert into public.bot_dispatch_settings (
+      id,
+      global_messages_per_minute,
+      api_notifications_paused,
+      updated_at
+    )
+    values (
+      ${DEFAULT_DISPATCH_SETTINGS_ID},
+      ${DEFAULT_GLOBAL_MESSAGES_PER_MINUTE},
+      false,
+      ${now}
+    )
+    on conflict (id) do update
+    set updated_at = excluded.updated_at
+    returning *
+  `);
 
-  if (error) {
-    throw toRepositoryError('Failed to initialize dispatch settings.', error);
-  }
-
-  return data as DispatchSettingsRecord;
+  return firstRowFromResult<DispatchSettingsRecord>(result)!;
 }
 
 export async function closeOutboundDispatchQueue(): Promise<void> {
