@@ -13,6 +13,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   MenuItem,
   Paper,
   Stack,
@@ -28,6 +29,9 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import ImageRoundedIcon from '@mui/icons-material/ImageRounded';
+import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
 
 import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
 import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
@@ -36,6 +40,7 @@ import type { CsvContact } from '../lib/types';
 
 const TRACKER_REGISTER_EVENT = 'outbound-tracker-register';
 const MAX_MESSAGE_LENGTH = 4096;
+const MAX_BLAST_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 const VARIABLE_PATTERN = /\{\{\s*(name|phone_number|group_name)\s*\}\}/g;
 
 type RecipientSource = 'contact' | 'group' | 'csv' | 'manual';
@@ -222,6 +227,14 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function formatFileSize(value: number): string {
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
 function renderHighlightedTemplate(text: string) {
   if (!text) {
     return null;
@@ -341,6 +354,8 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const [csvRecipients, setCsvRecipients] = useState<RecipientInput[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
   const [message, setMessage] = useState('');
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [saveToGroup, setSaveToGroup] = useState(false);
   const [saveGroupName, setSaveGroupName] = useState('');
@@ -372,6 +387,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const [previewIndex, setPreviewIndex] = useState(0);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const messageMirrorRef = useRef<HTMLDivElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
 
   const recipients = useMemo(() => {
     if (selectedSource === 'contact') {
@@ -396,8 +412,9 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   const recipientCount = selectedSource === 'group' ? groupPreview.totalRecipients : recipients.length;
   const shouldShowSaveToGroupOption = selectedSource === 'manual' || selectedSource === 'csv';
   const requiresGroupName = shouldShowSaveToGroupOption && saveToGroup;
-  const canPreviewMessage = recipientCount > 0 && message.trim().length > 0;
-  const canSendBlast = Boolean(selectedSource) && recipientCount > 0 && message.trim().length > 0 && message.trim().length <= MAX_MESSAGE_LENGTH;
+  const hasBlastContent = message.trim().length > 0 || Boolean(selectedImage);
+  const canPreviewMessage = recipientCount > 0 && hasBlastContent;
+  const canSendBlast = Boolean(selectedSource) && recipientCount > 0 && hasBlastContent && message.trim().length <= MAX_MESSAGE_LENGTH;
   const selectedRecipientPreview = recipients.slice(0, 6);
   const previewableRecipients = recipients.slice(0, Math.min(10, recipients.length));
   const activePreviewRecipient = previewableRecipients[previewIndex] || null;
@@ -408,6 +425,18 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
       setPreviewIndex(0);
     }
   }, [previewIndex, previewableRecipients.length]);
+
+  useEffect(() => {
+    if (!selectedImage) {
+      setImagePreviewUrl('');
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(selectedImage);
+    setImagePreviewUrl(objectUrl);
+
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [selectedImage]);
 
   useEffect(() => {
     if (selectedSource !== 'contact') {
@@ -703,9 +732,47 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     }
   };
 
+  const handleImageFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setStatus({ type: 'error', message: 'Lampiran harus berupa file image.' });
+      return;
+    }
+
+    if (file.size > MAX_BLAST_IMAGE_SIZE_BYTES) {
+      setStatus({ type: 'error', message: 'Ukuran image maksimal 10 MB.' });
+      return;
+    }
+
+    setSelectedImage(file);
+    setStatus({ type: 'success', message: `Image ${file.name} siap dikirim sebagai lampiran blast.` });
+  };
+
+  const handleRemoveImage = () => {
+    setSelectedImage(null);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = '';
+    }
+  };
+
+  const buildBlastFormData = () => {
+    const formData = new FormData();
+    formData.append('source', selectedSource || 'manual');
+    formData.append('message', message);
+    formData.append('recipients', JSON.stringify(selectedSource === 'group' ? [] : recipients));
+    formData.append('groupNames', JSON.stringify(selectedSource === 'group' ? selectedGroups : []));
+    formData.append('saveToGroup', String(requiresGroupName));
+    formData.append('groupName', requiresGroupName ? saveGroupName.trim() : '');
+    formData.append('saveGroupName', requiresGroupName ? saveGroupName.trim() : '');
+    formData.append('sourceFile', selectedSource === 'csv' ? csvFileName || 'blast-csv' : '');
+    if (selectedImage) {
+      formData.append('image', selectedImage);
+    }
+    return formData;
+  };
+
   const handleOpenPreview = () => {
     if (!canPreviewMessage) {
-      setStatus({ type: 'error', message: 'Pilih penerima dan tulis pesan terlebih dahulu sebelum membuka preview.' });
+      setStatus({ type: 'error', message: 'Pilih penerima lalu tulis pesan atau tambahkan image sebelum membuka preview.' });
       return;
     }
 
@@ -715,7 +782,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
 
   const openScheduleDialog = () => {
     if (!canSendBlast) {
-      setStatus({ type: 'error', message: 'Lengkapi penerima dan pesan terlebih dahulu sebelum menjadwalkan blast.' });
+      setStatus({ type: 'error', message: 'Lengkapi penerima lalu tulis pesan atau tambahkan image sebelum menjadwalkan blast.' });
       return;
     }
 
@@ -738,22 +805,15 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     }
 
     setScheduling(true);
+    const formData = buildBlastFormData();
+    formData.append('name', scheduleName.trim() || `Blast ${sourceLabel(selectedSource)}`);
+    formData.append('scheduleType', scheduleType);
+    formData.append('recurrenceType', scheduleType === 'recurring' ? scheduleRecurrence : '');
+    formData.append('runAt', scheduleRunAt ? new Date(scheduleRunAt).toISOString() : '');
+
     const response = await fetch('/api/admin/scheduled-blasts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: scheduleName.trim() || `Blast ${sourceLabel(selectedSource)}`,
-        message,
-        source: selectedSource,
-        recipients: selectedSource === 'group' ? undefined : recipients,
-        groupNames: selectedSource === 'group' ? selectedGroups : undefined,
-        sourceFile: selectedSource === 'csv' ? csvFileName || 'blast-csv' : undefined,
-        scheduleType,
-        recurrenceType: scheduleType === 'recurring' ? scheduleRecurrence : null,
-        runAt: scheduleRunAt ? new Date(scheduleRunAt).toISOString() : null,
-        saveToGroup: requiresGroupName,
-        saveGroupName: requiresGroupName ? saveGroupName.trim() : undefined,
-      }),
+      body: formData,
     });
 
     const result = (await response.json()) as { error?: string };
@@ -871,7 +931,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
   };
 
   const handleSendBlast = async () => {
-    if (!selectedSource || recipientCount === 0 || !message.trim()) {
+    if (!selectedSource || recipientCount === 0 || !hasBlastContent) {
       setConfirmOpen(false);
       setStatus({ type: 'error', message: 'Data blast belum lengkap. Periksa lagi sebelum kirim.' });
       return;
@@ -888,16 +948,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
 
     const response = await fetch('/api/admin/blast', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source: selectedSource,
-        message,
-        recipients: selectedSource === 'group' ? undefined : recipients,
-        groupNames: selectedSource === 'group' ? selectedGroups : undefined,
-        saveToGroup: requiresGroupName,
-        groupName: requiresGroupName ? saveGroupName.trim() : undefined,
-        sourceFile: selectedSource === 'csv' ? csvFileName || 'blast-csv' : undefined,
-      }),
+      body: buildBlastFormData(),
     });
 
     const result = (await response.json()) as {
@@ -978,6 +1029,10 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     setCsvRecipients([]);
     setCsvFileName('');
     setMessage('');
+    setSelectedImage(null);
+    if (imageInputRef.current) {
+      imageInputRef.current.value = '';
+    }
     setSaveToGroup(false);
     setSaveGroupName('');
     setSubmitting(false);
@@ -1039,6 +1094,9 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
               ) : null}
               {saveToGroup && saveGroupName.trim() ? (
                 <Chip label={`Simpan ke grup: ${saveGroupName.trim()}`} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} />
+              ) : null}
+              {selectedImage ? (
+                <Chip label={`Image: ${selectedImage.name}`} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} />
               ) : null}
             </Stack>
           </Stack>
@@ -1544,10 +1602,20 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
               <Typography sx={{ mb: 0.8, fontSize: '0.82rem', fontWeight: 700, color: adminPalette.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                 Editor pesan
               </Typography>
+              <input
+                ref={imageInputRef}
+                hidden
+                type="file"
+                accept="image/*"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    handleImageFile(file);
+                  }
+                }}
+              />
               <Box
                 sx={{
-                  position: 'relative',
-                  minHeight: 240,
                   borderRadius: 2.5,
                   border: `1px solid ${adminPalette.borderStrong}`,
                   backgroundColor: adminPalette.surface,
@@ -1558,63 +1626,137 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   },
                 }}
               >
-                <Box
-                  ref={messageMirrorRef}
-                  aria-hidden
-                  sx={{
-                    minHeight: 240,
-                    px: 1.5,
-                    py: 1.5,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    overflow: 'auto',
-                    fontSize: '0.96rem',
-                    lineHeight: 1.65,
-                    fontFamily: 'inherit',
-                    letterSpacing: 'normal',
-                    color: adminPalette.textPrimary,
-                  }}
-                >
-                  {message ? (
-                    renderHighlightedTemplate(message)
-                  ) : (
-                    <Box component="span" sx={{ color: adminPalette.textSubtle }}>
-                      Tulis pesan blast di sini. Variabel seperti {'{{name}}'} atau {'{{group_name}}'} akan disorot otomatis.
-                    </Box>
-                  )}
+                {selectedImage ? (
+                  <Box sx={{ px: 1.25, pt: 1.25 }}>
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      alignItems="center"
+                      sx={{
+                        p: 0.75,
+                        borderRadius: 2,
+                        border: `1px solid ${adminPalette.border}`,
+                        backgroundColor: adminPalette.surfaceSoft,
+                      }}
+                    >
+                      <Box sx={{ width: 48, height: 48, borderRadius: 1.5, overflow: 'hidden', backgroundColor: adminPalette.surface, border: `1px solid ${adminPalette.border}`, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+                        {imagePreviewUrl ? (
+                          <Box component="img" src={imagePreviewUrl} alt="Preview image blast" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          <InsertPhotoRoundedIcon sx={{ color: adminPalette.brand, fontSize: 24 }} />
+                        )}
+                      </Box>
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Typography sx={{ fontSize: '0.9rem', fontWeight: 800, color: adminPalette.textPrimary }} noWrap>
+                          {selectedImage.name}
+                        </Typography>
+                        <Typography sx={{ mt: 0.15, fontSize: '0.76rem', color: adminPalette.textMuted }}>
+                          {selectedImage.type || 'image'} • {formatFileSize(selectedImage.size)}
+                        </Typography>
+                      </Box>
+                      <Tooltip title="Hapus image">
+                        <IconButton size="small" onClick={handleRemoveImage} aria-label="Hapus image blast" sx={{ color: adminPalette.textMuted }}>
+                          <CloseRoundedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </Box>
+                ) : null}
+
+                <Box sx={{ position: 'relative', minHeight: selectedImage ? 188 : 240 }}>
+                  <Box
+                    ref={messageMirrorRef}
+                    aria-hidden
+                    sx={{
+                      minHeight: selectedImage ? 188 : 240,
+                      px: 1.5,
+                      py: 1.5,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      overflow: 'auto',
+                      fontSize: '0.96rem',
+                      lineHeight: 1.65,
+                      fontFamily: 'inherit',
+                      letterSpacing: 'normal',
+                      color: adminPalette.textPrimary,
+                    }}
+                  >
+                    {message ? (
+                      renderHighlightedTemplate(message)
+                    ) : (
+                      <Box component="span" sx={{ color: adminPalette.textSubtle }}>
+                        Tulis pesan blast di sini. Variabel seperti {'{{name}}'} atau {'{{group_name}}'} akan disorot otomatis.
+                      </Box>
+                    )}
+                  </Box>
+                  <Box
+                    component="textarea"
+                    ref={messageInputRef}
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    onScroll={handleMessageScroll}
+                    aria-label="Isi pesan blast"
+                    spellCheck={false}
+                    sx={{
+                      position: 'absolute',
+                      inset: 0,
+                      width: '100%',
+                      height: '100%',
+                      p: 1.5,
+                      border: 'none',
+                      outline: 'none',
+                      resize: 'none',
+                      backgroundColor: 'transparent',
+                      color: 'transparent',
+                      caretColor: adminPalette.textPrimary,
+                      fontSize: '0.96rem',
+                      lineHeight: 1.65,
+                      fontFamily: 'inherit',
+                      letterSpacing: 'normal',
+                    }}
+                  />
                 </Box>
-                <Box
-                  component="textarea"
-                  ref={messageInputRef}
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  onScroll={handleMessageScroll}
-                  aria-label="Isi pesan blast"
-                  spellCheck={false}
-                  sx={{
-                    position: 'absolute',
-                    inset: 0,
-                    width: '100%',
-                    height: '100%',
-                    p: 1.5,
-                    border: 'none',
-                    outline: 'none',
-                    resize: 'none',
-                    backgroundColor: 'transparent',
-                    color: 'transparent',
-                    caretColor: adminPalette.textPrimary,
-                    fontSize: '0.96rem',
-                    lineHeight: 1.65,
-                    fontFamily: 'inherit',
-                    letterSpacing: 'normal',
-                  }}
-                />
+
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  spacing={1}
+                  alignItems={{ xs: 'stretch', sm: 'center' }}
+                  justifyContent="space-between"
+                  sx={{ px: 1, py: 0.85, borderTop: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surfaceSoft }}
+                >
+                  <Stack direction="row" spacing={0.85} alignItems="center" sx={{ minWidth: 0 }}>
+                    <Tooltip title={selectedImage ? 'Ganti image' : 'Tambahkan image'}>
+                      <IconButton
+                        onClick={() => imageInputRef.current?.click()}
+                        aria-label={selectedImage ? 'Ganti image blast' : 'Tambahkan image ke blast'}
+                        sx={{
+                          border: `1px solid ${adminPalette.border}`,
+                          backgroundColor: selectedImage ? adminPalette.brandSoft : adminPalette.surface,
+                          color: adminPalette.brandDark,
+                          '&:hover': { backgroundColor: adminPalette.brandSoft },
+                        }}
+                      >
+                        <ImageRoundedIcon />
+                      </IconButton>
+                    </Tooltip>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: adminPalette.textPrimary }}>
+                        {selectedImage ? 'Image terlampir' : 'Tambahkan image'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={1} alignItems="center" justifyContent={{ xs: 'space-between', sm: 'flex-end' }}>
+                    {selectedImage ? (
+                      <Button variant="text" onClick={() => imageInputRef.current?.click()} sx={{ minHeight: 30, px: 1, textTransform: 'none', fontWeight: 800, color: adminPalette.brand }}>
+                        Ganti
+                      </Button>
+                    ) : null}
+                    <Typography sx={{ fontSize: '0.78rem', color: message.trim().length > MAX_MESSAGE_LENGTH ? adminPalette.dangerText : adminPalette.textMuted, fontWeight: 800, whiteSpace: 'nowrap' }}>
+                      {message.trim().length}/{MAX_MESSAGE_LENGTH} karakter
+                    </Typography>
+                  </Stack>
+                </Stack>
               </Box>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} justifyContent="space-between" sx={{ mt: 0.9 }}>
-                <Typography sx={{ fontSize: '0.8rem', color: message.trim().length > MAX_MESSAGE_LENGTH ? adminPalette.dangerText : adminPalette.textMuted, fontWeight: 700 }}>
-                  {message.trim().length}/{MAX_MESSAGE_LENGTH} karakter
-                </Typography>
-              </Stack>
             </Box>
 
             {shouldShowSaveToGroupOption ? (
@@ -1894,9 +2036,20 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
               </Stack>
 
               <Paper elevation={0} sx={{ p: 2, borderRadius: 2.5, backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
-                <Typography sx={{ fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: adminPalette.textPrimary }}>
-                  {renderedPreviewContent}
-                </Typography>
+                <Stack spacing={1.25}>
+                  {imagePreviewUrl ? (
+                    <Box component="img" src={imagePreviewUrl} alt="Preview image blast" sx={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 2, backgroundColor: adminPalette.surface }} />
+                  ) : null}
+                  {renderedPreviewContent ? (
+                    <Typography sx={{ fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: adminPalette.textPrimary }}>
+                      {renderedPreviewContent}
+                    </Typography>
+                  ) : (
+                    <Typography sx={{ fontSize: '0.86rem', color: adminPalette.textMuted }}>
+                      Image akan dikirim tanpa caption.
+                    </Typography>
+                  )}
+                </Stack>
               </Paper>
 
               {recipientCount > previewableRecipients.length ? (
@@ -1994,9 +2147,13 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   Ringkasan
                 </Typography>
                 <Typography sx={{ fontSize: '0.92rem', color: adminPalette.textPrimary }}>
-                  {message.trim().slice(0, 220)}
-                  {message.trim().length > 220 ? '...' : ''}
+                  {message.trim() ? `${message.trim().slice(0, 220)}${message.trim().length > 220 ? '...' : ''}` : 'Tanpa caption teks.'}
                 </Typography>
+                {selectedImage ? (
+                  <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+                    Image terlampir: <strong>{selectedImage.name}</strong> ({formatFileSize(selectedImage.size)}).
+                  </Typography>
+                ) : null}
                 {requiresGroupName ? (
                   <Typography sx={{ fontSize: '0.84rem', color: adminPalette.textSecondary }}>
                     Penerima valid juga akan disimpan ke grup <strong>{saveGroupName.trim()}</strong>.

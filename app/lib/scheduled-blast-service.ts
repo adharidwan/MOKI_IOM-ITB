@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { normalizeBlastMediaInput, type BlastMediaInput } from './blast-media';
 import { getSupabaseAdminClient } from './supabase-server';
 import {
   BlastDispatchError,
@@ -19,7 +20,7 @@ interface ScheduledBlastRecord {
   name: string;
   message_template: string;
   source_type: BlastSource;
-  source_config: { groupNames?: string[]; sourceFile?: string } | null;
+  source_config: { groupNames?: string[]; sourceFile?: string; media?: BlastMediaInput | null } | null;
   schedule_type: ScheduledBlastScheduleType;
   recurrence_type: ScheduledBlastRecurrenceType | null;
   timezone: string;
@@ -109,12 +110,14 @@ export interface SaveScheduledBlastInput {
   status?: ScheduledBlastStatus;
   saveToGroup?: boolean;
   saveGroupName?: string;
+  media?: BlastMediaInput | null;
 }
 
 function parseSourceConfig(value: ScheduledBlastRecord['source_config']) {
   return {
     groupNames: normalizeGroupNames(Array.isArray(value?.groupNames) ? value.groupNames : []),
     sourceFile: String(value?.sourceFile || '').trim() || null,
+    media: normalizeBlastMediaInput(value?.media || null),
   };
 }
 
@@ -202,8 +205,8 @@ function validateScheduleInput(input: SaveScheduledBlastInput, partial = false):
   }
 
   if (!partial || input.message !== undefined) {
-    if (!String(input.message || '').trim()) {
-      throw new Error('Pesan schedule wajib diisi.');
+    if (!String(input.message || '').trim() && !input.media) {
+      throw new Error('Pesan atau image schedule wajib diisi.');
     }
   }
 
@@ -301,6 +304,7 @@ export async function createScheduledBlast(input: SaveScheduledBlastInput): Prom
   const nextRunAt = computeNextRunAt({ scheduleType, runAt, recurrenceType, from: runAt || undefined });
   const groupNames = normalizeGroupNames(Array.isArray(input.groupNames) ? input.groupNames : []);
   const recipients = normalizeBlastRecipients(Array.isArray(input.recipients) ? input.recipients : []);
+  const media = normalizeBlastMediaInput(input.media);
 
   if (source === 'group' && !groupNames.length) {
     throw new Error('Pilih minimal satu grup penerima.');
@@ -320,6 +324,7 @@ export async function createScheduledBlast(input: SaveScheduledBlastInput): Prom
       source_config: {
         groupNames,
         sourceFile: String(input.sourceFile || '').trim() || undefined,
+        media: media || undefined,
       },
       schedule_type: scheduleType,
       recurrence_type: recurrenceType,
@@ -381,8 +386,10 @@ export async function updateScheduledBlast(id: string, input: SaveScheduledBlast
     ? current.next_run_at
     : computeNextRunAt({ scheduleType, runAt, recurrenceType, from: runAt || current.next_run_at });
   const source = input.source || current.source_type;
-  const groupNames = input.groupNames ? normalizeGroupNames(input.groupNames) : parseSourceConfig(current.source_config).groupNames;
+  const currentSourceConfig = parseSourceConfig(current.source_config);
+  const groupNames = input.groupNames ? normalizeGroupNames(input.groupNames) : currentSourceConfig.groupNames;
   const recipients = input.recipients ? normalizeBlastRecipients(input.recipients) : null;
+  const media = input.media !== undefined ? normalizeBlastMediaInput(input.media) : currentSourceConfig.media;
 
   if (source === 'group' && !groupNames.length) {
     throw new Error('Pilih minimal satu grup penerima.');
@@ -400,7 +407,8 @@ export async function updateScheduledBlast(id: string, input: SaveScheduledBlast
       source_type: source,
       source_config: {
         groupNames,
-        sourceFile: input.sourceFile !== undefined ? String(input.sourceFile || '').trim() || undefined : parseSourceConfig(current.source_config).sourceFile || undefined,
+        sourceFile: input.sourceFile !== undefined ? String(input.sourceFile || '').trim() || undefined : currentSourceConfig.sourceFile || undefined,
+        media: media || undefined,
       },
       schedule_type: scheduleType,
       recurrence_type: recurrenceType,
@@ -526,6 +534,7 @@ export async function runScheduledBlast(id: string, options: { force?: boolean; 
       saveToGroup: schedule.save_to_group,
       groupName: schedule.save_group_name || undefined,
       sourceFile: sourceConfig.sourceFile || `scheduled-blast-${schedule.id}`,
+      media: sourceConfig.media,
     });
 
     const finishedAt = new Date().toISOString();

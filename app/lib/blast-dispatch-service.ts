@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { normalizeBlastMediaInput, type BlastMediaInput } from '@/app/lib/blast-media';
 import { renderBlastMessageTemplate } from '@/app/lib/blast-variables';
 import { syncCsvContactsToGroups, type CsvContactInput } from '@/app/lib/api';
 import { resolveAllGroupRecipients } from '@/app/lib/group-directory-server';
@@ -28,6 +29,7 @@ export interface DispatchBlastMessageInput {
   saveToGroup?: boolean;
   groupName?: string;
   sourceFile?: string;
+  media?: BlastMediaInput | null;
 }
 
 export interface DispatchBlastMessageResult extends BlastDispatchResult {
@@ -98,11 +100,12 @@ function assertAcceptedBlastResult(blastResult: BlastDispatchResult): void {
 
 export async function dispatchBlastMessage(input: DispatchBlastMessageInput): Promise<DispatchBlastMessageResult> {
   const message = String(input.message || '').trim();
+  const media = normalizeBlastMediaInput(input.media);
   const saveToGroup = Boolean(input.saveToGroup);
   const groupName = String(input.groupName || '').trim();
 
-  if (!message) {
-    throw new BlastDispatchError('Pesan blast wajib diisi.', 400);
+  if (!message && !media) {
+    throw new BlastDispatchError('Pesan atau image blast wajib diisi.', 400);
   }
 
   const source = input.source || 'manual';
@@ -127,10 +130,12 @@ export async function dispatchBlastMessage(input: DispatchBlastMessageInput): Pr
             recipientPhoneNumber: recipient.no_telp,
             content: renderBlastMessageTemplate(message, recipient),
           })),
+          media,
         })
       : await createDirectBlastOutboundMessages({
           recipientPhoneNumbers: resolvedGroupRecipients.map((recipient) => recipient.no_telp),
           content: message,
+          media,
         });
 
     if (blastResult.totalRecipients === 0) {
@@ -169,10 +174,12 @@ export async function dispatchBlastMessage(input: DispatchBlastMessageInput): Pr
           recipientPhoneNumber: recipient.no_telp,
           content: renderBlastMessageTemplate(message, recipient),
         })),
+        media,
       })
     : await createDirectBlastOutboundMessages({
         recipientPhoneNumbers: recipientRows.map((row) => row.no_telp),
         content: message,
+        media,
       });
 
   assertAcceptedBlastResult(blastResult);
