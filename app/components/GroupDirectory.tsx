@@ -7,7 +7,6 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import {
-  Alert,
   Autocomplete,
   Box,
   Button,
@@ -414,7 +413,10 @@ export default function GroupDirectory({
           <Stack spacing={1} sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}>
             <Stack spacing={1}>
               <Stack spacing={0.35}>
-                <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>Daftar Group</Typography>
+                <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Daftar Group</Typography>
+                <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+                  {groups.total} grup total, halaman {groups.page} dari {groups.totalPages}
+                </Typography>
               </Stack>
 
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'center' }}>
@@ -435,7 +437,7 @@ export default function GroupDirectory({
                 />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
                   <Button variant="outlined" onClick={clearGroupFilters} sx={QUIET_BUTTON_SX}>
-                    Reset
+                    Clear filters
                   </Button>
                   <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => setCreateGroupOpen(true)} sx={PRIMARY_BUTTON_SX}>
                     Add Group
@@ -448,21 +450,10 @@ export default function GroupDirectory({
               <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
                 {selectedGroupName ? `Grup yang sedang ditinjau: ${selectedGroupName}` : 'Belum ada grup yang dipilih.'}
               </Typography>
-              <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                Halaman {groups.page} dari {groups.totalPages}
-              </Typography>
             </Stack>
           </Stack>
 
-          {groups.items.length === 0 ? (
-            <Box sx={{ px: 2, py: 2.5 }}>
-              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-                Tidak ada grup yang sesuai dengan pencarian saat ini.
-              </Alert>
-            </Box>
-          ) : (
-            <>
-              <TableContainer>
+          <TableContainer>
                 <Table
                   size="small"
                   sx={{
@@ -500,7 +491,14 @@ export default function GroupDirectory({
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {groups.items.map((group) => {
+                    {groups.items.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} sx={{ py: 6, textAlign: 'center' }}>
+                          <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Tidak ada grup yang sesuai.</Typography>
+                          <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Coba ubah pencarian atau hapus filter aktif.</Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : groups.items.map((group) => {
                       const active = selectedGroupName === group.name;
 
                       return (
@@ -534,34 +532,32 @@ export default function GroupDirectory({
                     })}
                   </TableBody>
                 </Table>
-              </TableContainer>
+          </TableContainer>
 
-              <TablePagination
-                component="div"
-                count={groups.total}
-                page={Math.max(0, groups.page - 1)}
-                rowsPerPage={groups.pageSize}
-                rowsPerPageOptions={[10, 20, 50, 100]}
-                onPageChange={(_, nextPage) =>
-                  updateQuery({
-                    page: String(nextPage + 1),
-                    group: null,
-                    memberPage: null,
-                    memberSearch: null,
-                  })
-                }
-                onRowsPerPageChange={(event) =>
-                  updateQuery({
-                    pageSize: event.target.value,
-                    page: '1',
-                    group: null,
-                    memberPage: null,
-                    memberSearch: null,
-                  })
-                }
-              />
-            </>
-          )}
+          <TablePagination
+            component="div"
+            count={groups.total}
+            page={Math.max(0, groups.page - 1)}
+            rowsPerPage={groups.pageSize}
+            rowsPerPageOptions={[10, 20, 50, 100]}
+            onPageChange={(_, nextPage) =>
+              updateQuery({
+                page: String(nextPage + 1),
+                group: null,
+                memberPage: null,
+                memberSearch: null,
+              })
+            }
+            onRowsPerPageChange={(event) =>
+              updateQuery({
+                pageSize: event.target.value,
+                page: '1',
+                group: null,
+                memberPage: null,
+                memberSearch: null,
+              })
+            }
+          />
         </Paper>
 
         <Paper
@@ -577,7 +573,10 @@ export default function GroupDirectory({
           <Stack spacing={1} sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}>
             <Stack spacing={1}>
               <Stack spacing={0.35}>
-                <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: adminPalette.textPrimary }}>Anggota Group</Typography>
+                <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Anggota Group</Typography>
+                <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+                  {members.total} anggota total{selectedGroupName ? `, halaman ${members.page} dari ${members.totalPages}` : ''}
+                </Typography>
               </Stack>
 
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', md: 'center' }}>
@@ -599,7 +598,7 @@ export default function GroupDirectory({
                 />
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
                   <Button variant="outlined" onClick={clearMemberFilters} disabled={!selectedGroupName} sx={QUIET_BUTTON_SX}>
-                    Reset
+                    Clear filters
                   </Button>
                   <Button
                     variant="contained"
@@ -618,29 +617,10 @@ export default function GroupDirectory({
               <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
                 {selectedGroupName ? `${members.total} anggota tercatat pada grup ini.` : 'Belum ada grup yang dipilih.'}
               </Typography>
-              {selectedGroupName ? (
-                <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-                  Halaman {members.page} dari {members.totalPages}
-                </Typography>
-              ) : null}
             </Stack>
           </Stack>
 
-          {!selectedGroupName ? (
-            <Box sx={{ px: 2, py: 2.5 }}>
-              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-                Pilih satu grup dari tabel di sebelah kiri untuk melihat daftar anggotanya.
-              </Alert>
-            </Box>
-          ) : members.items.length === 0 ? (
-            <Box sx={{ px: 2, py: 2.5 }}>
-              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-                Belum ada anggota yang sesuai dengan pencarian ini.
-              </Alert>
-            </Box>
-          ) : (
-            <>
-              <TableContainer>
+          <TableContainer>
                 <Table
                   size="small"
                   sx={{
@@ -685,7 +665,21 @@ export default function GroupDirectory({
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {members.items.map((member) => (
+                    {!selectedGroupName ? (
+                      <TableRow>
+                        <TableCell colSpan={3} sx={{ py: 6, textAlign: 'center' }}>
+                          <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Pilih satu grup terlebih dahulu.</Typography>
+                          <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Daftar anggota akan tampil setelah grup dipilih.</Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : members.items.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} sx={{ py: 6, textAlign: 'center' }}>
+                          <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Belum ada anggota yang cocok.</Typography>
+                          <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Coba ubah pencarian anggota atau hapus filter aktif.</Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : members.items.map((member) => (
                       <TableRow
                         key={member.id}
                         hover
@@ -718,19 +712,19 @@ export default function GroupDirectory({
                     ))}
                   </TableBody>
                 </Table>
-              </TableContainer>
+          </TableContainer>
 
-              <TablePagination
-                component="div"
-                count={members.total}
-                page={Math.max(0, members.page - 1)}
-                rowsPerPage={members.pageSize}
-                rowsPerPageOptions={[10, 20, 50, 100]}
-                onPageChange={(_, nextPage) => updateQuery({ memberPage: String(nextPage + 1) })}
-                onRowsPerPageChange={(event) => updateQuery({ memberPageSize: event.target.value, memberPage: '1' })}
-              />
-            </>
-          )}
+          {selectedGroupName ? (
+            <TablePagination
+              component="div"
+              count={members.total}
+              page={Math.max(0, members.page - 1)}
+              rowsPerPage={members.pageSize}
+              rowsPerPageOptions={[10, 20, 50, 100]}
+              onPageChange={(_, nextPage) => updateQuery({ memberPage: String(nextPage + 1) })}
+              onRowsPerPageChange={(event) => updateQuery({ memberPageSize: event.target.value, memberPage: '1' })}
+            />
+          ) : null}
         </Paper>
       </Box>
 
