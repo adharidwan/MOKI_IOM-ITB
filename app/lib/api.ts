@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { getSupabaseServerClient, getSupabaseAdminClient } from './supabase-server';
+import { createTicketMediaSignedUrl, normalizeTicketMediaInput, type TicketMediaInput } from './ticket-media';
 import { Ticket, Reply, TicketWithReplies, CsvContact, ContentRecording, ContentRecordingPlatform, ContentRecordingType, ContentTag } from './types';
 import { createTicketReplyOutboundMessage } from './whatsapp-notification-repository';
 
@@ -267,6 +268,12 @@ function toReply(record: Record<string, unknown>): Reply {
     last_delivery_error: record.last_delivery_error === null || record.last_delivery_error === undefined ? null : String(record.last_delivery_error),
     whatsapp_message_id: record.whatsapp_message_id === null || record.whatsapp_message_id === undefined ? null : String(record.whatsapp_message_id),
     delivered_at: record.delivered_at === null || record.delivered_at === undefined ? null : String(record.delivered_at),
+    media_bucket: record.media_bucket === null || record.media_bucket === undefined ? null : String(record.media_bucket),
+    media_path: record.media_path === null || record.media_path === undefined ? null : String(record.media_path),
+    media_mime_type: record.media_mime_type === null || record.media_mime_type === undefined ? null : String(record.media_mime_type),
+    media_file_name: record.media_file_name === null || record.media_file_name === undefined ? null : String(record.media_file_name),
+    media_size_bytes: record.media_size_bytes === null || record.media_size_bytes === undefined ? null : Number(record.media_size_bytes),
+    media_signed_url: record.media_signed_url === null || record.media_signed_url === undefined ? null : String(record.media_signed_url),
     created_at: String(record.created_at || ''),
   };
 }
@@ -413,7 +420,20 @@ export async function getTicketById(id: string): Promise<TicketWithReplies> {
     throw new Error(`Ticket not found: ${error.message}`);
   }
 
-  return data as TicketWithReplies;
+  const ticket = toTicketWithReplies(data as Record<string, unknown>);
+  const replies = await Promise.all(
+    ticket.replies.map(async (reply) => ({
+      ...reply,
+      media_signed_url: reply.media_bucket && reply.media_path
+        ? await createTicketMediaSignedUrl(reply.media_bucket, reply.media_path)
+        : null,
+    })),
+  );
+
+  return {
+    ...ticket,
+    replies,
+  };
 }
 
 // Create a new ticket
@@ -450,8 +470,14 @@ export async function updateTicketStatus(id: string, status: Ticket['status']): 
 }
 
 // Add a reply to a ticket
-export async function addReply(ticketId: string, author: string, content: string): Promise<Reply> {
+export async function addReply(
+  ticketId: string,
+  author: string,
+  content: string,
+  mediaInput?: TicketMediaInput | null,
+): Promise<Reply> {
   const supabase = getSupabaseAdminClient();
+  const media = normalizeTicketMediaInput(mediaInput);
   const { data: ticket, error: ticketLookupError } = await supabase
     .from('tickets')
     .select('id, channel, whatsapp_chat_id, phone_number, whatsapp_instance_id')
@@ -473,6 +499,11 @@ export async function addReply(ticketId: string, author: string, content: string
       sender_type: 'admin',
       delivery_status: shouldQueueWhatsapp ? 'queued' : 'not_applicable',
       delivery_attempts: 0,
+      media_bucket: media?.bucket || null,
+      media_path: media?.path || null,
+      media_mime_type: media?.mimeType || null,
+      media_file_name: media?.fileName || null,
+      media_size_bytes: media?.sizeBytes || null,
     })
     .select()
     .single();
@@ -492,14 +523,17 @@ export async function addReply(ticketId: string, author: string, content: string
 
   if (shouldQueueWhatsapp && ticket.whatsapp_chat_id) {
     try {
-      await createTicketReplyOutboundMessage({
+      const outboundInput = {
         replyId: data.id,
         ticketId,
         whatsappInstanceId: ticket.whatsapp_instance_id || 'default',
         recipientPhoneNumber: ticket.phone_number,
         recipientChatId: ticket.whatsapp_chat_id,
         content,
-      });
+        ...(media ? { media } : {}),
+      };
+
+      await createTicketReplyOutboundMessage(outboundInput);
     } catch (queueError) {
       const queueErrorMessage =
         queueError instanceof Error ? queueError.message : 'Unknown outbound queue error';

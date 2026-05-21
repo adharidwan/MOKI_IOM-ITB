@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { requireFeatureAccess } from '../../lib/access-control';
 import { addReply, getTicketById, updateTicketStatus } from '../../lib/api';
+import { uploadTicketImage } from '../../lib/ticket-media';
 
 export interface ReplyActionState {
   error: string | null;
@@ -21,8 +22,10 @@ export async function submitTicketReply(
   formData: FormData,
 ): Promise<ReplyActionState> {
   const content = String(formData.get('content') || '').trim();
+  const image = formData.get('image');
+  const hasImage = image instanceof File && image.size > 0;
 
-  if (!content) {
+  if (!content && !hasImage) {
     return {
       error: 'Reply cannot be empty.',
       success: false,
@@ -40,7 +43,8 @@ export async function submitTicketReply(
       };
     }
 
-    await addReply(ticketId, 'Admin', content);
+    const media = hasImage ? await uploadTicketImage(image) : null;
+    await addReply(ticketId, 'Admin', content, media);
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : 'Failed to send reply.',
