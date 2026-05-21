@@ -295,9 +295,41 @@ export default async function TicketDetail({ params }: Props) {
                             <Typography sx={{ fontSize: '0.78rem', color: adminPalette.textMuted }}>{formatDate(reply.created_at)}</Typography>
                           </Stack>
 
-                          <Typography sx={{ fontSize: '0.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', color: tone.color }}>
-                            {reply.content}
-                          </Typography>
+                          {reply.media_signed_url ? (
+                            reply.media_mime_type?.startsWith('image/') ? (
+                              <Box
+                                component="img"
+                                src={reply.media_signed_url}
+                                alt={reply.media_file_name || 'Image lampiran tiket'}
+                                sx={{
+                                  display: 'block',
+                                  width: '100%',
+                                  maxHeight: 360,
+                                  objectFit: 'contain',
+                                  borderRadius: 2,
+                                  backgroundColor: adminPalette.surface,
+                                  border: `1px solid ${adminPalette.border}`,
+                                }}
+                              />
+                            ) : (
+                              <Button
+                                component="a"
+                                href={reply.media_signed_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                variant="outlined"
+                                sx={{ alignSelf: 'flex-start', borderRadius: 2, textTransform: 'none', fontWeight: 700 }}
+                              >
+                                Buka lampiran {reply.media_file_name || 'media'}
+                              </Button>
+                            )
+                          ) : null}
+
+                          {reply.content ? (
+                            <Typography sx={{ fontSize: '0.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', color: tone.color }}>
+                              {reply.content}
+                            </Typography>
+                          ) : null}
 
                           {reply.last_delivery_error ? (
                             <Alert severity="warning" sx={{ borderRadius: 2 }}>

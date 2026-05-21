@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Alert,
   Box,
   Chip,
   InputAdornment,
@@ -144,14 +143,6 @@ export default function TicketTable({ initialData, totalCount, pageSize }: Ticke
     return () => clearTimeout(delayDebounceFn);
   }, [currentQuery, currentSearch, pathname, router, searchTerm]);
 
-  const summaryLabel = useMemo(() => {
-    if (!initialData.length) {
-      return 'Tidak ada tiket yang cocok dengan filter saat ini.';
-    }
-
-    return `Menampilkan ${initialData.length} tiket dari total ${totalCount}.`;
-  }, [initialData.length, totalCount]);
-
   const updatePagination = (page: number, nextPageSize = pageSize) => {
     const params = new URLSearchParams(currentQuery);
     params.set('page', String(page));
@@ -190,7 +181,14 @@ export default function TicketTable({ initialData, totalCount, pageSize }: Ticke
         boxShadow: 'none',
       }}
     >
-      <Stack spacing={1} sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}>
+      <Stack spacing={1} sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}>
+        <Box>
+          <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Daftar tiket</Typography>
+          <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+            {totalCount} tiket total, halaman {currentPage} dari {totalPages}
+          </Typography>
+        </Box>
+
         <Stack direction={{ xs: 'column', xl: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', xl: 'center' }}>
           <TextField
             value={searchTerm}
@@ -208,27 +206,13 @@ export default function TicketTable({ initialData, totalCount, pageSize }: Ticke
             inputProps={{ 'aria-label': 'Cari tiket' }}
           />
 
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            <Chip label={`${totalCount} total tiket`} size="small" sx={{ backgroundColor: adminPalette.surfaceSoft, color: adminPalette.textSecondary, fontWeight: 700 }} />
-            <Chip label={`Halaman ${currentPage}/${totalPages}`} size="small" sx={{ backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />
-          </Stack>
-        </Stack>
-
-        <Stack direction={{ xs: 'column', md: 'row' }} spacing={0.75} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
-          <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textMuted }}>{summaryLabel}</Typography>
-          {currentSearch ? <Typography sx={{ fontSize: '0.8rem', color: adminPalette.brand, fontWeight: 700 }}>Filter pencarian aktif</Typography> : null}
+          {currentSearch ? (
+            <Chip label="Filter pencarian aktif" size="small" sx={{ alignSelf: { xs: 'flex-start', xl: 'center' }, backgroundColor: adminPalette.brandSoft, color: adminPalette.brandDark, fontWeight: 700 }} />
+          ) : null}
         </Stack>
       </Stack>
 
-      {initialData.length === 0 ? (
-        <Box sx={{ px: 2, py: 2.5 }}>
-          <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-            Tidak ada tiket yang cocok. Coba ubah kata kunci pencarian atau hapus filter yang aktif.
-          </Alert>
-        </Box>
-      ) : (
-        <>
-          <TableContainer>
+      <TableContainer>
             <Table
               size="small"
               sx={{
@@ -289,7 +273,14 @@ export default function TicketTable({ initialData, totalCount, pageSize }: Ticke
                 </TableRow>
               </TableHead>
               <TableBody>
-                {initialData.map((row) => {
+                {initialData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} sx={{ py: 6, textAlign: 'center' }}>
+                      <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Tidak ada tiket yang cocok.</Typography>
+                      <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Coba ubah kata kunci pencarian atau hapus filter aktif.</Typography>
+                    </TableCell>
+                  </TableRow>
+                ) : initialData.map((row) => {
                   const statusTone = getStatusTone(row.status);
 
                   return (
@@ -344,19 +335,17 @@ export default function TicketTable({ initialData, totalCount, pageSize }: Ticke
                 })}
               </TableBody>
             </Table>
-          </TableContainer>
+      </TableContainer>
 
-          <TablePagination
-            component="div"
-            count={totalCount}
-            page={Math.max(0, currentPage - 1)}
-            rowsPerPage={pageSize}
-            rowsPerPageOptions={[10, 20, 50, 100]}
-            onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
-            onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
-          />
-        </>
-      )}
+      <TablePagination
+        component="div"
+        count={totalCount}
+        page={Math.max(0, currentPage - 1)}
+        rowsPerPage={pageSize}
+        rowsPerPageOptions={[10, 20, 50, 100]}
+        onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
+        onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
+      />
     </Paper>
   );
 }

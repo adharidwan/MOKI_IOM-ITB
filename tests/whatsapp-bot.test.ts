@@ -48,6 +48,14 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
   return {
     dispatchSettings,
     replies,
+    storage: {
+      from: vi.fn(() => ({
+        download: vi.fn(async () => ({
+          data: new Blob([Buffer.from('image-bytes')]),
+          error: null,
+        })),
+      })),
+    },
     setDispatchSettingsError(error: { message: string } | null) {
       dispatchSettingsError = error;
     },
@@ -423,6 +431,57 @@ describe('processOutboundDispatchJob', () => {
     expect(records[0].delivery_status).toBe('sent');
     expect(supabase.replies[0].delivery_status).toBe('sent');
     expect(dispatchState.nextDispatchAtMs).toBe(2_002_500);
+  });
+
+  it('sends ticket reply media with the text content as caption', async () => {
+    const records: FakeOutboundMessageRecord[] = [
+      {
+        id: 'outbound-ticket-media',
+        recipient_chat_id: '6289999999999@c.us',
+        delivery_status: 'queued',
+        delivery_attempts: 0,
+        next_retry_at: null,
+      },
+    ];
+    const supabase = createFakeSupabase(records);
+    const redis = createFakeRedis();
+    const client = {
+      getNumberId: vi.fn(),
+      sendMessage: vi.fn().mockResolvedValue({ id: { _serialized: 'wa-msg-1' } }),
+    };
+    const job = createFakeJob({
+      outbound_message_id: 'outbound-ticket-media',
+      source_type: 'ticket_reply',
+      source_id: 'reply-1',
+      whatsapp_instance_id: 'default',
+      recipient_phone_number: '6289999999999',
+      recipient_chat_id: '6289999999999@c.us',
+      content: 'Support reply',
+      media_bucket: 'ticket-assets',
+      media_path: '2026-05-21/reply.png',
+      media_mime_type: 'image/png',
+      media_file_name: 'reply.png',
+      attempt_number: 0,
+      client_id: null,
+    });
+
+    await processOutboundDispatchJob(
+      job,
+      'job-token',
+      client,
+      supabase,
+      redis,
+      { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
+      2_000_000,
+      createFakeInstanceContext('default'),
+    );
+
+    const [, media, options] = client.sendMessage.mock.calls[0];
+    expect(media.mimetype).toBe('image/png');
+    expect(media.filename).toBe('reply.png');
+    expect(options).toEqual({ caption: 'Support reply' });
+    expect(supabase.storage.from).toHaveBeenCalledWith('ticket-assets');
+    expect(records[0].delivery_status).toBe('sent');
   });
 
   it('retries transient send failures by delaying the same job with updated attempt data', async () => {

@@ -8,7 +8,6 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import MoreHorizRoundedIcon from '@mui/icons-material/MoreHorizRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import {
-  Alert,
   Box,
   Button,
   Checkbox,
@@ -250,8 +249,15 @@ export default function PhoneListTable({
       <Paper elevation={0} sx={{ ...adminPanelSx, overflow: 'hidden' }}>
         <Stack
           spacing={1}
-          sx={{ px: { xs: 1.25, md: 1.5 }, py: 1.2, borderBottom: `1px solid ${adminPalette.border}` }}
+          sx={{ px: { xs: 1.5, md: 2 }, py: 1.4, borderBottom: `1px solid ${adminPalette.border}` }}
         >
+          <Box>
+            <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Direktori kontak</Typography>
+            <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+              {totalCount} kontak total, halaman {currentPage} dari {totalPages}
+            </Typography>
+          </Box>
+
           <Stack direction={{ xs: 'column', xl: 'row' }} spacing={1} justifyContent="space-between" alignItems={{ xs: 'stretch', xl: 'center' }}>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} sx={{ flex: 1 }}>
               <TextField
@@ -285,7 +291,7 @@ export default function PhoneListTable({
                 onClick={clearFilters}
                 sx={QUIET_BUTTON_SX}
               >
-                Clear
+                Clear filters
               </Button>
               <Button
                 variant="outlined"
@@ -301,38 +307,15 @@ export default function PhoneListTable({
 
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={0.75} justifyContent="space-between" alignItems={{ xs: 'flex-start', md: 'center' }}>
             <Stack direction="row" spacing={1.25} flexWrap="wrap" useFlexGap>
-              <Typography
-                sx={{
-                  fontSize: '0.76rem',
-                  fontWeight: 700,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  color: adminPalette.textMuted,
-                }}
-              >
-                {totalCount} kontak
-              </Typography>
               <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{selectedIds.length} dipilih</Typography>
               {(currentSearch || currentGroupName) && (
                 <Typography sx={{ fontSize: '0.8rem', color: adminPalette.brand, fontWeight: 700 }}>Filter aktif</Typography>
               )}
             </Stack>
-
-            <Typography sx={{ fontSize: '0.76rem', color: adminPalette.textMuted }}>
-              Halaman {currentPage} dari {totalPages}
-            </Typography>
           </Stack>
         </Stack>
 
-        {contacts.length === 0 ? (
-          <Box sx={{ px: 2, py: 2.5 }}>
-            <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-              Tidak ada kontak yang cocok.
-            </Alert>
-          </Box>
-        ) : (
-          <>
-            <TableContainer>
+        <TableContainer>
               <Table
                 size="small"
                 sx={{
@@ -407,7 +390,14 @@ export default function PhoneListTable({
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {contacts.map((contact) => {
+                  {contacts.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} sx={{ py: 6, textAlign: 'center' }}>
+                        <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Tidak ada kontak yang cocok.</Typography>
+                        <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Coba ubah pencarian, grup, atau hapus filter aktif.</Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : contacts.map((contact) => {
                     const status = getContactStatus(contact);
 
                     return (
@@ -552,19 +542,17 @@ export default function PhoneListTable({
                   })}
                 </TableBody>
               </Table>
-            </TableContainer>
+        </TableContainer>
 
-            <TablePagination
-              component="div"
-              count={totalCount}
-              page={Math.max(0, currentPage - 1)}
-              rowsPerPage={pageSize}
-              rowsPerPageOptions={[10, 20, 50, 100]}
-              onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
-              onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
-            />
-          </>
-        )}
+        <TablePagination
+          component="div"
+          count={totalCount}
+          page={Math.max(0, currentPage - 1)}
+          rowsPerPage={pageSize}
+          rowsPerPageOptions={[10, 20, 50, 100]}
+          onPageChange={(_, nextPage) => updatePagination(nextPage + 1)}
+          onRowsPerPageChange={(event) => updatePagination(1, Number(event.target.value))}
+        />
       </Paper>
 
       <Menu

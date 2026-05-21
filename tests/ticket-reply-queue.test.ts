@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createTicketReplyOutboundMessage = vi.fn();
+const insertedReplies: Array<Record<string, unknown>> = [];
 let fakeSupabase: {
   from: (tableName: string) => {
     select?: () => {
@@ -33,6 +34,7 @@ vi.mock('../app/lib/supabase-server', () => ({
 beforeEach(() => {
   createTicketReplyOutboundMessage.mockReset();
   createTicketReplyOutboundMessage.mockResolvedValue({ id: 'outbound-1' });
+  insertedReplies.length = 0;
 
   fakeSupabase = {
     from(tableName: string) {
@@ -70,6 +72,7 @@ beforeEach(() => {
       if (tableName === 'replies') {
         return {
           insert(payload: Record<string, unknown>) {
+            insertedReplies.push(payload);
             return {
               select() {
                 return {
@@ -108,6 +111,14 @@ describe('addReply', () => {
     const reply = await addReply('ticket-1', 'Admin', 'Support message');
 
     expect(reply.id).toBe('reply-1');
+    expect(insertedReplies[0]).toMatchObject({
+      content: 'Support message',
+      media_bucket: null,
+      media_path: null,
+      media_mime_type: null,
+      media_file_name: null,
+      media_size_bytes: null,
+    });
     expect(createTicketReplyOutboundMessage).toHaveBeenCalledWith({
       replyId: 'reply-1',
       ticketId: 'ticket-1',
@@ -115,6 +126,37 @@ describe('addReply', () => {
       recipientPhoneNumber: '6281234567890',
       recipientChatId: '6281234567890@c.us',
       content: 'Support message',
+    });
+  });
+
+  it('stores and queues ticket reply image metadata', async () => {
+    const { addReply } = await import('../app/lib/api');
+    const media = {
+      bucket: 'ticket-assets',
+      path: '2026-05-21/image.png',
+      mimeType: 'image/png',
+      fileName: 'image.png',
+      sizeBytes: 128,
+    };
+
+    await addReply('ticket-1', 'Admin', '', media);
+
+    expect(insertedReplies[0]).toMatchObject({
+      content: '',
+      media_bucket: 'ticket-assets',
+      media_path: '2026-05-21/image.png',
+      media_mime_type: 'image/png',
+      media_file_name: 'image.png',
+      media_size_bytes: 128,
+    });
+    expect(createTicketReplyOutboundMessage).toHaveBeenCalledWith({
+      replyId: 'reply-1',
+      ticketId: 'ticket-1',
+      whatsappInstanceId: 'default',
+      recipientPhoneNumber: '6281234567890',
+      recipientChatId: '6281234567890@c.us',
+      content: '',
+      media,
     });
   });
 });

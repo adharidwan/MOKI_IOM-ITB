@@ -66,6 +66,10 @@ export interface OutboundMessageRecord {
   recipient_phone_number: string;
   recipient_chat_id: string | null;
   content: string;
+  media_bucket: string | null;
+  media_path: string | null;
+  media_mime_type: string | null;
+  media_file_name: string | null;
   client_reference: string | null;
   delivery_status: OutboundMessageStatus;
   delivery_attempts: number;

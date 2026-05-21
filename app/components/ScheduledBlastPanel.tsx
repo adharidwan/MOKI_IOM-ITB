@@ -10,6 +10,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  InputAdornment,
   MenuItem,
   Paper,
   Stack,
@@ -23,6 +24,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 
 import { adminPalette, adminTableHeaderCellSx } from '../lib/adminPalette';
 
@@ -286,6 +288,9 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
             <Typography sx={{ mt: 0.35, fontSize: '0.84rem', color: adminPalette.textMuted }}>
               Pantau schedule aktif, jalankan manual, ubah timing, pause, atau hapus schedule.
             </Typography>
+            <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+              {total} schedule total, halaman {page} dari {Math.max(1, Math.ceil(total / pageSize))}
+            </Typography>
           </Box>
           <Button variant="outlined" onClick={() => void loadItems()} disabled={loading} sx={QUIET_BUTTON_SX}>
             {loading ? 'Memuat...' : 'Refresh'}
@@ -303,6 +308,13 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
             placeholder="Cari nama atau pesan"
             size="small"
             sx={{ minWidth: { md: 260 }, '& .MuiOutlinedInput-root': { backgroundColor: adminPalette.surface } }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchRoundedIcon sx={{ fontSize: 17, color: adminPalette.textSubtle }} />
+                </InputAdornment>
+              ),
+            }}
           />
           <TextField
             select
@@ -363,8 +375,7 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
         {status ? <Alert severity={status.type} sx={{ borderRadius: 2.5 }}>{status.message}</Alert> : null}
       </Stack>
 
-      {items.length ? (
-        <TableContainer>
+      <TableContainer>
           <Table size="small" sx={{ minWidth: 980, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
             <TableHead sx={{ backgroundColor: adminPalette.brand }}>
               <TableRow>
@@ -374,7 +385,14 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
               </TableRow>
             </TableHead>
             <TableBody>
-              {items.map((item) => (
+              {items.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} sx={{ py: 6, textAlign: 'center' }}>
+                    <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Belum ada scheduled blast.</Typography>
+                    <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Susun pesan di atas lalu klik Jadwalkan.</Typography>
+                  </TableCell>
+                </TableRow>
+              ) : items.map((item) => (
                 <TableRow key={item.id} hover sx={{ '&:hover': { backgroundColor: adminPalette.brandSoft } }}>
                   <TableCell sx={{ py: 0.9, minWidth: 220 }}>
                     <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: adminPalette.textPrimary }}>{item.name}</Typography>
@@ -413,19 +431,14 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
               ))}
             </TableBody>
           </Table>
-        </TableContainer>
-      ) : (
-        <Alert severity="info" sx={{ m: 1.5, borderRadius: 2.5 }}>
-          Belum ada scheduled blast. Susun pesan di atas lalu klik Jadwalkan.
-        </Alert>
-      )}
+      </TableContainer>
 
       <TablePagination
         component="div"
         count={total}
         page={Math.max(0, page - 1)}
         rowsPerPage={pageSize}
-        rowsPerPageOptions={[5, 10, 20, 50, 100]}
+        rowsPerPageOptions={[10, 20, 50, 100]}
         onPageChange={(_, nextPage) => {
           const nextPageNumber = nextPage + 1;
           setPage(nextPageNumber);

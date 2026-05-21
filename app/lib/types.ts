@@ -26,6 +26,12 @@ export interface Reply {
   last_delivery_error: string | null;
   whatsapp_message_id: string | null;
   delivered_at: string | null;
+  media_bucket: string | null;
+  media_path: string | null;
+  media_mime_type: string | null;
+  media_file_name: string | null;
+  media_size_bytes: number | null;
+  media_signed_url: string | null;
   created_at: string;
 }
 

@@ -27,6 +27,10 @@ export interface OutboundDispatchJobData {
   recipient_phone_number: string;
   recipient_chat_id: string | null;
   content: string;
+  media_bucket: string | null;
+  media_path: string | null;
+  media_mime_type: string | null;
+  media_file_name: string | null;
   priority: number;
   attempt_number: number;
   client_reference: string | null;
@@ -54,6 +58,10 @@ export function buildOutboundDispatchJobData(
     recipient_phone_number: message.recipient_phone_number,
     recipient_chat_id: message.recipient_chat_id,
     content: message.content,
+    media_bucket: message.media_bucket,
+    media_path: message.media_path,
+    media_mime_type: message.media_mime_type,
+    media_file_name: message.media_file_name,
     priority: message.priority,
     attempt_number: message.delivery_attempts,
     client_reference: message.client_reference,
