@@ -14,6 +14,7 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  InputAdornment,
   MenuItem,
   Paper,
   Stack,
@@ -32,6 +33,7 @@ import {
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import ImageRoundedIcon from '@mui/icons-material/ImageRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 
 import { BLAST_VARIABLES, renderBlastMessageTemplate } from '../lib/blast-variables';
 import { adminPalette, adminTableHeaderCellSx, adminTableSortLabelSx } from '../lib/adminPalette';
@@ -1179,6 +1181,13 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                     placeholder="Cari nama, nomor, atau keterangan"
                     size="small"
                     sx={{ minWidth: { md: 280 }, '& .MuiOutlinedInput-root': { backgroundColor: adminPalette.surface } }}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchRoundedIcon sx={{ fontSize: 17, color: adminPalette.textSubtle }} />
+                        </InputAdornment>
+                      ),
+                    }}
                     inputProps={{ 'aria-label': 'Cari kontak penerima' }}
                   />
                   <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -1298,6 +1307,13 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                         placeholder="Cari grup atau anggota"
                         size="small"
                         sx={{ minWidth: { md: 280 }, '& .MuiOutlinedInput-root': { backgroundColor: adminPalette.surface } }}
+                        InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <SearchRoundedIcon sx={{ fontSize: 17, color: adminPalette.textSubtle }} />
+                            </InputAdornment>
+                          ),
+                        }}
                         inputProps={{ 'aria-label': 'Cari grup penerima' }}
                       />
                       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -1842,6 +1858,13 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                 placeholder="Cari judul, deskripsi, atau isi"
                 size="small"
                 sx={{ minWidth: { sm: 280 } }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchRoundedIcon sx={{ fontSize: 17, color: adminPalette.textSubtle }} />
+                    </InputAdornment>
+                  ),
+                }}
               />
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
                 <Button variant="outlined" onClick={() => void loadTemplates()} disabled={templateLoading} sx={QUIET_BUTTON_SX}>
@@ -1853,8 +1876,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
               </Stack>
             </Stack>
 
-            {templateItems.length ? (
-              <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${adminPalette.border}`, borderRadius: 2.5 }}>
+            <TableContainer component={Paper} elevation={0} sx={{ border: `1px solid ${adminPalette.border}`, borderRadius: 2.5 }}>
                 <Table size="small" sx={{ minWidth: 760, '& .MuiTableCell-root': { borderBottom: `1px solid ${adminPalette.border}` } }}>
                   <TableHead sx={{ backgroundColor: adminPalette.brand }}>
                     <TableRow>
@@ -1864,7 +1886,14 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {templateItems.map((item) => (
+                    {templateItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} sx={{ py: 6, textAlign: 'center' }}>
+                          <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Belum ada template blast.</Typography>
+                          <Typography sx={{ mt: 0.8, color: adminPalette.textSecondary }}>Simpan pesan saat ini sebagai template untuk dipakai ulang.</Typography>
+                        </TableCell>
+                      </TableRow>
+                    ) : templateItems.map((item) => (
                       <TableRow key={item.id} hover onClick={() => setPreviewTemplate(item)} sx={{ cursor: 'pointer', '&:hover': { backgroundColor: adminPalette.brandSoft } }}>
                         <TableCell sx={{ py: 0.9, minWidth: 360 }}>
                           <Typography sx={{ fontSize: '0.86rem', fontWeight: 800, color: adminPalette.textPrimary }}>{item.title}</Typography>
@@ -1890,18 +1919,13 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
                   </TableBody>
                 </Table>
               </TableContainer>
-            ) : (
-              <Alert severity="info" sx={{ borderRadius: 2.5 }}>
-                Belum ada template blast. Simpan pesan saat ini sebagai template untuk dipakai ulang.
-              </Alert>
-            )}
 
             <TablePagination
               component="div"
               count={templateTotal}
               page={Math.max(0, templatePage - 1)}
               rowsPerPage={templatePageSize}
-              rowsPerPageOptions={[5, 10, 20, 50, 100]}
+              rowsPerPageOptions={[10, 20, 50, 100]}
               onPageChange={(_, nextPage) => {
                 const nextPageNumber = nextPage + 1;
                 setTemplatePage(nextPageNumber);
