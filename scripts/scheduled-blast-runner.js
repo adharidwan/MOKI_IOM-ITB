@@ -71,6 +71,10 @@ function buildJobData(message) {
     recipient_phone_number: message.recipient_phone_number,
     recipient_chat_id: message.recipient_chat_id,
     content: message.content,
+    media_bucket: message.media_bucket || null,
+    media_path: message.media_path || null,
+    media_mime_type: message.media_mime_type || null,
+    media_file_name: message.media_file_name || null,
     priority: message.priority,
     attempt_number: message.delivery_attempts,
     client_reference: message.client_reference,
@@ -166,11 +170,15 @@ async function runSchedule(supabase, queue, redis, schedule, instanceIds, schedu
     if (!instanceIds.length) throw new Error('No enabled WhatsApp instance is available for scheduled blast.');
 
     const personalized = String(schedule.message_template || '').includes('{{');
+    const media = schedule.source_config?.media || null;
     const outboundInputs = recipients.map((recipient) => ({
       phoneNumber: recipient.no_telp,
       content: personalized ? renderBlastMessageTemplate(schedule.message_template, recipient) : schedule.message_template,
     }));
-    const requestId = buildRequestId(schedule.id, scheduledFor, schedule.message_template, outboundInputs.map((input) => input.phoneNumber).sort());
+    const requestId = buildRequestId(schedule.id, scheduledFor, schedule.message_template, {
+      recipients: outboundInputs.map((input) => input.phoneNumber).sort(),
+      media,
+    });
     const trackedMessageIds = [];
     let queuedCount = 0;
     let failedCount = 0;
@@ -191,6 +199,10 @@ async function runSchedule(supabase, queue, redis, schedule, instanceIds, schedu
         recipient_phone_number: input.phoneNumber,
         recipient_chat_id: null,
         content: input.content,
+        media_bucket: media?.bucket || null,
+        media_path: media?.path || null,
+        media_mime_type: media?.mimeType || null,
+        media_file_name: media?.fileName || null,
         client_reference: null,
         delivery_status: 'queued',
         delivery_attempts: 0,

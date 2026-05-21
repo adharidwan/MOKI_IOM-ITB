@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+const crypto = require('crypto');
 const path = require('path');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const { DelayedError, Worker } = require('bullmq');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -62,6 +63,8 @@ const DEFAULT_WHATSAPP_INSTANCE_ID = process.env.WHATSAPP_INSTANCE_ID || 'defaul
 const DEFAULT_WHATSAPP_INSTANCE_LABEL = process.env.WHATSAPP_INSTANCE_LABEL || 'Primary WhatsApp';
 const HEARTBEAT_INTERVAL_MS = 15000;
 const WHATSAPP_INSTANCE_ID_PATTERN = /^[a-z0-9_-]+$/;
+const TICKET_MEDIA_BUCKET = 'ticket-assets';
+const MAX_TICKET_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 
 function getRequiredEnv(name) {
   const value = process.env[name];
@@ -288,6 +291,58 @@ function getStartOfCurrentDateMs() {
   return now.getTime();
 }
 
+function sanitizeTicketMediaFileName(value) {
+  const normalized = String(value || '')
+    .replace(/[^\w.\- ]+/g, '')
+    .replace(/\s+/g, '-')
+    .trim();
+  return normalized || 'ticket-image';
+}
+
+function getDefaultImageFileName(mimeType) {
+  const extension = String(mimeType || '').split('/')[1] || 'jpg';
+  return `ticket-image.${extension.replace(/[^a-z0-9]/gi, '') || 'jpg'}`;
+}
+
+async function downloadTicketImageMedia(supabase, msg) {
+  if (!msg.hasMedia) {
+    return null;
+  }
+
+  const media = await msg.downloadMedia();
+
+  if (!media?.mimetype?.startsWith('image/') || !media.data) {
+    return null;
+  }
+
+  const buffer = Buffer.from(media.data, 'base64');
+
+  if (buffer.length > MAX_TICKET_IMAGE_SIZE_BYTES) {
+    throw new Error('Inbound ticket image exceeds the 10 MB limit.');
+  }
+
+  const safeFileName = sanitizeTicketMediaFileName(media.filename || getDefaultImageFileName(media.mimetype));
+  const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName}`;
+  const { error } = await supabase.storage
+    .from(TICKET_MEDIA_BUCKET)
+    .upload(objectPath, buffer, {
+      contentType: media.mimetype,
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Failed to upload inbound ticket image: ${error.message}`);
+  }
+
+  return {
+    media_bucket: TICKET_MEDIA_BUCKET,
+    media_path: objectPath,
+    media_mime_type: media.mimetype,
+    media_file_name: safeFileName,
+    media_size_bytes: buffer.length,
+  };
+}
+
 function shouldSendFarizAutoReply(msg) {
   if (String(msg?.body || '') !== FARIZ_AUTO_REPLY_TRIGGER) {
     return false;
@@ -391,8 +446,10 @@ async function appendCustomerReply(
   phoneNumber,
   chatId,
   content,
+  media,
 ) {
   const now = new Date().toISOString();
+  const preview = content || (media ? '[image]' : '');
 
   const { error: replyError } = await supabase
     .from('replies')
@@ -403,6 +460,11 @@ async function appendCustomerReply(
       sender_type: 'customer',
       delivery_status: 'not_applicable',
       delivery_attempts: 0,
+      media_bucket: media?.media_bucket || null,
+      media_path: media?.media_path || null,
+      media_mime_type: media?.media_mime_type || null,
+      media_file_name: media?.media_file_name || null,
+      media_size_bytes: media?.media_size_bytes || null,
       created_at: now,
     });
 
@@ -431,7 +493,7 @@ async function appendCustomerReply(
     chat_id: chatId,
     invalid_message_count: 0,
     last_inbound_at: now,
-    last_message_preview: String(content || '').slice(0, 250),
+    last_message_preview: String(preview || '').slice(0, 250),
     last_ticket_id: ticketId,
     updated_at: now,
   });
@@ -460,7 +522,7 @@ async function handleInvalidMessage(client, supabase, instanceContext, msg) {
   }
 }
 
-async function createWhatsappTicket(client, supabase, instanceContext, msg, parsedCommand) {
+async function createWhatsappTicket(client, supabase, instanceContext, msg, parsedCommand, media) {
   const now = new Date().toISOString();
   const phoneNumber = normalizePhone(msg.from);
 
@@ -494,6 +556,11 @@ async function createWhatsappTicket(client, supabase, instanceContext, msg, pars
       sender_type: 'customer',
       delivery_status: 'not_applicable',
       delivery_attempts: 0,
+      media_bucket: media?.media_bucket || null,
+      media_path: media?.media_path || null,
+      media_mime_type: media?.media_mime_type || null,
+      media_file_name: media?.media_file_name || null,
+      media_size_bytes: media?.media_size_bytes || null,
       created_at: now,
     });
 
@@ -640,6 +707,27 @@ async function updateOutboundLedger(supabase, outboundMessageId, payload, failur
   }
 }
 
+async function loadOutboundMessageMedia(supabase, outboundMessage) {
+  if (!outboundMessage.media_bucket || !outboundMessage.media_path || !outboundMessage.media_mime_type) {
+    return null;
+  }
+
+  const { data, error } = await supabase.storage
+    .from(outboundMessage.media_bucket)
+    .download(outboundMessage.media_path);
+
+  if (error) {
+    throw new Error(`Failed to download outbound media: ${error.message}`);
+  }
+
+  const buffer = Buffer.from(await data.arrayBuffer());
+  return new MessageMedia(
+    outboundMessage.media_mime_type,
+    buffer.toString('base64'),
+    outboundMessage.media_file_name || 'blast-image',
+  );
+}
+
 async function delayJobForLater(job, token, timestamp, updatedData) {
   if (updatedData) {
     await job.updateData(updatedData);
@@ -745,7 +833,10 @@ async function processOutboundDispatchJob(
   }
 
   try {
-    const result = await client.sendMessage(recipientChatId, job.data.content);
+    const media = await loadOutboundMessageMedia(supabase, job.data);
+    const result = media
+      ? await client.sendMessage(recipientChatId, media, { caption: job.data.content || undefined })
+      : await client.sendMessage(recipientChatId, job.data.content);
     const deliveredAt = new Date().toISOString();
 
     await updateOutboundLedger(
@@ -1078,6 +1169,7 @@ async function main() {
       });
 
       if (activeTicket) {
+        const ticketMedia = await downloadTicketImageMedia(supabase, msg);
         await appendCustomerReply(
           supabase,
           instanceContext.instanceId,
@@ -1085,6 +1177,7 @@ async function main() {
           phoneNumber,
           msg.from,
           String(msg.body || ''),
+          ticketMedia,
         );
         return;
       }
@@ -1096,7 +1189,8 @@ async function main() {
         return;
       }
 
-      await createWhatsappTicket(client, supabase, instanceContext, msg, parsedCommand);
+      const ticketMedia = await downloadTicketImageMedia(supabase, msg);
+      await createWhatsappTicket(client, supabase, instanceContext, msg, parsedCommand, ticketMedia);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(`Incoming message processing failed: ${errorMessage}`);

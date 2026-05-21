@@ -4,6 +4,8 @@ import crypto from 'node:crypto';
 
 import { PostgrestError } from '@supabase/supabase-js';
 
+import type { BlastMediaInput } from './blast-media';
+import type { TicketMediaInput } from './ticket-media';
 import { enqueueOutboundDispatchJob, getOutboundDispatchQueue } from './outbound-dispatch-queue';
 import {
   cacheApiClientByKeyPrefix,
@@ -54,6 +56,7 @@ export interface CreateTicketReplyOutboundMessageInput {
   recipientPhoneNumber: string | null;
   recipientChatId: string;
   content: string;
+  media?: TicketMediaInput | null;
 }
 
 export interface CreateGroupBlastOutboundMessagesInput {
@@ -64,6 +67,7 @@ export interface CreateGroupBlastOutboundMessagesInput {
 export interface CreateDirectBlastOutboundMessagesInput {
   recipientPhoneNumbers: string[];
   content: string;
+  media?: BlastMediaInput | null;
 }
 
 export interface CreatePersonalizedBlastOutboundMessagesInput {
@@ -71,6 +75,7 @@ export interface CreatePersonalizedBlastOutboundMessagesInput {
     recipientPhoneNumber: string;
     content: string;
   }>;
+  media?: BlastMediaInput | null;
 }
 
 export interface BlastDispatchResult {
@@ -121,12 +126,24 @@ function normalizePhoneNumbers(phoneNumbers: string[]): string[] {
   );
 }
 
-function buildBlastRequestId(content: string, recipientKeys: string[]): string {
+function normalizeMediaKey(media?: BlastMediaInput | null) {
+  return media
+    ? {
+        bucket: media.bucket,
+        path: media.path,
+        mimeType: media.mimeType,
+        fileName: media.fileName,
+      }
+    : null;
+}
+
+function buildBlastRequestId(content: string, recipientKeys: string[], media?: BlastMediaInput | null): string {
   return crypto
     .createHash('sha256')
     .update(
       JSON.stringify({
         content: content.trim(),
+        media: normalizeMediaKey(media),
         recipients: normalizeList(recipientKeys).sort((left, right) => left.localeCompare(right)),
       }),
     )
@@ -136,19 +153,21 @@ function buildBlastRequestId(content: string, recipientKeys: string[]): string {
 
 function buildPersonalizedBlastRequestId(
   recipients: Array<{ recipientPhoneNumber: string; content: string }>,
+  media?: BlastMediaInput | null,
 ): string {
   return crypto
     .createHash('sha256')
     .update(
-      JSON.stringify(
-        recipients
+      JSON.stringify({
+        recipients: recipients
           .map((recipient) => ({
             recipientPhoneNumber: String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim(),
             content: String(recipient.content || '').trim(),
           }))
-          .filter((recipient) => recipient.recipientPhoneNumber && recipient.content)
+          .filter((recipient) => recipient.recipientPhoneNumber && (recipient.content || media))
           .sort((left, right) => left.recipientPhoneNumber.localeCompare(right.recipientPhoneNumber)),
-      ),
+        media: normalizeMediaKey(media),
+      }),
     )
     .digest('hex')
     .slice(0, 24);
@@ -202,6 +221,7 @@ async function createOrReuseBlastOutboundMessage(
     recipientPhoneNumber: string;
     content: string;
     whatsappInstanceId: string;
+    media?: BlastMediaInput | null;
   },
 ): Promise<{
   outboundMessage: OutboundMessageRecord;
@@ -222,6 +242,10 @@ async function createOrReuseBlastOutboundMessage(
     recipient_phone_number: input.recipientPhoneNumber,
     recipient_chat_id: null,
     content: input.content,
+    media_bucket: input.media?.bucket || null,
+    media_path: input.media?.path || null,
+    media_mime_type: input.media?.mimeType || null,
+    media_file_name: input.media?.fileName || null,
     client_reference: null,
     delivery_status: 'queued',
     delivery_attempts: 0,
@@ -376,6 +400,7 @@ async function dispatchBlastMessages(
   recipientPhoneNumbers: string[],
   content: string,
   requestId: string,
+  media?: BlastMediaInput | null,
 ): Promise<BlastDispatchResult> {
   return dispatchPersonalizedBlastMessages(
     normalizePhoneNumbers(recipientPhoneNumbers).map((recipientPhoneNumber) => ({
@@ -383,12 +408,14 @@ async function dispatchBlastMessages(
       content,
     })),
     requestId,
+    media,
   );
 }
 
 async function dispatchPersonalizedBlastMessages(
   recipients: Array<{ recipientPhoneNumber: string; content: string }>,
   requestId: string,
+  media?: BlastMediaInput | null,
 ): Promise<BlastDispatchResult> {
   const supabase = getSupabaseAdminClient();
   const normalizedRecipients = Array.from(
@@ -396,7 +423,7 @@ async function dispatchPersonalizedBlastMessages(
       const normalizedPhoneNumber = String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim();
       const normalizedContent = String(recipient.content || '').trim();
 
-      if (!normalizedPhoneNumber || !normalizedContent) {
+      if (!normalizedPhoneNumber || (!normalizedContent && !media)) {
         return deduped;
       }
 
@@ -441,6 +468,7 @@ async function dispatchPersonalizedBlastMessages(
         recipientPhoneNumber: recipient.recipientPhoneNumber,
         content: recipient.content,
         whatsappInstanceId,
+        media,
       });
 
     trackedMessageIds.push(outboundMessage.id);
@@ -554,6 +582,10 @@ export function createSupabaseNotificationRepository(): NotificationRepository {
         recipient_phone_number: input.recipientPhoneNumber,
         recipient_chat_id: null,
         content: input.content,
+        media_bucket: null,
+        media_path: null,
+        media_mime_type: null,
+        media_file_name: null,
         client_reference: input.clientReference,
         delivery_status: 'queued',
         delivery_attempts: 0,
@@ -639,7 +671,8 @@ export async function createDirectBlastOutboundMessages(
   return dispatchBlastMessages(
     normalizedPhoneNumbers,
     input.content,
-    buildBlastRequestId(input.content, normalizedPhoneNumbers),
+    buildBlastRequestId(input.content, normalizedPhoneNumbers, input.media),
+    input.media,
   );
 }
 
@@ -651,11 +684,12 @@ export async function createPersonalizedBlastOutboundMessages(
       recipientPhoneNumber: String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim(),
       content: String(recipient.content || '').trim(),
     }))
-    .filter((recipient) => recipient.recipientPhoneNumber && recipient.content);
+    .filter((recipient) => recipient.recipientPhoneNumber && (recipient.content || input.media));
 
   return dispatchPersonalizedBlastMessages(
     normalizedRecipients,
-    buildPersonalizedBlastRequestId(normalizedRecipients),
+    buildPersonalizedBlastRequestId(normalizedRecipients, input.media),
+    input.media,
   );
 }
 
@@ -665,6 +699,7 @@ export async function createTicketReplyOutboundMessage(
   const supabase = getSupabaseAdminClient();
   await getOrCreateDefaultWhatsappInstance();
   const now = new Date().toISOString();
+  const media = input.media || null;
   const { data, error } = await supabase
     .from('outbound_messages')
     .insert({
@@ -679,6 +714,10 @@ export async function createTicketReplyOutboundMessage(
       recipient_phone_number: input.recipientPhoneNumber,
       recipient_chat_id: input.recipientChatId,
       content: input.content,
+      media_bucket: media?.bucket || null,
+      media_path: media?.path || null,
+      media_mime_type: media?.mimeType || null,
+      media_file_name: media?.fileName || null,
       client_reference: null,
       delivery_status: 'queued',
       delivery_attempts: 0,
