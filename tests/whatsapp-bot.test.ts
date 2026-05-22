@@ -2,6 +2,40 @@ import { createRequire } from 'node:module';
 
 import { describe, expect, it, vi } from 'vitest';
 
+const mockDb = vi.hoisted(() => ({
+  outboundMessages: [] as FakeOutboundMessageRecord[],
+  replies: [] as Array<{
+    id: string;
+    delivery_status: string;
+    delivery_attempts: number;
+    next_retry_at: string | null;
+    last_delivery_error: string | null;
+    whatsapp_message_id: string | null;
+    delivered_at: string | null;
+  }>,
+  dispatchSettings: {
+    id: 'default',
+    global_messages_per_minute: 24,
+    api_notifications_paused: false,
+  },
+  dispatchSettingsError: null as { message: string } | null,
+  dispatchSettingsReadCount: 0,
+}));
+
+function applyUpdate(target: Record<string, unknown>, statement: string, params: unknown[]): void {
+  const setClause = statement.match(/set\s+([\s\S]+?)\s+where/i)?.[1] || '';
+  setClause
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part, index) => {
+      const column = part.match(/^([a-z_]+)/i)?.[1];
+      if (column) {
+        target[column] = params[index + 1];
+      }
+    });
+}
+
 const require = createRequire(import.meta.url);
 const {
   DelayedError,
@@ -10,8 +44,41 @@ const {
   getDispatchMinGapMs,
   loadDispatchSettingsWithFallback,
   processOutboundDispatchJob,
+  setTestAdapters,
   summarizeDispatchSettingsLoadError,
 } = require('../scripts/whatsapp-bot.js');
+
+const downloadObjectBufferMock = vi.fn(async () => Buffer.from('image-bytes'));
+
+async function fakeQuery(statement: string, params: unknown[] = []) {
+  if (statement.includes('from public.bot_dispatch_settings')) {
+    mockDb.dispatchSettingsReadCount += 1;
+    if (mockDb.dispatchSettingsError) {
+      throw new Error(mockDb.dispatchSettingsError.message);
+    }
+    return { rows: [mockDb.dispatchSettings] };
+  }
+
+  if (statement.includes('update public.outbound_messages')) {
+    const record = mockDb.outboundMessages.find((item) => item.id === params[0]);
+    if (!record) {
+      throw new Error('Record not found.');
+    }
+    applyUpdate(record as unknown as Record<string, unknown>, statement, params);
+    return { rows: [] };
+  }
+
+  if (statement.includes('update public.replies')) {
+    const reply = mockDb.replies.find((item) => item.id === params[0]);
+    if (!reply) {
+      throw new Error('Reply not found.');
+    }
+    applyUpdate(reply as unknown as Record<string, unknown>, statement, params);
+    return { rows: [] };
+  }
+
+  throw new Error(`Unexpected query: ${statement}`);
+}
 
 interface FakeOutboundMessageRecord {
   id: string;
@@ -25,7 +92,7 @@ interface FakeOutboundMessageRecord {
   delivered_at?: string | null;
 }
 
-function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
+function createFakeDatabase(records: FakeOutboundMessageRecord[]) {
   const replies = [
     {
       id: 'reply-1',
@@ -37,88 +104,29 @@ function createFakeSupabase(records: FakeOutboundMessageRecord[]) {
       delivered_at: null,
     },
   ];
-  const dispatchSettings = {
+  mockDb.outboundMessages = records;
+  mockDb.replies = replies;
+  mockDb.dispatchSettings = {
     id: 'default',
     global_messages_per_minute: 24,
     api_notifications_paused: false,
   };
-  let dispatchSettingsError: { message: string } | null = null;
-  let dispatchSettingsReadCount = 0;
+  mockDb.dispatchSettingsError = null;
+  mockDb.dispatchSettingsReadCount = 0;
+  downloadObjectBufferMock.mockClear();
+  setTestAdapters({
+    query: fakeQuery,
+    downloadObjectBuffer: downloadObjectBufferMock,
+  });
 
   return {
-    dispatchSettings,
+    dispatchSettings: mockDb.dispatchSettings,
     replies,
-    storage: {
-      from: vi.fn(() => ({
-        download: vi.fn(async () => ({
-          data: new Blob([Buffer.from('image-bytes')]),
-          error: null,
-        })),
-      })),
-    },
     setDispatchSettingsError(error: { message: string } | null) {
-      dispatchSettingsError = error;
+      mockDb.dispatchSettingsError = error;
     },
     getDispatchSettingsReadCount() {
-      return dispatchSettingsReadCount;
-    },
-    from(tableName: string) {
-      if (tableName === 'bot_dispatch_settings') {
-        return {
-          select() {
-            return {
-              eq() {
-                return {
-                  maybeSingle: async () => {
-                    dispatchSettingsReadCount += 1;
-                    return { data: dispatchSettingsError ? null : dispatchSettings, error: dispatchSettingsError };
-                  },
-                };
-              },
-            };
-          },
-        };
-      }
-
-      if (tableName === 'outbound_messages') {
-        return {
-          update(payload: Partial<FakeOutboundMessageRecord>) {
-            return {
-              eq: async (_column: string, id: string) => {
-                const record = records.find((item) => item.id === id);
-
-                if (!record) {
-                  return { error: { message: 'Record not found.' } };
-                }
-
-                Object.assign(record, payload);
-                return { error: null };
-              },
-            };
-          },
-        };
-      }
-
-      if (tableName === 'replies') {
-        return {
-          update(payload: Partial<(typeof replies)[number]>) {
-            return {
-              eq: async (_column: string, id: string) => {
-                const reply = replies.find((item) => item.id === id);
-
-                if (!reply) {
-                  return { error: { message: 'Reply not found.' } };
-                }
-
-                Object.assign(reply, payload);
-                return { error: null };
-              },
-            };
-          },
-        };
-      }
-
-      throw new Error(`Unexpected table access: ${tableName}`);
+      return mockDb.dispatchSettingsReadCount;
     },
   };
 }
@@ -179,7 +187,7 @@ describe('processOutboundDispatchJob', () => {
         next_retry_at: null,
       },
     ];
-    const supabase = createFakeSupabase(records);
+    createFakeDatabase(records);
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn().mockResolvedValue(null),
@@ -201,7 +209,6 @@ describe('processOutboundDispatchJob', () => {
       job,
       'job-token',
       client,
-      supabase,
       redis,
       { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
       1_000_000,
@@ -217,8 +224,8 @@ describe('processOutboundDispatchJob', () => {
   });
 
   it('delays paused api notifications without sending them', async () => {
-    const supabase = createFakeSupabase([]);
-    supabase.dispatchSettings.api_notifications_paused = true;
+    const db = createFakeDatabase([]);
+    db.dispatchSettings.api_notifications_paused = true;
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
@@ -240,7 +247,6 @@ describe('processOutboundDispatchJob', () => {
         job,
         'job-token',
         client,
-        supabase,
         redis,
         { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
         2_000_000,
@@ -262,7 +268,7 @@ describe('processOutboundDispatchJob', () => {
         next_retry_at: null,
       },
     ];
-    const supabase = createFakeSupabase(records);
+    const db = createFakeDatabase(records);
 
     const redis = createFakeRedis();
     const client = {
@@ -286,7 +292,6 @@ describe('processOutboundDispatchJob', () => {
         job,
         'job-token',
         client,
-        supabase,
         redis,
         { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
         2_500_000,
@@ -298,13 +303,13 @@ describe('processOutboundDispatchJob', () => {
     expect(job.updateData).not.toHaveBeenCalled();
     expect(job.moveToDelayed).toHaveBeenCalledWith(2_501_000, 'job-token');
     expect(records[0].delivery_status).toBe('queued');
-    expect(supabase.replies[0].delivery_status).toBe('queued');
+    expect(db.replies[0].delivery_status).toBe('queued');
     expect(redis.eval).not.toHaveBeenCalled();
   });
 
   it('also delays blast traffic when non-ticket dispatch is paused', async () => {
-    const supabase = createFakeSupabase([]);
-    supabase.dispatchSettings.api_notifications_paused = true;
+    const db = createFakeDatabase([]);
+    db.dispatchSettings.api_notifications_paused = true;
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
@@ -326,7 +331,6 @@ describe('processOutboundDispatchJob', () => {
         job,
         'job-token',
         client,
-        supabase,
         redis,
         { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
         2_500_000,
@@ -339,7 +343,7 @@ describe('processOutboundDispatchJob', () => {
   });
 
   it('delays work until the configured global dispatch gap has elapsed', async () => {
-    const supabase = createFakeSupabase([]);
+    createFakeDatabase([]);
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
@@ -370,7 +374,6 @@ describe('processOutboundDispatchJob', () => {
         job,
         'job-token',
         client,
-        supabase,
         redis,
         dispatchState,
         3_001_000,
@@ -391,7 +394,7 @@ describe('processOutboundDispatchJob', () => {
         next_retry_at: null,
       },
     ];
-    const supabase = createFakeSupabase(records);
+    const db = createFakeDatabase(records);
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
@@ -419,7 +422,6 @@ describe('processOutboundDispatchJob', () => {
       job,
       'job-token',
       client,
-      supabase,
       redis,
       dispatchState,
       2_000_000,
@@ -429,7 +431,7 @@ describe('processOutboundDispatchJob', () => {
 
     expect(client.sendMessage).toHaveBeenCalledWith('6289999999999@c.us', 'Support reply');
     expect(records[0].delivery_status).toBe('sent');
-    expect(supabase.replies[0].delivery_status).toBe('sent');
+    expect(db.replies[0].delivery_status).toBe('sent');
     expect(dispatchState.nextDispatchAtMs).toBe(2_002_500);
   });
 
@@ -443,7 +445,7 @@ describe('processOutboundDispatchJob', () => {
         next_retry_at: null,
       },
     ];
-    const supabase = createFakeSupabase(records);
+    createFakeDatabase(records);
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn(),
@@ -469,7 +471,6 @@ describe('processOutboundDispatchJob', () => {
       job,
       'job-token',
       client,
-      supabase,
       redis,
       { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
       2_000_000,
@@ -480,7 +481,7 @@ describe('processOutboundDispatchJob', () => {
     expect(media.mimetype).toBe('image/png');
     expect(media.filename).toBe('reply.png');
     expect(options).toEqual({ caption: 'Support reply' });
-    expect(supabase.storage.from).toHaveBeenCalledWith('ticket-assets');
+    expect(downloadObjectBufferMock).toHaveBeenCalledWith('ticket-assets', '2026-05-21/reply.png');
     expect(records[0].delivery_status).toBe('sent');
   });
 
@@ -494,7 +495,7 @@ describe('processOutboundDispatchJob', () => {
         next_retry_at: null,
       },
     ];
-    const supabase = createFakeSupabase(records);
+    createFakeDatabase(records);
     const redis = createFakeRedis();
     const client = {
       getNumberId: vi.fn().mockResolvedValue({ _serialized: '6281111111111@c.us' }),
@@ -517,7 +518,6 @@ describe('processOutboundDispatchJob', () => {
         job,
         'job-token',
         client,
-        supabase,
         redis,
         { nextDispatchAtMs: 0, cachedDispatchSettings: null, cachedDispatchSettingsFreshUntilMs: 0 },
         3_000_000,
@@ -539,19 +539,19 @@ describe('processOutboundDispatchJob', () => {
 
 describe('dispatch settings caching helpers', () => {
   it('reuses cached settings within the ttl window', async () => {
-    const supabase = createFakeSupabase([]);
+    const db = createFakeDatabase([]);
     const dispatchState = {
       nextDispatchAtMs: 0,
       cachedDispatchSettings: null,
       cachedDispatchSettingsFreshUntilMs: 0,
     };
 
-    const first = await loadDispatchSettingsWithFallback(supabase, dispatchState, 5_000_000);
-    const second = await loadDispatchSettingsWithFallback(supabase, dispatchState, 5_002_000);
+    const first = await loadDispatchSettingsWithFallback(dispatchState, 5_000_000);
+    const second = await loadDispatchSettingsWithFallback(dispatchState, 5_002_000);
 
     expect(first.global_messages_per_minute).toBe(24);
     expect(second.global_messages_per_minute).toBe(24);
-    expect(supabase.getDispatchSettingsReadCount()).toBe(1);
+    expect(db.getDispatchSettingsReadCount()).toBe(1);
   });
 
   it('summarizes html upstream failures without dumping the full page', () => {

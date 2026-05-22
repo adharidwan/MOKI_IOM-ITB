@@ -1,31 +1,11 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { createClient } = require('@supabase/supabase-js');
+const { closePool } = require('./postgres-client.js');
 const { runDueScheduledBlasts } = require('./scheduled-blast-runner.js');
 
 const SCHEDULED_BLAST_POLL_INTERVAL_MS = Number(process.env.SCHEDULED_BLAST_POLL_INTERVAL_MS || 60000);
 const SCHEDULED_BLAST_BATCH_LIMIT = Number(process.env.SCHEDULED_BLAST_BATCH_LIMIT || 5);
 
-function getRequiredEnv(name) {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
-function getSupabaseClient() {
-  const url = getRequiredEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || getRequiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  return createClient(url, key, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
-}
-
 async function main() {
-  const supabase = getSupabaseClient();
   let running = false;
   let stopped = false;
 
@@ -36,7 +16,7 @@ async function main() {
 
     running = true;
     try {
-      await runDueScheduledBlasts(supabase, SCHEDULED_BLAST_BATCH_LIMIT);
+      await runDueScheduledBlasts(SCHEDULED_BLAST_BATCH_LIMIT);
     } catch (error) {
       console.error(`Failed to process scheduled blasts: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -51,6 +31,7 @@ async function main() {
   const shutdown = () => {
     stopped = true;
     clearInterval(timer);
+    void closePool();
   };
 
   process.on('SIGINT', shutdown);

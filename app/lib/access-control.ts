@@ -356,40 +356,40 @@ export async function getPaginatedManagedAccessUsers({
   const normalizedPage = normalizePage(page);
   const normalizedPageSize = normalizePageSize(pageSize);
   const normalizedFeatureKey = normalizeFeatureKeys(featureKey ? [featureKey] : [])[0] || '';
-  const supabase = getSupabaseAdminClient();
-  const { data: permissions, error: permissionsError } = await supabase
-    .from('admin_feature_permissions')
-    .select('sso_sub,feature_key');
-
-  if (permissionsError) {
-    throw new Error(`Gagal memuat permission: ${permissionsError.message}`);
-  }
+  const permissionsResult = await db.execute(sql`
+    select sso_sub, feature_key
+    from public.admin_feature_permissions
+  `);
 
   const featuresBySub = new Map<string, string[]>();
-  (permissions || []).forEach((permission) => {
+  rowsFromResult<{ sso_sub: unknown; feature_key: unknown }>(permissionsResult).forEach((permission) => {
     const key = String(permission.sso_sub);
     featuresBySub.set(key, [...(featuresBySub.get(key) || []), String(permission.feature_key)]);
   });
 
-  const query = supabase
-    .from('admin_app_users')
-    .select('sso_sub,email,name,roles,first_seen_at,last_seen_at', { count: 'exact' })
-    .order('last_seen_at', { ascending: false });
-
   if (!normalizedFeatureKey && !search.trim()) {
-    const from = (normalizedPage - 1) * normalizedPageSize;
-    const to = from + normalizedPageSize - 1;
-    const { data: users, error: usersError, count } = await query.range(from, to);
+    const offset = (normalizedPage - 1) * normalizedPageSize;
+    const usersResult = await db.execute(sql`
+      select
+        sso_sub,
+        email,
+        name,
+        roles,
+        first_seen_at::text,
+        last_seen_at::text,
+        count(*) over()::integer as total_count
+      from public.admin_app_users
+      order by last_seen_at desc
+      limit ${normalizedPageSize}
+      offset ${offset}
+    `);
 
-    if (usersError) {
-      throw new Error(`Gagal memuat akun: ${usersError.message}`);
-    }
-
-    const total = count || 0;
+    const users = rowsFromResult<Parameters<typeof mapManagedAccessUser>[0] & { total_count: unknown }>(usersResult);
+    const total = Number(users[0]?.total_count || 0);
     const totalPages = Math.max(1, Math.ceil(total / normalizedPageSize));
 
     return {
-      items: (users || []).map((user) => mapManagedAccessUser(user, featuresBySub)),
+      items: users.map((user) => mapManagedAccessUser(user, featuresBySub)),
       total,
       page: Math.min(normalizedPage, totalPages),
       pageSize: normalizedPageSize,
@@ -397,13 +397,14 @@ export async function getPaginatedManagedAccessUsers({
     };
   }
 
-  const { data: users, error: usersError } = await query;
+  const usersResult = await db.execute(sql`
+    select sso_sub, email, name, roles, first_seen_at::text, last_seen_at::text
+    from public.admin_app_users
+    order by last_seen_at desc
+  `);
+  const users = rowsFromResult<Parameters<typeof mapManagedAccessUser>[0]>(usersResult);
 
-  if (usersError) {
-    throw new Error(`Gagal memuat akun: ${usersError.message}`);
-  }
-
-  const filteredUsers = applyAccessUserSearch(users || [], search).filter((user) => {
+  const filteredUsers = applyAccessUserSearch(users, search).filter((user) => {
     if (!normalizedFeatureKey) {
       return true;
     }
@@ -432,28 +433,20 @@ export async function replaceUserFeatureAccess(
   actorSub: string,
 ): Promise<FeatureKey[]> {
   const normalizedFeatureKeys = normalizeFeatureKeys(featureKeys);
-  const supabase = getSupabaseAdminClient();
-  const { error: deleteError } = await supabase.from('admin_feature_permissions').delete().eq('sso_sub', targetSub);
-
-  if (deleteError) {
-    throw new Error(`Gagal menghapus akses lama: ${deleteError.message}`);
-  }
+  await db.execute(sql`
+    delete from public.admin_feature_permissions
+    where sso_sub = ${targetSub}
+  `);
 
   if (!normalizedFeatureKeys.length) {
     return [];
   }
 
-  const { error: insertError } = await supabase.from('admin_feature_permissions').insert(
-    normalizedFeatureKeys.map((featureKey) => ({
-      sso_sub: targetSub,
-      feature_key: featureKey,
-      granted_by_sub: actorSub,
-    })),
-  );
-
-  if (insertError) {
-    throw new Error(`Gagal menyimpan akses baru: ${insertError.message}`);
-  }
+  await db.execute(sql`
+    insert into public.admin_feature_permissions (sso_sub, feature_key, granted_by_sub)
+    select ${targetSub}, feature_key, ${actorSub}
+    from unnest(${normalizedFeatureKeys}::text[]) as feature_key
+  `);
 
   return normalizedFeatureKeys;
 }

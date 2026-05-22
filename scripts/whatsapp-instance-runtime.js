@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const os = require('os');
 const qrcode = require('qrcode-terminal');
+const { query } = require('./postgres-client.js');
 
 const WHATSAPP_RUNTIME_TTL_SECONDS = 30;
 const WHATSAPP_QR_TTL_SECONDS = 60;
@@ -86,20 +87,76 @@ async function getReconnectCount(redis, instanceId) {
   return Number.parseInt(rawValue || '0', 10) || 0;
 }
 
-async function upsertWhatsappInstance(supabase, payload) {
-  const { error } = await supabase.from('whatsapp_instances').upsert(payload);
-
-  if (error) {
-    throw new Error(`Failed to upsert WhatsApp instance: ${error.message}`);
-  }
+async function upsertWhatsappInstance(payload) {
+  await query(
+    `
+      insert into public.whatsapp_instances (
+        id,
+        label,
+        status,
+        last_known_phone_number,
+        last_known_chat_id,
+        last_ready_at,
+        last_qr_at,
+        last_disconnect_at,
+        last_error,
+        assigned_worker_id,
+        updated_at,
+        is_enabled,
+        retired_at
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        coalesce($11::timestamptz, timezone('utc'::text, now())),
+        coalesce($12::boolean, true),
+        $13
+      )
+      on conflict (id) do update
+      set label = excluded.label,
+          status = excluded.status,
+          last_known_phone_number = excluded.last_known_phone_number,
+          last_known_chat_id = excluded.last_known_chat_id,
+          last_ready_at = excluded.last_ready_at,
+          last_qr_at = excluded.last_qr_at,
+          last_disconnect_at = excluded.last_disconnect_at,
+          last_error = excluded.last_error,
+          assigned_worker_id = excluded.assigned_worker_id,
+          updated_at = excluded.updated_at,
+          is_enabled = coalesce($12::boolean, whatsapp_instances.is_enabled),
+          retired_at = excluded.retired_at
+    `,
+    [
+      payload.id,
+      payload.label,
+      payload.status,
+      payload.last_known_phone_number || null,
+      payload.last_known_chat_id || null,
+      payload.last_ready_at || null,
+      payload.last_qr_at || null,
+      payload.last_disconnect_at || null,
+      payload.last_error || null,
+      payload.assigned_worker_id || null,
+      payload.updated_at || null,
+      payload.is_enabled,
+      payload.retired_at || null,
+    ],
+  );
 }
 
-async function createWhatsappInstanceEvent(supabase, payload) {
-  const { error } = await supabase.from('whatsapp_instance_events').insert(payload);
-
-  if (error) {
-    throw new Error(`Failed to create WhatsApp instance event: ${error.message}`);
-  }
+async function createWhatsappInstanceEvent(payload) {
+  await query(
+    `
+      insert into public.whatsapp_instance_events (whatsapp_instance_id, event_type, message, metadata, created_at)
+      values ($1, $2, $3, $4::jsonb, coalesce($5::timestamptz, timezone('utc'::text, now())))
+    `,
+    [
+      payload.whatsapp_instance_id,
+      payload.event_type,
+      payload.message || null,
+      JSON.stringify(payload.metadata || {}),
+      payload.created_at || null,
+    ],
+  );
 }
 
 module.exports = {

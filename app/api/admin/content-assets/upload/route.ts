@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import { CONTENT_ASSET_BUCKET, createContentAsset, getContentAssetProject } from '@/app/lib/content-assets';
-import { getSupabaseAdminClient } from '@/app/lib/supabase-server';
+import { removeObjects, uploadObject } from '@/app/lib/object-storage';
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 const ALLOWED_MIME_PREFIXES = ['image/', 'video/'];
@@ -46,23 +46,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `File harus berupa image atau video: ${invalidFile.name}.` }, { status: 400 });
     }
 
-    const supabase = getSupabaseAdminClient();
     const uploadedObjects: string[] = [];
 
     try {
       for (const file of files) {
         const safeFileName = sanitizeFileName(file.name);
         const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName}`;
-        const { error: uploadError } = await supabase.storage
-          .from(CONTENT_ASSET_BUCKET)
-          .upload(objectPath, await file.arrayBuffer(), {
-            contentType: file.type,
-            upsert: false,
-          });
-
-        if (uploadError) {
-          throw new Error(`Gagal upload ${file.name} ke Supabase Storage: ${uploadError.message}`);
-        }
+        await uploadObject({
+          bucket: CONTENT_ASSET_BUCKET,
+          path: objectPath,
+          body: await file.arrayBuffer(),
+          contentType: file.type,
+        });
 
         uploadedObjects.push(objectPath);
         await createContentAsset({
@@ -80,7 +75,7 @@ export async function POST(request: Request) {
       }
     } catch (error) {
       if (uploadedObjects.length) {
-        await supabase.storage.from(CONTENT_ASSET_BUCKET).remove(uploadedObjects);
+        await removeObjects(CONTENT_ASSET_BUCKET, uploadedObjects);
       }
 
       throw error;

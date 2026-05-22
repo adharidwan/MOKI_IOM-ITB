@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const crypto = require('crypto');
 const { Queue } = require('bullmq');
+const { query } = require('./postgres-client.js');
 
 const {
   OUTBOUND_DISPATCH_QUEUE_NAME,
@@ -100,72 +101,152 @@ function normalizeRecipients(recipients) {
   return Array.from(deduped.values());
 }
 
-async function loadRecipients(supabase, schedule) {
+async function loadRecipients(schedule) {
   if (schedule.source_type === 'group') {
     const groupNames = normalizeGroupNames(schedule.source_config?.groupNames || []);
-    const { data, error } = await supabase.rpc('resolve_csv_contact_group_recipients', {
-      p_group_names: groupNames,
-      p_limit: null,
-      p_sort_by: 'created_at',
-    });
+    const { rows } = await query(
+      `
+        select no_telp, nama, group_names
+        from public.csv_contacts
+        where $1::text[] && group_names
+        order by created_at asc
+      `,
+      [groupNames],
+    );
 
-    if (error) throw new Error(`Failed to resolve scheduled blast groups: ${error.message}`);
-    return normalizeRecipients(data || []);
+    return normalizeRecipients(rows);
   }
 
-  const { data, error } = await supabase
-    .from('scheduled_blast_recipients')
-    .select('*')
-    .eq('scheduled_blast_id', schedule.id)
-    .order('created_at', { ascending: true });
+  const { rows } = await query(
+    `
+      select *
+      from public.scheduled_blast_recipients
+      where scheduled_blast_id = $1
+      order by created_at asc
+    `,
+    [schedule.id],
+  );
 
-  if (error) throw new Error(`Failed to load scheduled blast recipients: ${error.message}`);
-  return normalizeRecipients(data || []);
+  return normalizeRecipients(rows);
 }
 
-async function insertOutboundMessage(supabase, message) {
-  const { data, error } = await supabase.from('outbound_messages').insert(message).select('*').single();
-  if (!error) return { message: data, inserted: true };
-  if (error.code !== '23505') throw new Error(`Failed to insert scheduled blast outbound message: ${error.message}`);
+async function insertOutboundMessage(message) {
+  const { rows } = await query(
+    `
+      insert into public.outbound_messages (
+        id,
+        client_id,
+        idempotency_key,
+        request_fingerprint,
+        source_type,
+        source_id,
+        ticket_id,
+        whatsapp_instance_id,
+        priority,
+        recipient_phone_number,
+        recipient_chat_id,
+        content,
+        media_bucket,
+        media_path,
+        media_mime_type,
+        media_file_name,
+        client_reference,
+        delivery_status,
+        delivery_attempts,
+        next_retry_at,
+        last_delivery_error,
+        whatsapp_message_id,
+        delivered_at,
+        created_at,
+        updated_at
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24, $25
+      )
+      on conflict (source_type, source_id) do nothing
+      returning *
+    `,
+    [
+      message.id,
+      message.client_id,
+      message.idempotency_key,
+      message.request_fingerprint,
+      message.source_type,
+      message.source_id,
+      message.ticket_id,
+      message.whatsapp_instance_id,
+      message.priority,
+      message.recipient_phone_number,
+      message.recipient_chat_id,
+      message.content,
+      message.media_bucket,
+      message.media_path,
+      message.media_mime_type,
+      message.media_file_name,
+      message.client_reference,
+      message.delivery_status,
+      message.delivery_attempts,
+      message.next_retry_at,
+      message.last_delivery_error,
+      message.whatsapp_message_id,
+      message.delivered_at,
+      message.created_at,
+      message.updated_at,
+    ],
+  );
 
-  const { data: existing, error: loadError } = await supabase
-    .from('outbound_messages')
-    .select('*')
-    .eq('source_type', message.source_type)
-    .eq('source_id', message.source_id)
-    .maybeSingle();
-
-  if (loadError || !existing) {
-    throw new Error(`Failed to reload scheduled blast outbound message: ${loadError?.message || 'missing row'}`);
+  if (rows[0]) {
+    return { message: rows[0], inserted: true };
   }
 
-  return { message: existing, inserted: false };
+  const existing = await query(
+    `
+      select *
+      from public.outbound_messages
+      where source_type = $1 and source_id = $2
+      limit 1
+    `,
+    [message.source_type, message.source_id],
+  );
+
+  if (!existing.rows[0]) {
+    throw new Error('Failed to reload scheduled blast outbound message: missing row');
+  }
+
+  return { message: existing.rows[0], inserted: false };
 }
 
-async function loadWhatsappInstanceIds(supabase) {
-  const { data, error } = await supabase
-    .from('whatsapp_instances')
-    .select('id')
-    .eq('is_enabled', true)
-    .order('id', { ascending: true });
+async function loadWhatsappInstanceIds() {
+  const { rows } = await query(
+    `
+      select id
+      from public.whatsapp_instances
+      where is_enabled = true
+      order by id asc
+    `,
+  );
 
-  if (error) throw new Error(`Failed to load WhatsApp instances for scheduled blast: ${error.message}`);
-
-  return (data || []).map((instance) => String(instance.id || '').trim()).filter(Boolean);
+  return rows.map((instance) => String(instance.id || '').trim()).filter(Boolean);
 }
 
-async function runSchedule(supabase, queue, redis, schedule, instanceIds, scheduledFor) {
+async function runSchedule(queue, redis, schedule, instanceIds, scheduledFor) {
   const startedAt = new Date().toISOString();
-  const { data: run, error: runError } = await supabase
-    .from('scheduled_blast_runs')
-    .insert({ scheduled_blast_id: schedule.id, scheduled_for: scheduledFor, started_at: startedAt, status: 'running' })
-    .select('*')
-    .single();
+  const runResult = await query(
+    `
+      insert into public.scheduled_blast_runs (scheduled_blast_id, scheduled_for, started_at, status)
+      values ($1, $2, $3, 'running')
+      returning *
+    `,
+    [schedule.id, scheduledFor, startedAt],
+  );
+  const run = runResult.rows[0];
 
-  if (runError) throw new Error(`Failed to create scheduled blast run: ${runError.message}`);
+  if (!run) throw new Error('Failed to create scheduled blast run.');
 
   try {
-    const recipients = await loadRecipients(supabase, schedule);
+    const recipients = await loadRecipients(schedule);
     if (!recipients.length) throw new Error('Scheduled blast has no valid recipients.');
     if (!instanceIds.length) throw new Error('No enabled WhatsApp instance is available for scheduled blast.');
 
@@ -213,7 +294,7 @@ async function runSchedule(supabase, queue, redis, schedule, instanceIds, schedu
         created_at: now,
         updated_at: now,
       };
-      const { message, inserted } = await insertOutboundMessage(supabase, outboundMessage);
+      const { message, inserted } = await insertOutboundMessage(outboundMessage);
       trackedMessageIds.push(message.id);
 
       if (!inserted) continue;
@@ -229,48 +310,78 @@ async function runSchedule(supabase, queue, redis, schedule, instanceIds, schedu
         queuedCount += 1;
       } catch (error) {
         failedCount += 1;
-        await supabase
-          .from('outbound_messages')
-          .update({ delivery_status: 'failed', last_delivery_error: String(error.message || error).slice(0, 240), updated_at: new Date().toISOString() })
-          .eq('id', message.id);
+        await query(
+          `
+            update public.outbound_messages
+            set delivery_status = 'failed',
+                last_delivery_error = $2,
+                updated_at = $3
+            where id = $1
+          `,
+          [message.id, String(error.message || error).slice(0, 240), new Date().toISOString()],
+        );
       }
     }
 
     const finishedAt = new Date().toISOString();
-    await supabase
-      .from('scheduled_blast_runs')
-      .update({
-        finished_at: finishedAt,
-        status: failedCount > 0 ? 'partial' : 'queued',
-        batch_id: requestId,
-        total_recipients: outboundInputs.length,
-        accepted_count: outboundInputs.length - failedCount,
-        failed_count: failedCount,
-        tracked_message_ids: trackedMessageIds,
-      })
-      .eq('id', run.id);
+    await query(
+      `
+        update public.scheduled_blast_runs
+        set finished_at = $2,
+            status = $3,
+            batch_id = $4,
+            total_recipients = $5,
+            accepted_count = $6,
+            failed_count = $7,
+            tracked_message_ids = $8
+        where id = $1
+      `,
+      [
+        run.id,
+        finishedAt,
+        failedCount > 0 ? 'partial' : 'queued',
+        requestId,
+        outboundInputs.length,
+        outboundInputs.length - failedCount,
+        failedCount,
+        trackedMessageIds,
+      ],
+    );
 
-    await supabase
-      .from('scheduled_blasts')
-      .update({
-        last_run_at: finishedAt,
-        next_run_at: computeNextRunAt(schedule, scheduledFor),
-        status: schedule.schedule_type === 'once' ? 'completed' : schedule.status,
-        updated_at: finishedAt,
-      })
-      .eq('id', schedule.id);
+    await query(
+      `
+        update public.scheduled_blasts
+        set last_run_at = $2,
+            next_run_at = $3,
+            status = $4,
+            updated_at = $2
+        where id = $1
+      `,
+      [
+        schedule.id,
+        finishedAt,
+        computeNextRunAt(schedule, scheduledFor),
+        schedule.schedule_type === 'once' ? 'completed' : schedule.status,
+      ],
+    );
 
     return { queuedCount, failedCount };
   } catch (error) {
-    await supabase
-      .from('scheduled_blast_runs')
-      .update({ finished_at: new Date().toISOString(), status: 'failed', error_message: String(error.message || error).slice(0, 500) })
-      .eq('id', run.id);
+    await query(
+      `
+        update public.scheduled_blast_runs
+        set finished_at = $2,
+            status = 'failed',
+            error_message = $3
+        where id = $1
+      `,
+      [run.id, new Date().toISOString(), String(error.message || error).slice(0, 500)],
+    );
     throw error;
   }
 }
 
-async function runDueScheduledBlasts(supabase, limit = 5) {
+async function runDueScheduledBlasts(limit = 5) {
   const queue = new Queue(OUTBOUND_DISPATCH_QUEUE_NAME, {
     connection: createRedisConnection(),
     defaultJobOptions: { removeOnComplete: true, removeOnFail: true },
@@ -279,41 +390,49 @@ async function runDueScheduledBlasts(supabase, limit = 5) {
 
   try {
     const now = new Date().toISOString();
-    const { data, error } = await supabase
-      .from('scheduled_blasts')
-      .select('*')
-      .eq('status', 'active')
-      .is('deleted_at', null)
-      .not('next_run_at', 'is', null)
-      .lte('next_run_at', now)
-      .order('next_run_at', { ascending: true })
-      .limit(limit);
+    const { rows: schedules } = await query(
+      `
+        select *
+        from public.scheduled_blasts
+        where status = 'active'
+          and deleted_at is null
+          and next_run_at is not null
+          and next_run_at <= $1
+        order by next_run_at asc
+        limit $2
+      `,
+      [now, limit],
+    );
 
-    if (error) throw new Error(`Failed to load due scheduled blasts: ${error.message}`);
+    const instanceIds = await loadWhatsappInstanceIds();
 
-    const instanceIds = await loadWhatsappInstanceIds(supabase);
-
-    for (const schedule of data || []) {
+    for (const schedule of schedules) {
       const scheduledFor = schedule.next_run_at;
-      const { data: claimed, error: claimError } = await supabase
-        .from('scheduled_blasts')
-        .update({ next_run_at: null, updated_at: new Date().toISOString() })
-        .eq('id', schedule.id)
-        .eq('next_run_at', scheduledFor)
-        .select('id')
-        .maybeSingle();
+      const claimed = await query(
+        `
+          update public.scheduled_blasts
+          set next_run_at = null, updated_at = $3
+          where id = $1 and next_run_at = $2
+          returning id
+        `,
+        [schedule.id, scheduledFor, new Date().toISOString()],
+      );
 
-      if (claimError || !claimed) continue;
+      if (!claimed.rows[0]) continue;
 
       try {
-        await runSchedule(supabase, queue, redis, schedule, instanceIds, scheduledFor);
+        await runSchedule(queue, redis, schedule, instanceIds, scheduledFor);
       } catch (error) {
         console.error(`Failed to run scheduled blast ${schedule.id}: ${error instanceof Error ? error.message : String(error)}`);
         const nextRunAt = schedule.schedule_type === 'recurring' ? computeNextRunAt(schedule, scheduledFor) : scheduledFor;
-        await supabase
-          .from('scheduled_blasts')
-          .update({ next_run_at: nextRunAt, updated_at: new Date().toISOString() })
-          .eq('id', schedule.id);
+        await query(
+          `
+            update public.scheduled_blasts
+            set next_run_at = $2, updated_at = $3
+            where id = $1
+          `,
+          [schedule.id, nextRunAt, new Date().toISOString()],
+        );
       }
     }
   } finally {
