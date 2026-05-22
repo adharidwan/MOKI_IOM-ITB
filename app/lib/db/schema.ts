@@ -200,7 +200,7 @@ export const scheduledBlasts = pgTable("scheduled_blasts", {
 	deletedAt: timestamp("deleted_at", { withTimezone: true, mode: 'string' }),
 }, (table) => [
 	index("scheduled_blasts_created_at_idx").using("btree", table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("scheduled_blasts_due_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.nextRunAt.asc().nullsLast().op("text_ops")).where(sql`(deleted_at IS NULL)`),
+	index("scheduled_blasts_due_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.nextRunAt.asc().nullsLast().op("timestamptz_ops")).where(sql`(deleted_at IS NULL)`),
 	check("scheduled_blasts_once_run_at_check", sql`((schedule_type = 'once'::text) AND (run_at IS NOT NULL) AND (recurrence_type IS NULL)) OR ((schedule_type = 'recurring'::text) AND (recurrence_type IS NOT NULL))`),
 	check("scheduled_blasts_recurrence_type_check", sql`recurrence_type = ANY (ARRAY['daily'::text, 'weekly'::text, 'monthly'::text])`),
 	check("scheduled_blasts_save_group_name_check", sql`(save_to_group = false) OR ((save_to_group = true) AND (save_group_name IS NOT NULL) AND (length(TRIM(BOTH FROM save_group_name)) > 0))`),
@@ -224,7 +224,7 @@ export const scheduledBlastRuns = pgTable("scheduled_blast_runs", {
 	errorMessage: text("error_message"),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`timezone('utc'::text, now())`).notNull(),
 }, (table) => [
-	index("scheduled_blast_runs_blast_created_at_idx").using("btree", table.scheduledBlastId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
+	index("scheduled_blast_runs_blast_created_at_idx").using("btree", table.scheduledBlastId.asc().nullsLast().op("uuid_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.scheduledBlastId],
 			foreignColumns: [scheduledBlasts.id],
@@ -257,7 +257,7 @@ export const replies = pgTable("replies", {
 	mediaSizeBytes: bigint("media_size_bytes", { mode: "number" }),
 }, (table) => [
 	index("replies_delivery_status_idx").using("btree", table.deliveryStatus.asc().nullsLast().op("text_ops"), table.nextRetryAt.asc().nullsLast().op("timestamptz_ops")),
-	index("replies_ticket_created_at_idx").using("btree", table.ticketId.asc().nullsLast().op("timestamptz_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
+	index("replies_ticket_created_at_idx").using("btree", table.ticketId.asc().nullsLast().op("uuid_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.ticketId],
 			foreignColumns: [tickets.id],
@@ -319,13 +319,13 @@ export const outboundMessages = pgTable("outbound_messages", {
 	mediaMimeType: text("media_mime_type"),
 	mediaFileName: text("media_file_name"),
 }, (table) => [
-	index("outbound_messages_client_idempotency_created_at_idx").using("btree", table.clientId.asc().nullsLast().op("uuid_ops"), table.idempotencyKey.asc().nullsLast().op("uuid_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
-	index("outbound_messages_client_source_created_at_idx").using("btree", table.clientId.asc().nullsLast().op("uuid_ops"), table.sourceType.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("uuid_ops")),
-	index("outbound_messages_client_source_delivery_status_idx").using("btree", table.clientId.asc().nullsLast().op("text_ops"), table.sourceType.asc().nullsLast().op("text_ops"), table.deliveryStatus.asc().nullsLast().op("uuid_ops")),
+	index("outbound_messages_client_idempotency_created_at_idx").using("btree", table.clientId.asc().nullsLast().op("uuid_ops"), table.idempotencyKey.asc().nullsLast().op("text_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
+	index("outbound_messages_client_source_created_at_idx").using("btree", table.clientId.asc().nullsLast().op("uuid_ops"), table.sourceType.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
+	index("outbound_messages_client_source_delivery_status_idx").using("btree", table.clientId.asc().nullsLast().op("uuid_ops"), table.sourceType.asc().nullsLast().op("text_ops"), table.deliveryStatus.asc().nullsLast().op("text_ops")),
 	index("outbound_messages_created_at_idx").using("btree", table.createdAt.asc().nullsLast().op("timestamptz_ops")),
 	index("outbound_messages_delivery_status_idx").using("btree", table.deliveryStatus.asc().nullsLast().op("text_ops")),
-	index("outbound_messages_due_work_idx").using("btree", table.deliveryStatus.asc().nullsLast().op("text_ops"), table.nextRetryAt.asc().nullsLast().op("int2_ops"), table.priority.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
-	index("outbound_messages_instance_status_created_at_idx").using("btree", table.whatsappInstanceId.asc().nullsLast().op("timestamptz_ops"), table.deliveryStatus.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
+	index("outbound_messages_due_work_idx").using("btree", table.deliveryStatus.asc().nullsLast().op("text_ops"), table.nextRetryAt.asc().nullsLast().op("timestamptz_ops"), table.priority.asc().nullsLast().op("int2_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
+	index("outbound_messages_instance_status_created_at_idx").using("btree", table.whatsappInstanceId.asc().nullsLast().op("text_ops"), table.deliveryStatus.asc().nullsLast().op("text_ops"), table.createdAt.asc().nullsLast().op("timestamptz_ops")),
 	index("outbound_messages_next_retry_at_idx").using("btree", table.nextRetryAt.asc().nullsLast().op("timestamptz_ops")),
 	uniqueIndex("outbound_messages_source_type_source_id_unique_idx").using("btree", table.sourceType.asc().nullsLast().op("text_ops"), table.sourceId.asc().nullsLast().op("text_ops")),
 	index("outbound_messages_whatsapp_instance_id_idx").using("btree", table.whatsappInstanceId.asc().nullsLast().op("text_ops")),
@@ -358,7 +358,7 @@ export const whatsappInstanceEvents = pgTable("whatsapp_instance_events", {
 	metadata: jsonb(),
 	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).default(sql`timezone('utc'::text, now())`).notNull(),
 }, (table) => [
-	index("whatsapp_instance_events_instance_created_at_idx").using("btree", table.whatsappInstanceId.asc().nullsLast().op("text_ops"), table.createdAt.desc().nullsFirst().op("text_ops")),
+	index("whatsapp_instance_events_instance_created_at_idx").using("btree", table.whatsappInstanceId.asc().nullsLast().op("text_ops"), table.createdAt.desc().nullsFirst().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.whatsappInstanceId],
 			foreignColumns: [whatsappInstances.id],

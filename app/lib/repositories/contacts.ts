@@ -3,6 +3,7 @@ import 'server-only';
 import { eq, sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
+import { pgTextArray, pgUuidArray } from '../db/pg-array';
 import { csvContacts } from '../db/schema';
 import { rowsFromResult, type DatabaseRow, type SortDirection } from './types';
 
@@ -35,7 +36,7 @@ export async function getCsvContactRowsByPhoneNumbers(phoneNumbers: string[]): P
   const result = await db.execute(sql`
     select *
     from public.csv_contacts
-    where no_telp = any(${phoneNumbers}::text[])
+    where no_telp = any(${pgTextArray(phoneNumbers)})
   `);
 
   return rowsFromResult(result);
@@ -131,7 +132,7 @@ export async function upsertSingleCsvContactRow(row: CsvContactInputRecord): Pro
       ${row.nama},
       ${row.jenis_kelamin},
       ${row.jabatan ?? null},
-      ${row.group_names ?? []}::text[],
+      ${pgTextArray(row.group_names ?? [])},
       ${row.imported_at}
     )
     on conflict (no_telp) do update
@@ -160,7 +161,7 @@ export async function updateCsvContactRow(id: string, row: CsvContactInputRecord
       nama = ${row.nama},
       jenis_kelamin = ${row.jenis_kelamin},
       jabatan = ${row.jabatan ?? null},
-      group_names = ${row.group_names ?? []}::text[]
+      group_names = ${pgTextArray(row.group_names ?? [])}
     where id = ${id}
     returning *
   `);
@@ -175,7 +176,7 @@ export async function updateCsvContactRow(id: string, row: CsvContactInputRecord
 
 export async function addCsvContactGroups(contactIds: string[], groupNames: string[]): Promise<number> {
   const result = await db.execute(sql`
-    select public.add_csv_contact_groups(${contactIds}::uuid[], ${groupNames}::text[]) as count
+    select public.add_csv_contact_groups(${pgUuidArray(contactIds)}, ${pgTextArray(groupNames)}) as count
   `);
 
   return Number(rowsFromResult(result)[0]?.count || 0);

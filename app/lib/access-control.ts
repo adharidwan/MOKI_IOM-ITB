@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation';
 import { sql } from 'drizzle-orm';
 
 import { db } from './db/client';
+import { pgTextArray } from './db/pg-array';
+import { upsertAdminAppUserRow } from './repositories/access-control';
 import { SSO_SESSION_COOKIE } from './sso-config';
 import { verifySsoAccessToken, type VerifiedSsoToken } from './sso-server';
 
@@ -198,16 +200,13 @@ export async function getCurrentUserFromCookies(): Promise<AccessControlledUser>
 }
 
 export async function upsertManagedUser(user: AccessControlledUser): Promise<void> {
-  await db.execute(sql`
-    insert into public.admin_app_users (sso_sub, email, name, roles, last_seen_at)
-    values (${user.sub}, ${user.email}, ${user.name}, ${user.roles}::text[], ${new Date().toISOString()})
-    on conflict (sso_sub) do update
-    set
-      email = excluded.email,
-      name = excluded.name,
-      roles = excluded.roles,
-      last_seen_at = excluded.last_seen_at
-  `);
+  await upsertAdminAppUserRow({
+    ssoSub: user.sub,
+    email: user.email,
+    name: user.name,
+    roles: user.roles,
+    lastSeenAt: new Date().toISOString(),
+  });
 }
 
 export async function getGrantedFeaturesForUser(user: AccessControlledUser): Promise<FeatureKey[]> {
@@ -445,7 +444,7 @@ export async function replaceUserFeatureAccess(
   await db.execute(sql`
     insert into public.admin_feature_permissions (sso_sub, feature_key, granted_by_sub)
     select ${targetSub}, feature_key, ${actorSub}
-    from unnest(${normalizedFeatureKeys}::text[]) as feature_key
+    from unnest(${pgTextArray(normalizedFeatureKeys)}) as feature_key
   `);
 
   return normalizedFeatureKeys;

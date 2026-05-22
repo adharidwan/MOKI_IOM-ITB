@@ -3,6 +3,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 
 import { db } from './db/client';
+import { pgTextArray, pgUuidArray } from './db/pg-array';
 import { readWhatsappInstanceRuntime } from './whatsapp-ops-runtime';
 import type {
   CreateWhatsappInstanceInput,
@@ -41,13 +42,14 @@ function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
 }
 
 async function countOutboundMessages(filters: OutboundCountFilters): Promise<number> {
+  const deliveryStatuses = filters.deliveryStatuses ?? null;
   const result = await db.execute(sql`
     select count(*)::integer as count
     from public.outbound_messages
     where (${filters.whatsappInstanceId ?? null}::text is null or whatsapp_instance_id = ${filters.whatsappInstanceId ?? null})
       and (${filters.sourceType ?? null}::text is null or source_type = ${filters.sourceType ?? null})
       and (${filters.deliveryStatus ?? null}::text is null or delivery_status = ${filters.deliveryStatus ?? null})
-      and (${filters.deliveryStatuses ?? null}::text[] is null or delivery_status = any(${filters.deliveryStatuses ?? null}::text[]))
+      and (${deliveryStatuses === null} or delivery_status = any(${pgTextArray(deliveryStatuses)}))
   `);
 
   return Number(firstRowFromResult<{ count: number }>(result)?.count || 0);
@@ -57,7 +59,7 @@ async function getOldestQueuedAt(whatsappInstanceId?: string): Promise<string | 
   const result = await db.execute(sql`
     select created_at::text
     from public.outbound_messages
-    where delivery_status = any(${QUEUED_OUTBOUND_STATUSES}::text[])
+    where delivery_status = any(${pgTextArray(QUEUED_OUTBOUND_STATUSES)})
       and (${whatsappInstanceId ?? null}::text is null or whatsapp_instance_id = ${whatsappInstanceId ?? null})
     order by created_at asc
     limit 1
@@ -204,10 +206,10 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
         select
           (
             select count(*)::integer
-            from public.tickets
-            where channel = 'whatsapp'
-              and whatsapp_instance_id = ${instanceId}
-              and status = any(${ACTIVE_WHATSAPP_TICKET_STATUSES}::text[])
+              from public.tickets
+              where channel = 'whatsapp'
+                and whatsapp_instance_id = ${instanceId}
+              and status = any(${pgTextArray(ACTIVE_WHATSAPP_TICKET_STATUSES)})
           ) as active_ticket_count,
           latest_ticket.id as latest_ticket_id,
           latest_ticket.subject as latest_ticket_subject,
@@ -317,7 +319,7 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
         db.execute(sql`
           select id, whatsapp_instance_id, ticket_id, source_type, delivery_status, recipient_phone_number, client_reference, created_at::text, delivered_at::text, last_delivery_error
           from public.outbound_messages
-          where id = any(${normalizedIds}::uuid[])
+          where id = any(${pgUuidArray(normalizedIds)})
           order by created_at desc
         `),
         getInstanceLabels(),

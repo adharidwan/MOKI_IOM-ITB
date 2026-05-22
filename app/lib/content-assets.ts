@@ -3,6 +3,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 
 import { db } from './db/client';
+import { pgUuidArray } from './db/pg-array';
 import { createObjectSignedUrl, downloadObject, removeObject, removeObjects } from './object-storage';
 import type { ContentAsset, ContentAssetProject, ContentTag } from './types';
 
@@ -406,7 +407,7 @@ async function replaceContentAssetTags(assetId: string, tagIds: string[]): Promi
   await db.execute(sql`
     insert into public.content_asset_tags (content_asset_id, tag_id)
     select ${assetId}, tag_id
-    from unnest(${normalizedTagIds}::uuid[]) as tag_id
+    from unnest(${pgUuidArray(normalizedTagIds)}) as tag_id
     on conflict do nothing
   `);
 }
@@ -426,7 +427,7 @@ async function replaceContentAssetProjectTags(projectId: string, tagIds: string[
   await db.execute(sql`
     insert into public.content_asset_project_tags (content_asset_project_id, tag_id)
     select ${projectId}, tag_id
-    from unnest(${normalizedTagIds}::uuid[]) as tag_id
+    from unnest(${pgUuidArray(normalizedTagIds)}) as tag_id
     on conflict do nothing
   `);
 }

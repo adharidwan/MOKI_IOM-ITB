@@ -1,6 +1,5 @@
--- Current sql file was generated after introspecting the database
--- If you want to run this migration please uncomment this code before executing migrations
-/*
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+--> statement-breakpoint
 CREATE TABLE "whatsapp_instances" (
 	"id" text PRIMARY KEY NOT NULL,
 	"label" text NOT NULL,
@@ -338,10 +337,10 @@ CREATE INDEX "tickets_phone_number_idx" ON "tickets" USING btree ("phone_number"
 CREATE INDEX "tickets_whatsapp_chat_id_idx" ON "tickets" USING btree ("whatsapp_chat_id" text_ops);--> statement-breakpoint
 CREATE INDEX "tickets_whatsapp_instance_id_idx" ON "tickets" USING btree ("whatsapp_instance_id" text_ops);--> statement-breakpoint
 CREATE INDEX "scheduled_blasts_created_at_idx" ON "scheduled_blasts" USING btree ("created_at" timestamptz_ops);--> statement-breakpoint
-CREATE INDEX "scheduled_blasts_due_idx" ON "scheduled_blasts" USING btree ("status" text_ops,"next_run_at" text_ops) WHERE (deleted_at IS NULL);--> statement-breakpoint
-CREATE INDEX "scheduled_blast_runs_blast_created_at_idx" ON "scheduled_blast_runs" USING btree ("scheduled_blast_id" timestamptz_ops,"created_at" timestamptz_ops);--> statement-breakpoint
+CREATE INDEX "scheduled_blasts_due_idx" ON "scheduled_blasts" USING btree ("status" text_ops,"next_run_at" timestamptz_ops) WHERE (deleted_at IS NULL);--> statement-breakpoint
+CREATE INDEX "scheduled_blast_runs_blast_created_at_idx" ON "scheduled_blast_runs" USING btree ("scheduled_blast_id" uuid_ops,"created_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "replies_delivery_status_idx" ON "replies" USING btree ("delivery_status" text_ops,"next_retry_at" timestamptz_ops);--> statement-breakpoint
-CREATE INDEX "replies_ticket_created_at_idx" ON "replies" USING btree ("ticket_id" timestamptz_ops,"created_at" timestamptz_ops);--> statement-breakpoint
+CREATE INDEX "replies_ticket_created_at_idx" ON "replies" USING btree ("ticket_id" uuid_ops,"created_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "content_recordings_caption_trgm_idx" ON "content_recordings" USING gin ("caption" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "content_recordings_content_type_idx" ON "content_recordings" USING btree ("content_type" text_ops);--> statement-breakpoint
 CREATE INDEX "content_recordings_created_at_idx" ON "content_recordings" USING btree ("created_at" timestamptz_ops);--> statement-breakpoint
@@ -350,20 +349,19 @@ CREATE INDEX "content_recordings_link_trgm_idx" ON "content_recordings" USING gi
 CREATE INDEX "content_recordings_platform_idx" ON "content_recordings" USING btree ("platform" text_ops);--> statement-breakpoint
 CREATE INDEX "content_recordings_title_trgm_idx" ON "content_recordings" USING gin ("title" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "content_recordings_upload_date_idx" ON "content_recordings" USING btree ("upload_date" date_ops);--> statement-breakpoint
-CREATE INDEX "outbound_messages_client_idempotency_created_at_idx" ON "outbound_messages" USING btree ("client_id" uuid_ops,"idempotency_key" uuid_ops,"created_at" timestamptz_ops);--> statement-breakpoint
-CREATE INDEX "outbound_messages_client_source_created_at_idx" ON "outbound_messages" USING btree ("client_id" uuid_ops,"source_type" text_ops,"created_at" uuid_ops);--> statement-breakpoint
-CREATE INDEX "outbound_messages_client_source_delivery_status_idx" ON "outbound_messages" USING btree ("client_id" text_ops,"source_type" text_ops,"delivery_status" uuid_ops);--> statement-breakpoint
+CREATE INDEX "outbound_messages_client_idempotency_created_at_idx" ON "outbound_messages" USING btree ("client_id" uuid_ops,"idempotency_key" text_ops,"created_at" timestamptz_ops);--> statement-breakpoint
+CREATE INDEX "outbound_messages_client_source_created_at_idx" ON "outbound_messages" USING btree ("client_id" uuid_ops,"source_type" text_ops,"created_at" timestamptz_ops);--> statement-breakpoint
+CREATE INDEX "outbound_messages_client_source_delivery_status_idx" ON "outbound_messages" USING btree ("client_id" uuid_ops,"source_type" text_ops,"delivery_status" text_ops);--> statement-breakpoint
 CREATE INDEX "outbound_messages_created_at_idx" ON "outbound_messages" USING btree ("created_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "outbound_messages_delivery_status_idx" ON "outbound_messages" USING btree ("delivery_status" text_ops);--> statement-breakpoint
-CREATE INDEX "outbound_messages_due_work_idx" ON "outbound_messages" USING btree ("delivery_status" text_ops,"next_retry_at" int2_ops,"priority" text_ops,"created_at" timestamptz_ops);--> statement-breakpoint
-CREATE INDEX "outbound_messages_instance_status_created_at_idx" ON "outbound_messages" USING btree ("whatsapp_instance_id" timestamptz_ops,"delivery_status" text_ops,"created_at" timestamptz_ops);--> statement-breakpoint
+CREATE INDEX "outbound_messages_due_work_idx" ON "outbound_messages" USING btree ("delivery_status" text_ops,"next_retry_at" timestamptz_ops,"priority" int2_ops,"created_at" timestamptz_ops);--> statement-breakpoint
+CREATE INDEX "outbound_messages_instance_status_created_at_idx" ON "outbound_messages" USING btree ("whatsapp_instance_id" text_ops,"delivery_status" text_ops,"created_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "outbound_messages_next_retry_at_idx" ON "outbound_messages" USING btree ("next_retry_at" timestamptz_ops);--> statement-breakpoint
 CREATE UNIQUE INDEX "outbound_messages_source_type_source_id_unique_idx" ON "outbound_messages" USING btree ("source_type" text_ops,"source_id" text_ops);--> statement-breakpoint
 CREATE INDEX "outbound_messages_whatsapp_instance_id_idx" ON "outbound_messages" USING btree ("whatsapp_instance_id" text_ops);--> statement-breakpoint
-CREATE INDEX "whatsapp_instance_events_instance_created_at_idx" ON "whatsapp_instance_events" USING btree ("whatsapp_instance_id" text_ops,"created_at" text_ops);--> statement-breakpoint
+CREATE INDEX "whatsapp_instance_events_instance_created_at_idx" ON "whatsapp_instance_events" USING btree ("whatsapp_instance_id" text_ops,"created_at" timestamptz_ops);--> statement-breakpoint
 CREATE INDEX "content_asset_project_tags_tag_id_idx" ON "content_asset_project_tags" USING btree ("tag_id" uuid_ops);--> statement-breakpoint
 CREATE INDEX "content_asset_tags_tag_id_idx" ON "content_asset_tags" USING btree ("tag_id" uuid_ops);--> statement-breakpoint
 CREATE INDEX "content_recording_tags_tag_id_idx" ON "content_recording_tags" USING btree ("tag_id" uuid_ops,"content_recording_id" uuid_ops);--> statement-breakpoint
 CREATE INDEX "admin_feature_permissions_feature_key_idx" ON "admin_feature_permissions" USING btree ("feature_key" text_ops);--> statement-breakpoint
 CREATE INDEX "whatsapp_contacts_phone_number_idx" ON "whatsapp_contacts" USING btree ("phone_number" text_ops);
-*/

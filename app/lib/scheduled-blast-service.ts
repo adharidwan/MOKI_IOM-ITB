@@ -4,6 +4,7 @@ import { normalizeBlastMediaInput, type BlastMediaInput } from './blast-media';
 import { sql } from 'drizzle-orm';
 
 import { db } from './db/client';
+import { pgTextArray } from './db/pg-array';
 import {
   BlastDispatchError,
   dispatchBlastMessage,
@@ -543,7 +544,7 @@ export async function runScheduledBlast(id: string, options: { force?: boolean; 
         total_recipients = ${result.totalRecipients},
         accepted_count = ${result.acceptedCount},
         failed_count = ${result.failedCount},
-        tracked_message_ids = ${result.trackedMessageIds}::text[]
+        tracked_message_ids = ${pgTextArray(result.trackedMessageIds)}
       where id = ${run.id}
     `);
 

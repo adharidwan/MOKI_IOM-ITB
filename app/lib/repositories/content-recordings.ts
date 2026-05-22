@@ -3,6 +3,7 @@ import 'server-only';
 import { eq, sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
+import { pgUuidArray } from '../db/pg-array';
 import { contentRecordingTags, contentRecordings } from '../db/schema';
 import { firstRowFromResult, rowsFromResult, type DatabaseRow, type SortDirection } from './types';
 
@@ -43,7 +44,7 @@ export async function listContentRecordingRows(): Promise<DatabaseRow[]> {
         '[]'::jsonb
       ) as tags
     from public.content_recordings
-    left join public.content_recording_tags on content_recording_tags.recording_id = content_recordings.id
+    left join public.content_recording_tags on content_recording_tags.content_recording_id = content_recordings.id
     left join public.content_tags on content_tags.id = content_recording_tags.tag_id
     group by content_recordings.id
     order by content_recordings.upload_date desc, content_recordings.created_at desc
@@ -59,7 +60,7 @@ export async function listPaginatedContentRecordingRows(query: ListContentRecord
       ${query.search},
       ${query.platform},
       ${query.contentType},
-      ${query.tagIds}::uuid[],
+      ${pgUuidArray(query.tagIds)},
       ${query.page},
       ${query.pageSize},
       ${query.sortBy},
@@ -187,7 +188,7 @@ export async function getContentRecordingRowById(id: string): Promise<DatabaseRo
         '[]'::jsonb
       ) as tags
     from public.content_recordings
-    left join public.content_recording_tags on content_recording_tags.recording_id = content_recordings.id
+    left join public.content_recording_tags on content_recording_tags.content_recording_id = content_recordings.id
     left join public.content_tags on content_tags.id = content_recording_tags.tag_id
     where content_recordings.id = ${id}
     group by content_recordings.id

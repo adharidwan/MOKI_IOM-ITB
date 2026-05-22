@@ -3,6 +3,7 @@ import 'server-only';
 import { sql } from 'drizzle-orm';
 
 import { db } from '../db/client';
+import { pgTextArray } from '../db/pg-array';
 import { rowsFromResult, type DatabaseRow, type SortDirection } from './types';
 
 export type GroupSortKey = 'group_name' | 'member_count';
@@ -64,7 +65,7 @@ export async function resolveGroupRecipientRows(
   const result = await db.execute(sql`
     select *
     from public.resolve_csv_contact_group_recipients(
-      ${groupNames}::text[],
+      ${pgTextArray(groupNames)},
       ${limit},
       ${sortBy}
     )
@@ -90,7 +91,7 @@ export async function resolveGroupRecipientRowsFromContacts(
       created_at,
       count(*) over ()::integer as total_count
     from public.csv_contacts
-    where group_names && ${groupNames}::text[]
+    where group_names && ${pgTextArray(groupNames)}
     order by nama asc
     ${limit === null ? sql`` : sql`limit ${limit}`}
   `);

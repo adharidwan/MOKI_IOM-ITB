@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm';
 import type { BlastMediaInput } from './blast-media';
 import type { TicketMediaInput } from './ticket-media';
 import { db } from './db/client';
+import { pgTextArray } from './db/pg-array';
 import { enqueueOutboundDispatchJob, getOutboundDispatchQueue } from './outbound-dispatch-queue';
 import {
   cacheApiClientByKeyPrefix,
@@ -395,7 +396,7 @@ async function countQueuedOutboundMessagesForInstance(
     select count(*)::integer as count
     from public.outbound_messages
     where whatsapp_instance_id = ${whatsappInstanceId}
-      and delivery_status = any(${['queued', 'retrying']}::text[])
+      and delivery_status = any(${pgTextArray(['queued', 'retrying'])})
   `);
 
   return Number(firstRowFromResult<{ count: number }>(result)?.count || 0);
@@ -680,7 +681,7 @@ export async function createGroupBlastOutboundMessages(
   const result = await db.execute(sql`
     select *
     from public.resolve_csv_contact_group_recipients(
-      ${targetGroups}::text[],
+      ${pgTextArray(targetGroups)},
       null,
       'created_at'
     )
