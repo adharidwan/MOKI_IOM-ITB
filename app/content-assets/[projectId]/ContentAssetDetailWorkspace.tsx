@@ -207,17 +207,18 @@ function MetricTile({ label, value }: { label: string; value: number | string })
 
 function AssetPreview({ asset }: { asset: ContentAsset }) {
   const isVideo = asset.mime_type.startsWith('video/');
+  const previewUrl = `/api/admin/content-assets/${asset.id}/download`;
 
-  if (!asset.signed_url) {
+  if (!asset.storage_path) {
     return (
       <Box sx={{ aspectRatio: '16 / 10', backgroundColor: adminPalette.surfaceSoft }} />
     );
   }
 
   return isVideo ? (
-    <Box component="video" src={asset.signed_url} muted controls sx={{ width: '100%', aspectRatio: '16 / 10', objectFit: 'cover', display: 'block', backgroundColor: '#000000' }} />
+    <Box component="video" src={previewUrl} muted controls sx={{ width: '100%', aspectRatio: '16 / 10', objectFit: 'cover', display: 'block', backgroundColor: '#000000' }} />
   ) : (
-    <Box component="img" src={asset.signed_url} alt={asset.original_filename} sx={{ width: '100%', aspectRatio: '16 / 10', objectFit: 'cover', display: 'block', backgroundColor: adminPalette.surfaceSoft }} />
+    <Box component="img" src={previewUrl} alt={asset.original_filename} sx={{ width: '100%', aspectRatio: '16 / 10', objectFit: 'cover', display: 'block', backgroundColor: adminPalette.surfaceSoft }} />
   );
 }
 

@@ -205,7 +205,7 @@ function MetricTile({ label, value }: { label: string; value: number | string })
 }
 
 function ProjectPreview({ asset }: { asset: ContentAsset | null }) {
-  if (!asset?.signed_url) {
+  if (!asset?.storage_path) {
     return (
       <Box sx={{ width: 86, height: 62, borderRadius: 1.5, display: 'grid', placeItems: 'center', backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
         <FolderRoundedIcon sx={{ color: adminPalette.textSubtle }} />
@@ -214,13 +214,14 @@ function ProjectPreview({ asset }: { asset: ContentAsset | null }) {
   }
 
   const isVideo = asset.mime_type.startsWith('video/');
+  const previewUrl = `/api/admin/content-assets/${asset.id}/download`;
 
   return (
     <Box sx={{ width: 86, height: 62, borderRadius: 1.5, overflow: 'hidden', backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
       {isVideo ? (
-        <Box component="video" src={asset.signed_url} muted sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        <Box component="video" src={previewUrl} muted sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
       ) : (
-        <Box component="img" src={asset.signed_url} alt={asset.original_filename} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+        <Box component="img" src={previewUrl} alt={asset.original_filename} sx={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
       )}
     </Box>
   );

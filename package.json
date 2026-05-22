@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n web,bot,scheduler -c blue,green,magenta \"next dev\" \"npm run bot\" \"npm run scheduler\"",
+    "dev": "concurrently -k -n web,scheduler -c blue,magenta \"next dev\" \"npm run scheduler\"",
+    "dev:with-bot": "concurrently -k -n web,bot,scheduler -c blue,green,magenta \"next dev\" \"npm run bot\" \"npm run scheduler\"",
     "bot": "node --env-file=.env.local scripts/whatsapp-bot.js",
     "build": "next build",
     "start": "concurrently -k -n web,scheduler -c blue,magenta \"next start\" \"npm run scheduler\"",
