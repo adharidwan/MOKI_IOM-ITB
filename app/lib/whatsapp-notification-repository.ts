@@ -148,6 +148,7 @@ function buildBlastRequestId(content: string, recipientKeys: string[], media?: B
     .createHash('sha256')
     .update(
       JSON.stringify({
+        batchNonce: crypto.randomUUID(),
         content: content.trim(),
         media: normalizeMediaKey(media),
         recipients: normalizeList(recipientKeys).sort((left, right) => left.localeCompare(right)),
@@ -165,6 +166,7 @@ function buildPersonalizedBlastRequestId(
     .createHash('sha256')
     .update(
       JSON.stringify({
+        batchNonce: crypto.randomUUID(),
         recipients: recipients
           .map((recipient) => ({
             recipientPhoneNumber: String(recipient.recipientPhoneNumber || '').replace(/\D/g, '').trim(),
