@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { getPlaywrightLaunchOptions } from "./chromium-path";
 import { scrapeContentFromLink } from "./scrape-content-link";
 
 const SCRAPE_ERROR_MESSAGE = "Gagal mengambil data Instagram saat ini.";
@@ -180,6 +181,10 @@ function loadCookieHeaderFromCache(): string {
   }
 }
 
+function loadCookieHeaderFromEnv(): string {
+  return String(process.env.INSTAGRAM_COOKIE || "").trim();
+}
+
 function loadCookieHeaderFromStorageState(): string {
   if (!fs.existsSync(STORAGE_STATE_PATH)) {
     return "";
@@ -347,11 +352,14 @@ async function scrapeInstagramProfileLinks(
     `[IG scrape] Session ditemukan (sessionid: ${sessionCookie.value.slice(0, 8)}...)`,
   );
 
-  console.log(`[IG scrape] Launching visible browser (headless: false)`);
+  console.log(`[IG scrape] Launching headless browser`);
+
+  const launchOptions = await getPlaywrightLaunchOptions();
 
   const browser = await chromium.launch({
-    headless: false,
+    ...launchOptions,
     args: [
+      ...(launchOptions.args || []),
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-blink-features=AutomationControlled",
@@ -1143,7 +1151,9 @@ export async function scrape_ig(
 
     const posts = await fetchProfilePosts(
       normalizedUsername,
-      loadCookieHeaderFromCache() || loadCookieHeaderFromStorageState(),
+      loadCookieHeaderFromEnv() ||
+        loadCookieHeaderFromCache() ||
+        loadCookieHeaderFromStorageState(),
     );
 
     console.log(`[IG scrape] Profile API success: ${posts.length} posts`);
