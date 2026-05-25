@@ -2,7 +2,7 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { uploadObject } from './object-storage';
 
 export const BLAST_MEDIA_BUCKET = 'blast-assets';
 export const MAX_BLAST_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -46,19 +46,14 @@ export async function uploadBlastImage(file: File): Promise<BlastMediaInput> {
     throw new Error('Ukuran image blast maksimal 10 MB.');
   }
 
-  const supabase = getSupabaseAdminClient();
   const safeFileName = sanitizeBlastMediaFileName(file.name);
   const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName}`;
-  const { error } = await supabase.storage
-    .from(BLAST_MEDIA_BUCKET)
-    .upload(objectPath, await file.arrayBuffer(), {
-      contentType: file.type,
-      upsert: false,
-    });
-
-  if (error) {
-    throw new Error(`Gagal upload image blast: ${error.message}`);
-  }
+  await uploadObject({
+    bucket: BLAST_MEDIA_BUCKET,
+    path: objectPath,
+    body: await file.arrayBuffer(),
+    contentType: file.type,
+  });
 
   return {
     bucket: BLAST_MEDIA_BUCKET,

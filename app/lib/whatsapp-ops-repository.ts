@@ -1,6 +1,9 @@
 import 'server-only';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { sql } from 'drizzle-orm';
+
+import { db } from './db/client';
+import { pgTextArray, pgUuidArray } from './db/pg-array';
 import { readWhatsappInstanceRuntime } from './whatsapp-ops-runtime';
 import type {
   CreateWhatsappInstanceInput,
@@ -23,174 +26,141 @@ import {
 const ACTIVE_WHATSAPP_TICKET_STATUSES = ['Open', 'In Progress'];
 const QUEUED_OUTBOUND_STATUSES: OutboundMessageStatus[] = ['queued', 'retrying'];
 
-async function countOutboundMessages(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-  filters: {
-    whatsappInstanceId?: string;
-    sourceType?: 'api_notification' | 'ticket_reply' | 'blast';
-    deliveryStatus?: OutboundMessageStatus;
-    deliveryStatuses?: OutboundMessageStatus[];
-  },
-): Promise<number> {
-  let query = supabase.from('outbound_messages').select('id', { count: 'exact', head: true });
+type OutboundCountFilters = {
+  whatsappInstanceId?: string;
+  sourceType?: 'api_notification' | 'ticket_reply' | 'blast';
+  deliveryStatus?: OutboundMessageStatus;
+  deliveryStatuses?: OutboundMessageStatus[];
+};
 
-  if (filters.whatsappInstanceId) {
-    query = query.eq('whatsapp_instance_id', filters.whatsappInstanceId);
-  }
-
-  if (filters.sourceType) {
-    query = query.eq('source_type', filters.sourceType);
-  }
-
-  if (filters.deliveryStatus) {
-    query = query.eq('delivery_status', filters.deliveryStatus);
-  }
-
-  if (filters.deliveryStatuses) {
-    query = query.in('delivery_status', filters.deliveryStatuses);
-  }
-
-  const { count, error } = await query;
-
-  if (error) {
-    throw new Error(`Failed to count outbound messages: ${error.message}`);
-  }
-
-  return count || 0;
+function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
+  return (Array.isArray(result.rows) ? result.rows : []) as T[];
 }
 
-async function getOldestQueuedAt(
-  supabase: ReturnType<typeof getSupabaseAdminClient>,
-  whatsappInstanceId?: string,
-): Promise<string | null> {
-  let query = supabase
-    .from('outbound_messages')
-    .select('created_at')
-    .in('delivery_status', QUEUED_OUTBOUND_STATUSES)
-    .order('created_at', { ascending: true })
-    .limit(1);
+function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
+  return rowsFromResult<T>(result)[0] ?? null;
+}
 
-  if (whatsappInstanceId) {
-    query = query.eq('whatsapp_instance_id', whatsappInstanceId);
-  }
+async function countOutboundMessages(filters: OutboundCountFilters): Promise<number> {
+  const deliveryStatuses = filters.deliveryStatuses ?? null;
+  const result = await db.execute(sql`
+    select count(*)::integer as count
+    from public.outbound_messages
+    where (${filters.whatsappInstanceId ?? null}::text is null or whatsapp_instance_id = ${filters.whatsappInstanceId ?? null})
+      and (${filters.sourceType ?? null}::text is null or source_type = ${filters.sourceType ?? null})
+      and (${filters.deliveryStatus ?? null}::text is null or delivery_status = ${filters.deliveryStatus ?? null})
+      and (${deliveryStatuses === null} or delivery_status = any(${pgTextArray(deliveryStatuses)}))
+  `);
 
-  const { data, error } = await query.maybeSingle();
+  return Number(firstRowFromResult<{ count: number }>(result)?.count || 0);
+}
 
-  if (error) {
-    throw new Error(`Failed to fetch oldest queued outbound message: ${error.message}`);
-  }
+async function getOldestQueuedAt(whatsappInstanceId?: string): Promise<string | null> {
+  const result = await db.execute(sql`
+    select created_at::text
+    from public.outbound_messages
+    where delivery_status = any(${pgTextArray(QUEUED_OUTBOUND_STATUSES)})
+      and (${whatsappInstanceId ?? null}::text is null or whatsapp_instance_id = ${whatsappInstanceId ?? null})
+    order by created_at asc
+    limit 1
+  `);
 
-  return data?.created_at || null;
+  return firstRowFromResult<{ created_at: string | null }>(result)?.created_at || null;
+}
+
+async function getInstanceLabels(): Promise<Map<string, string>> {
+  const result = await db.execute(sql`select id, label from public.whatsapp_instances`);
+  const labelById = new Map<string, string>();
+  rowsFromResult<{ id: string; label: string }>(result).forEach((instance) => {
+    labelById.set(instance.id, instance.label);
+  });
+  return labelById;
+}
+
+function withInstanceLabels(
+  rows: Omit<WhatsappOutboundListItem, 'instance_label'>[],
+  labelById: Map<string, string>,
+): WhatsappOutboundListItem[] {
+  return rows.map((item) => ({
+    ...item,
+    instance_label: labelById.get(item.whatsapp_instance_id) || null,
+  }));
 }
 
 export function createWhatsappOpsRepository(): WhatsappOpsRepository {
-  const supabase = getSupabaseAdminClient();
-
   return {
     async listInstances(): Promise<WhatsappInstanceRecord[]> {
       await getOrCreateDefaultWhatsappInstance();
-      const { data, error } = await supabase
-        .from('whatsapp_instances')
-        .select('*')
-        .is('retired_at', null)
-        .order('label', { ascending: true });
+      const result = await db.execute(sql`
+        select *
+        from public.whatsapp_instances
+        where retired_at is null
+        order by label asc
+      `);
 
-      if (error) {
-        throw new Error(`Failed to load WhatsApp instances: ${error.message}`);
-      }
-
-      return (data as WhatsappInstanceRecord[]) || [];
+      return rowsFromResult<WhatsappInstanceRecord>(result);
     },
 
     async createInstance(input: CreateWhatsappInstanceInput): Promise<WhatsappInstanceRecord> {
-      const now = new Date().toISOString();
-      const { data, error } = await supabase
-        .from('whatsapp_instances')
-        .insert({
-          id: input.id,
-          label: input.label,
-          is_enabled: input.is_enabled ?? true,
-          status: 'starting',
-          updated_at: now,
-        })
-        .select('*')
-        .single();
+      try {
+        const now = new Date().toISOString();
+        const result = await db.execute(sql`
+          insert into public.whatsapp_instances (id, label, is_enabled, status, updated_at)
+          values (${input.id}, ${input.label}, ${input.is_enabled ?? true}, 'starting', ${now})
+          returning *
+        `);
 
-      if (error) {
-        if (error.code === '23505') {
+        return firstRowFromResult<WhatsappInstanceRecord>(result)!;
+      } catch (error) {
+        if (typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505') {
           throw new Error('WhatsApp instance already exists.');
         }
-
-        throw new Error(`Failed to create WhatsApp instance: ${error.message}`);
+        throw error;
       }
-
-      return data as WhatsappInstanceRecord;
     },
 
     async updateInstance(
       instanceId: string,
       input: UpdateWhatsappInstanceInput,
     ): Promise<WhatsappInstanceRecord> {
-      const patch: Partial<Pick<WhatsappInstanceRecord, 'label' | 'is_enabled' | 'retired_at' | 'updated_at'>> = {
-        updated_at: new Date().toISOString(),
-      };
+      const currentResult = await db.execute(sql`
+        select * from public.whatsapp_instances where id = ${instanceId} limit 1
+      `);
+      const current = firstRowFromResult<WhatsappInstanceRecord>(currentResult);
 
-      if (input.label !== undefined) {
-        patch.label = input.label;
-      }
-
-      if (input.is_enabled !== undefined) {
-        patch.is_enabled = input.is_enabled;
-        if (input.is_enabled) {
-          patch.retired_at = null;
-        }
-      }
-
-      if (input.retired_at !== undefined) {
-        patch.retired_at = input.retired_at;
-      }
-
-      const { data, error } = await supabase
-        .from('whatsapp_instances')
-        .update(patch)
-        .eq('id', instanceId)
-        .select('*')
-        .maybeSingle();
-
-      if (error) {
-        throw new Error(`Failed to update WhatsApp instance: ${error.message}`);
-      }
-
-      if (!data) {
+      if (!current) {
         throw new Error('WhatsApp instance not found.');
       }
 
-      return data as WhatsappInstanceRecord;
+      const nextLabel = input.label !== undefined ? input.label : current.label;
+      const nextIsEnabled = input.is_enabled !== undefined ? input.is_enabled : current.is_enabled;
+      const nextRetiredAt = input.is_enabled ? null : input.retired_at !== undefined ? input.retired_at : current.retired_at;
+      const result = await db.execute(sql`
+        update public.whatsapp_instances
+        set
+          label = ${nextLabel},
+          is_enabled = ${nextIsEnabled},
+          retired_at = ${nextRetiredAt},
+          updated_at = ${new Date().toISOString()}
+        where id = ${instanceId}
+        returning *
+      `);
+
+      return firstRowFromResult<WhatsappInstanceRecord>(result)!;
     },
 
     async deleteInstance(instanceId: string): Promise<void> {
-      const outboundMessageCount = await countOutboundMessages(supabase, { whatsappInstanceId: instanceId });
+      const outboundMessageCount = await countOutboundMessages({ whatsappInstanceId: instanceId });
 
       if (outboundMessageCount > 0) {
         throw new Error('WhatsApp instance still has related delivery history and cannot be removed completely.');
       }
 
-      const { error } = await supabase
-        .from('whatsapp_instances')
-        .delete()
-        .eq('id', instanceId);
-
-      if (error) {
-        if (error.code === '23503') {
-          throw new Error('WhatsApp instance still has related delivery history and cannot be removed completely.');
-        }
-
-        throw new Error(`Failed to delete WhatsApp instance: ${error.message}`);
-      }
+      await db.execute(sql`delete from public.whatsapp_instances where id = ${instanceId}`);
     },
 
     async assertInstanceCanBeDeleted(instanceId: string): Promise<void> {
-      const outboundMessageCount = await countOutboundMessages(supabase, { whatsappInstanceId: instanceId });
+      const outboundMessageCount = await countOutboundMessages({ whatsappInstanceId: instanceId });
 
       if (outboundMessageCount > 0) {
         throw new Error('WhatsApp instance still has related delivery history and cannot be removed completely.');
@@ -211,34 +181,13 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
         sentMessages,
         oldestQueuedAt,
       ] = await Promise.all([
-        countOutboundMessages(supabase, {
-          whatsappInstanceId: instanceId,
-          sourceType: 'ticket_reply',
-          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
-        }),
-        countOutboundMessages(supabase, {
-          whatsappInstanceId: instanceId,
-          sourceType: 'api_notification',
-          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
-        }),
-        countOutboundMessages(supabase, {
-          whatsappInstanceId: instanceId,
-          sourceType: 'blast',
-          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
-        }),
-        countOutboundMessages(supabase, {
-          whatsappInstanceId: instanceId,
-          deliveryStatus: 'retrying',
-        }),
-        countOutboundMessages(supabase, {
-          whatsappInstanceId: instanceId,
-          deliveryStatus: 'failed',
-        }),
-        countOutboundMessages(supabase, {
-          whatsappInstanceId: instanceId,
-          deliveryStatus: 'sent',
-        }),
-        getOldestQueuedAt(supabase, instanceId),
+        countOutboundMessages({ whatsappInstanceId: instanceId, sourceType: 'ticket_reply', deliveryStatuses: QUEUED_OUTBOUND_STATUSES }),
+        countOutboundMessages({ whatsappInstanceId: instanceId, sourceType: 'api_notification', deliveryStatuses: QUEUED_OUTBOUND_STATUSES }),
+        countOutboundMessages({ whatsappInstanceId: instanceId, sourceType: 'blast', deliveryStatuses: QUEUED_OUTBOUND_STATUSES }),
+        countOutboundMessages({ whatsappInstanceId: instanceId, deliveryStatus: 'retrying' }),
+        countOutboundMessages({ whatsappInstanceId: instanceId, deliveryStatus: 'failed' }),
+        countOutboundMessages({ whatsappInstanceId: instanceId, deliveryStatus: 'sent' }),
+        getOldestQueuedAt(instanceId),
       ]);
 
       return {
@@ -253,97 +202,76 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
     },
 
     async getInstanceStaffSummary(instanceId: string): Promise<WhatsappInstanceStaffSummary> {
-      const [{ count: activeTicketCount, error: activeTicketError }, latestTicketResult, latestContactResult, latestOutboundReplyResult] =
-        await Promise.all([
-          supabase
-            .from('tickets')
-            .select('id', { count: 'exact', head: true })
-            .eq('channel', 'whatsapp')
-            .eq('whatsapp_instance_id', instanceId)
-            .in('status', ACTIVE_WHATSAPP_TICKET_STATUSES),
-          supabase
-            .from('tickets')
-            .select('id, subject, updated_at')
-            .eq('channel', 'whatsapp')
-            .eq('whatsapp_instance_id', instanceId)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          supabase
-            .from('whatsapp_contacts')
-            .select('last_message_preview, last_inbound_at')
-            .eq('whatsapp_instance_id', instanceId)
-            .order('last_inbound_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-          supabase
-            .from('outbound_messages')
-            .select('delivery_status')
-            .eq('whatsapp_instance_id', instanceId)
-            .eq('source_type', 'ticket_reply')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle(),
-        ]);
+      const result = await db.execute(sql`
+        select
+          (
+            select count(*)::integer
+              from public.tickets
+              where channel = 'whatsapp'
+                and whatsapp_instance_id = ${instanceId}
+              and status = any(${pgTextArray(ACTIVE_WHATSAPP_TICKET_STATUSES)})
+          ) as active_ticket_count,
+          latest_ticket.id as latest_ticket_id,
+          latest_ticket.subject as latest_ticket_subject,
+          latest_ticket.updated_at::text as latest_ticket_updated_at,
+          latest_contact.last_message_preview as latest_inbound_preview,
+          latest_contact.last_inbound_at::text as latest_inbound_at,
+          latest_outbound.delivery_status as latest_outbound_reply_status
+        from (select 1) seed
+        left join lateral (
+          select id, subject, updated_at
+          from public.tickets
+          where channel = 'whatsapp'
+            and whatsapp_instance_id = ${instanceId}
+          order by updated_at desc
+          limit 1
+        ) latest_ticket on true
+        left join lateral (
+          select last_message_preview, last_inbound_at
+          from public.whatsapp_contacts
+          where whatsapp_instance_id = ${instanceId}
+          order by last_inbound_at desc
+          limit 1
+        ) latest_contact on true
+        left join lateral (
+          select delivery_status
+          from public.outbound_messages
+          where whatsapp_instance_id = ${instanceId}
+            and source_type = 'ticket_reply'
+          order by created_at desc
+          limit 1
+        ) latest_outbound on true
+      `);
 
-      if (activeTicketError) {
-        throw new Error(`Failed to count active WhatsApp tickets: ${activeTicketError.message}`);
-      }
-
-      if (latestTicketResult.error) {
-        throw new Error(`Failed to load latest WhatsApp ticket: ${latestTicketResult.error.message}`);
-      }
-
-      if (latestContactResult.error) {
-        throw new Error(`Failed to load latest WhatsApp contact activity: ${latestContactResult.error.message}`);
-      }
-
-      if (latestOutboundReplyResult.error) {
-        throw new Error(
-          `Failed to load latest WhatsApp outbound reply state: ${latestOutboundReplyResult.error.message}`,
-        );
-      }
-
+      const row = firstRowFromResult<WhatsappInstanceStaffSummary>(result);
       return {
-        active_ticket_count: activeTicketCount || 0,
-        latest_ticket_id: latestTicketResult.data?.id || null,
-        latest_ticket_subject: latestTicketResult.data?.subject || null,
-        latest_ticket_updated_at: latestTicketResult.data?.updated_at || null,
-        latest_inbound_preview: latestContactResult.data?.last_message_preview || null,
-        latest_inbound_at: latestContactResult.data?.last_inbound_at || null,
-        latest_outbound_reply_status: latestOutboundReplyResult.data?.delivery_status || null,
+        active_ticket_count: Number(row?.active_ticket_count || 0),
+        latest_ticket_id: row?.latest_ticket_id || null,
+        latest_ticket_subject: row?.latest_ticket_subject || null,
+        latest_ticket_updated_at: row?.latest_ticket_updated_at || null,
+        latest_inbound_preview: row?.latest_inbound_preview || null,
+        latest_inbound_at: row?.latest_inbound_at || null,
+        latest_outbound_reply_status: row?.latest_outbound_reply_status || null,
       };
     },
 
     async listInstanceEvents(instanceId: string, limit: number): Promise<WhatsappInstanceEventRecord[]> {
-      const { data, error } = await supabase
-        .from('whatsapp_instance_events')
-        .select('*')
-        .eq('whatsapp_instance_id', instanceId)
-        .order('created_at', { ascending: false })
-        .limit(limit);
+      const result = await db.execute(sql`
+        select *
+        from public.whatsapp_instance_events
+        where whatsapp_instance_id = ${instanceId}
+        order by created_at desc
+        limit ${limit}
+      `);
 
-      if (error) {
-        throw new Error(`Failed to load WhatsApp instance events: ${error.message}`);
-      }
-
-      return (data as WhatsappInstanceEventRecord[]) || [];
+      return rowsFromResult<WhatsappInstanceEventRecord>(result);
     },
 
     async getGlobalQueueCounts() {
       const [queuedTicketReplies, queuedApiNotifications, queuedBlastMessages] = await Promise.all([
-        countOutboundMessages(supabase, {
-          sourceType: 'ticket_reply',
-          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
-        }),
-        countOutboundMessages(supabase, {
-          sourceType: 'api_notification',
-          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
-        }),
-        countOutboundMessages(supabase, {
-          sourceType: 'blast',
-          deliveryStatuses: QUEUED_OUTBOUND_STATUSES,
-        }),
+        countOutboundMessages({ sourceType: 'ticket_reply', deliveryStatuses: QUEUED_OUTBOUND_STATUSES }),
+        countOutboundMessages({ sourceType: 'api_notification', deliveryStatuses: QUEUED_OUTBOUND_STATUSES }),
+        countOutboundMessages({ sourceType: 'blast', deliveryStatuses: QUEUED_OUTBOUND_STATUSES }),
       ]);
 
       return {
@@ -355,46 +283,29 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
 
     async getGlobalFailedRetryingCount(): Promise<number> {
       const [failedCount, retryingCount] = await Promise.all([
-        countOutboundMessages(supabase, { deliveryStatus: 'failed' }),
-        countOutboundMessages(supabase, { deliveryStatus: 'retrying' }),
+        countOutboundMessages({ deliveryStatus: 'failed' }),
+        countOutboundMessages({ deliveryStatus: 'retrying' }),
       ]);
 
       return failedCount + retryingCount;
     },
 
     async getGlobalOldestQueuedAt(): Promise<string | null> {
-      return getOldestQueuedAt(supabase);
+      return getOldestQueuedAt();
     },
 
     async listRecentOutbound(limit: number): Promise<WhatsappOutboundListItem[]> {
-      const [{ data, error }, instances] = await Promise.all([
-        supabase
-          .from('outbound_messages')
-          .select(
-            'id, whatsapp_instance_id, ticket_id, source_type, delivery_status, recipient_phone_number, client_reference, created_at, delivered_at, last_delivery_error',
-          )
-          .order('created_at', { ascending: false })
-          .limit(limit),
-        supabase.from('whatsapp_instances').select('id, label'),
+      const [messages, labelById] = await Promise.all([
+        db.execute(sql`
+          select id, whatsapp_instance_id, ticket_id, source_type, delivery_status, recipient_phone_number, client_reference, created_at::text, delivered_at::text, last_delivery_error
+          from public.outbound_messages
+          order by created_at desc
+          limit ${limit}
+        `),
+        getInstanceLabels(),
       ]);
 
-      if (error) {
-        throw new Error(`Failed to load recent WhatsApp outbound messages: ${error.message}`);
-      }
-
-      if (instances.error) {
-        throw new Error(`Failed to load WhatsApp instance labels: ${instances.error.message}`);
-      }
-
-      const labelById = new Map<string, string>();
-      (instances.data || []).forEach((instance) => {
-        labelById.set(instance.id as string, instance.label as string);
-      });
-
-      return ((data as Omit<WhatsappOutboundListItem, 'instance_label'>[]) || []).map((item) => ({
-        ...item,
-        instance_label: labelById.get(item.whatsapp_instance_id) || null,
-      }));
+      return withInstanceLabels(rowsFromResult<Omit<WhatsappOutboundListItem, 'instance_label'>>(messages), labelById);
     },
 
     async listOutboundByIds(ids: string[]): Promise<WhatsappOutboundListItem[]> {
@@ -404,45 +315,28 @@ export function createWhatsappOpsRepository(): WhatsappOpsRepository {
         return [];
       }
 
-      const [{ data, error }, instances] = await Promise.all([
-        supabase
-          .from('outbound_messages')
-          .select(
-            'id, whatsapp_instance_id, ticket_id, source_type, delivery_status, recipient_phone_number, client_reference, created_at, delivered_at, last_delivery_error',
-          )
-          .in('id', normalizedIds)
-          .order('created_at', { ascending: false }),
-        supabase.from('whatsapp_instances').select('id, label'),
+      const [messages, labelById] = await Promise.all([
+        db.execute(sql`
+          select id, whatsapp_instance_id, ticket_id, source_type, delivery_status, recipient_phone_number, client_reference, created_at::text, delivered_at::text, last_delivery_error
+          from public.outbound_messages
+          where id = any(${pgUuidArray(normalizedIds)})
+          order by created_at desc
+        `),
+        getInstanceLabels(),
       ]);
 
-      if (error) {
-        throw new Error(`Failed to load tracked outbound messages: ${error.message}`);
-      }
-
-      if (instances.error) {
-        throw new Error(`Failed to load WhatsApp instance labels: ${instances.error.message}`);
-      }
-
-      const labelById = new Map<string, string>();
-      (instances.data || []).forEach((instance) => {
-        labelById.set(instance.id as string, instance.label as string);
-      });
-
-      return ((data as Omit<WhatsappOutboundListItem, 'instance_label'>[]) || []).map((item) => ({
-        ...item,
-        instance_label: labelById.get(item.whatsapp_instance_id) || null,
-      }));
+      return withInstanceLabels(rowsFromResult<Omit<WhatsappOutboundListItem, 'instance_label'>>(messages), labelById);
     },
 
     async getOutboundSummary(): Promise<WhatsappOutboundSummary> {
       const [queued, retrying, failed, sent, ticketReply, apiNotification, blast] = await Promise.all([
-        countOutboundMessages(supabase, { deliveryStatus: 'queued' }),
-        countOutboundMessages(supabase, { deliveryStatus: 'retrying' }),
-        countOutboundMessages(supabase, { deliveryStatus: 'failed' }),
-        countOutboundMessages(supabase, { deliveryStatus: 'sent' }),
-        countOutboundMessages(supabase, { sourceType: 'ticket_reply' }),
-        countOutboundMessages(supabase, { sourceType: 'api_notification' }),
-        countOutboundMessages(supabase, { sourceType: 'blast' }),
+        countOutboundMessages({ deliveryStatus: 'queued' }),
+        countOutboundMessages({ deliveryStatus: 'retrying' }),
+        countOutboundMessages({ deliveryStatus: 'failed' }),
+        countOutboundMessages({ deliveryStatus: 'sent' }),
+        countOutboundMessages({ sourceType: 'ticket_reply' }),
+        countOutboundMessages({ sourceType: 'api_notification' }),
+        countOutboundMessages({ sourceType: 'blast' }),
       ]);
 
       return {

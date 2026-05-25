@@ -14,7 +14,7 @@ import {
   updateContentAssetProject,
 } from '../lib/content-assets';
 import { ensureContentTags } from '../lib/api';
-import { getSupabaseAdminClient } from '../lib/supabase-server';
+import { removeObjects, uploadObject } from '../lib/object-storage';
 import type { ContentAsset, ContentAssetProject } from '../lib/types';
 
 export interface ContentAssetActionResult {
@@ -128,23 +128,18 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
       return { success: false, error: `File harus berupa image atau video: ${invalidFile.name}.` };
     }
 
-    const supabase = getSupabaseAdminClient();
     const uploadedObjects: string[] = [];
 
     try {
       for (const file of files) {
         const safeFileName = sanitizeFileName(file.name);
         const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName}`;
-        const { error: uploadError } = await supabase.storage
-          .from(CONTENT_ASSET_BUCKET)
-          .upload(objectPath, await file.arrayBuffer(), {
-            contentType: file.type,
-            upsert: false,
-          });
-
-        if (uploadError) {
-          throw new Error(`Gagal upload ${file.name} ke Supabase Storage: ${uploadError.message}`);
-        }
+        await uploadObject({
+          bucket: CONTENT_ASSET_BUCKET,
+          path: objectPath,
+          body: await file.arrayBuffer(),
+          contentType: file.type,
+        });
 
         uploadedObjects.push(objectPath);
         await createContentAsset({
@@ -162,7 +157,7 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
       }
     } catch (error) {
       if (uploadedObjects.length) {
-        await supabase.storage.from(CONTENT_ASSET_BUCKET).remove(uploadedObjects);
+        await removeObjects(CONTENT_ASSET_BUCKET, uploadedObjects);
       }
 
       throw error;

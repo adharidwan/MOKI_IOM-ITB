@@ -1,6 +1,10 @@
 import 'server-only';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { sql } from 'drizzle-orm';
+
+import { db } from './db/client';
+import { pgUuidArray } from './db/pg-array';
+import { createObjectSignedUrl, downloadObject, removeObject, removeObjects } from './object-storage';
 import type { ContentAsset, ContentAssetProject, ContentTag } from './types';
 
 export const CONTENT_ASSET_BUCKET = 'content-assets';
@@ -39,6 +43,16 @@ export interface ContentAssetProjectInput {
   notes?: string | null;
 }
 
+type RawRecord = Record<string, unknown>;
+
+function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
+  return (Array.isArray(result.rows) ? result.rows : []) as T[];
+}
+
+function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
+  return rowsFromResult<T>(result)[0] ?? null;
+}
+
 function toContentTags(value: unknown): ContentTag[] {
   if (!Array.isArray(value)) {
     return [];
@@ -46,7 +60,7 @@ function toContentTags(value: unknown): ContentTag[] {
 
   return value
     .map((tag) => {
-      const record = tag as Record<string, unknown>;
+      const record = tag as RawRecord;
       return {
         id: String(record.id || ''),
         name: String(record.name || ''),
@@ -56,12 +70,7 @@ function toContentTags(value: unknown): ContentTag[] {
     .filter((tag) => tag.id && tag.name);
 }
 
-function extractTags(record: Record<string, unknown>): ContentTag[] {
-  const tagLinks = Array.isArray(record.tags) ? record.tags : [];
-  return toContentTags(tagLinks.map((entry) => (entry as { tag?: unknown }).tag).filter(Boolean));
-}
-
-function toContentAsset(record: Record<string, unknown>, signedUrl: string | null = null): ContentAsset {
+function toContentAsset(record: RawRecord, signedUrl: string | null = null): ContentAsset {
   return {
     id: String(record.id || ''),
     created_at: String(record.created_at || ''),
@@ -87,7 +96,7 @@ function toContentAsset(record: Record<string, unknown>, signedUrl: string | nul
   };
 }
 
-function toContentAssetProject(record: Record<string, unknown>, previewAsset: ContentAsset | null = null): ContentAssetProject {
+function toContentAssetProject(record: RawRecord, previewAsset: ContentAsset | null = null): ContentAssetProject {
   return {
     id: String(record.id || ''),
     created_at: String(record.created_at || ''),
@@ -113,89 +122,111 @@ function toContentAssetProject(record: Record<string, unknown>, previewAsset: Co
 }
 
 async function createSignedUrl(bucket: string, path: string): Promise<string | null> {
-  if (!bucket || !path) {
-    return null;
-  }
+  return createObjectSignedUrl(bucket, path, 60 * 60);
+}
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
+async function rowsToContentAssets(rows: RawRecord[]): Promise<ContentAsset[]> {
+  return Promise.all(
+    rows.map(async (record) => toContentAsset(
+      record,
+      await createSignedUrl(
+        String(record.storage_bucket || CONTENT_ASSET_BUCKET),
+        String(record.storage_path || ''),
+      ),
+    )),
+  );
+}
 
-  if (error) {
-    return null;
-  }
+async function queryContentAssets(whereSql = sql`true`, limit = 200): Promise<RawRecord[]> {
+  const result = await db.execute(sql`
+    select
+      content_assets.id,
+      content_assets.created_at::text,
+      content_assets.updated_at::text,
+      content_assets.uploader,
+      content_assets.uploader_email,
+      content_assets.project_id,
+      content_assets.project_name,
+      content_assets.original_filename,
+      content_assets.storage_bucket,
+      content_assets.storage_path,
+      content_assets.mime_type,
+      content_assets.file_size,
+      content_assets.notes,
+      coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'id', content_tags.id,
+            'name', content_tags.name,
+            'created_at', content_tags.created_at::text
+          )
+          order by content_tags.name
+        ) filter (where content_tags.id is not null),
+        '[]'::jsonb
+      ) as tags
+    from public.content_assets
+    left join public.content_asset_tags on content_asset_tags.content_asset_id = content_assets.id
+    left join public.content_tags on content_tags.id = content_asset_tags.tag_id
+    where ${whereSql}
+    group by content_assets.id
+    order by content_assets.created_at desc
+    limit ${limit}
+  `);
 
-  return data.signedUrl;
+  return rowsFromResult<RawRecord>(result);
+}
+
+async function queryContentAssetProjects(whereSql = sql`true`, limit = 200): Promise<RawRecord[]> {
+  const result = await db.execute(sql`
+    select
+      content_asset_projects.id,
+      content_asset_projects.created_at::text,
+      content_asset_projects.updated_at::text,
+      content_asset_projects.created_by,
+      content_asset_projects.created_by_email,
+      content_asset_projects.project_name,
+      content_asset_projects.notes,
+      coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'id', content_tags.id,
+            'name', content_tags.name,
+            'created_at', content_tags.created_at::text
+          )
+          order by content_tags.name
+        ) filter (where content_tags.id is not null),
+        '[]'::jsonb
+      ) as tags
+    from public.content_asset_projects
+    left join public.content_asset_project_tags on content_asset_project_tags.content_asset_project_id = content_asset_projects.id
+    left join public.content_tags on content_tags.id = content_asset_project_tags.tag_id
+    where ${whereSql}
+    group by content_asset_projects.id
+    order by content_asset_projects.updated_at desc
+    limit ${limit}
+  `);
+
+  return rowsFromResult<RawRecord>(result);
 }
 
 export async function listContentAssets(): Promise<ContentAsset[]> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_assets')
-    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
-    .order('created_at', { ascending: false })
-    .limit(200);
-
-  if (error) {
-    throw new Error(`Gagal memuat assets: ${error.message}`);
-  }
-
-  return Promise.all(
-    (data || []).map(async (record) => {
-      const rawRecord = record as Record<string, unknown>;
-      const signedUrl = await createSignedUrl(
-        String(rawRecord.storage_bucket || CONTENT_ASSET_BUCKET),
-        String(rawRecord.storage_path || ''),
-      );
-
-      return toContentAsset({ ...rawRecord, tags: extractTags(rawRecord) }, signedUrl);
-    }),
-  );
+  return rowsToContentAssets(await queryContentAssets(sql`true`, 200));
 }
 
 export async function listContentAssetProjects(): Promise<ContentAssetProject[]> {
-  const supabase = getSupabaseAdminClient();
-  const { data: projects, error: projectError } = await supabase
-    .from('content_asset_projects')
-    .select('*, tags:content_asset_project_tags(tag:content_tags(id, name, created_at))')
-    .order('updated_at', { ascending: false })
-    .limit(200);
+  const [projects, assetsWithUrls] = await Promise.all([
+    queryContentAssetProjects(sql`true`, 200),
+    rowsToContentAssets(await queryContentAssets(sql`true`, 1000)),
+  ]);
 
-  if (projectError) {
-    throw new Error(`Gagal memuat project asset: ${projectError.message}`);
-  }
-
-  const { data: assets, error: assetError } = await supabase
-    .from('content_assets')
-    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
-    .order('created_at', { ascending: false })
-    .limit(1000);
-
-  if (assetError) {
-    throw new Error(`Gagal memuat assets: ${assetError.message}`);
-  }
-
-  const assetsWithUrls = await Promise.all(
-    (assets || []).map(async (record) => {
-      const rawRecord = record as Record<string, unknown>;
-      const signedUrl = await createSignedUrl(
-        String(rawRecord.storage_bucket || CONTENT_ASSET_BUCKET),
-        String(rawRecord.storage_path || ''),
-      );
-
-      return toContentAsset({ ...rawRecord, tags: extractTags(rawRecord) }, signedUrl);
-    }),
-  );
-
-  return (projects || []).map((project) => {
-    const rawProject = project as Record<string, unknown>;
-    const projectId = String(rawProject.id || '');
+  return projects.map((project) => {
+    const projectId = String(project.id || '');
     const projectAssets = assetsWithUrls.filter((asset) => asset.project_id === projectId);
     const latestAsset = projectAssets[0] || null;
 
     return toContentAssetProject(
       {
-        ...rawProject,
-        tags: extractTags(rawProject),
+        ...project,
         asset_count: projectAssets.length,
         image_count: projectAssets.filter((asset) => asset.mime_type.startsWith('image/')).length,
         video_count: projectAssets.filter((asset) => asset.mime_type.startsWith('video/')).length,
@@ -213,28 +244,20 @@ export async function getContentAssetProject(id: string): Promise<ContentAssetPr
     throw new Error('Project id wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data: project, error: projectError } = await supabase
-    .from('content_asset_projects')
-    .select('*, tags:content_asset_project_tags(tag:content_tags(id, name, created_at))')
-    .eq('id', normalizedId)
-    .single();
+  const project = firstRowFromResult<RawRecord>({
+    rows: await queryContentAssetProjects(sql`content_asset_projects.id = ${normalizedId}`, 1),
+  });
 
-  if (projectError) {
-    if (projectError.code === 'PGRST116') {
-      return null;
-    }
-    throw new Error(`Gagal memuat project asset: ${projectError.message}`);
+  if (!project) {
+    return null;
   }
 
   const assets = await listContentAssetsByProject(normalizedId);
-  const rawProject = project as Record<string, unknown>;
   const latestAsset = assets[0] || null;
 
   return toContentAssetProject(
     {
-      ...rawProject,
-      tags: extractTags(rawProject),
+      ...project,
       asset_count: assets.length,
       image_count: assets.filter((asset) => asset.mime_type.startsWith('image/')).length,
       video_count: assets.filter((asset) => asset.mime_type.startsWith('video/')).length,
@@ -251,29 +274,7 @@ export async function listContentAssetsByProject(projectId: string): Promise<Con
     throw new Error('Project id wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_assets')
-    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
-    .eq('project_id', normalizedProjectId)
-    .order('created_at', { ascending: false })
-    .limit(500);
-
-  if (error) {
-    throw new Error(`Gagal memuat assets project: ${error.message}`);
-  }
-
-  return Promise.all(
-    (data || []).map(async (record) => {
-      const rawRecord = record as Record<string, unknown>;
-      const signedUrl = await createSignedUrl(
-        String(rawRecord.storage_bucket || CONTENT_ASSET_BUCKET),
-        String(rawRecord.storage_path || ''),
-      );
-
-      return toContentAsset({ ...rawRecord, tags: extractTags(rawRecord) }, signedUrl);
-    }),
-  );
+  return rowsToContentAssets(await queryContentAssets(sql`content_assets.project_id = ${normalizedProjectId}`, 500));
 }
 
 export async function getContentAsset(id: string): Promise<ContentAsset | null> {
@@ -282,23 +283,16 @@ export async function getContentAsset(id: string): Promise<ContentAsset | null> 
     throw new Error('Asset id wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_assets')
-    .select('*, tags:content_asset_tags(tag:content_tags(id, name, created_at))')
-    .eq('id', normalizedId)
-    .single();
+  const record = firstRowFromResult<RawRecord>({
+    rows: await queryContentAssets(sql`content_assets.id = ${normalizedId}`, 1),
+  });
 
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return null;
-    }
-    throw new Error(`Gagal membaca asset: ${error.message}`);
+  if (!record) {
+    return null;
   }
 
-  const record = data as Record<string, unknown>;
   return toContentAsset(
-    { ...record, tags: extractTags(record) },
+    record,
     await createSignedUrl(
       String(record.storage_bucket || CONTENT_ASSET_BUCKET),
       String(record.storage_path || ''),
@@ -311,18 +305,12 @@ export async function downloadContentAssetObject(asset: ContentAsset): Promise<B
     throw new Error('Lokasi storage asset tidak valid.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.storage.from(asset.storage_bucket).download(asset.storage_path);
-
-  if (error) {
-    throw new Error(`Gagal download asset "${asset.original_filename}": ${error.message}`);
+  try {
+    return await downloadObject(asset.storage_bucket, asset.storage_path);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Gagal download asset "${asset.original_filename}": ${message}`);
   }
-
-  if (!data) {
-    throw new Error(`File asset "${asset.original_filename}" tidak ditemukan di storage.`);
-  }
-
-  return data;
 }
 
 export async function createContentAssetProject(input: ContentAssetProjectInput): Promise<ContentAssetProject> {
@@ -331,51 +319,73 @@ export async function createContentAssetProject(input: ContentAssetProjectInput)
     throw new Error('Nama project wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_asset_projects')
-    .insert({
-      created_by: input.createdBy,
-      created_by_email: input.createdByEmail || null,
-      project_name: projectName,
-      notes: input.notes || null,
-      updated_at: new Date().toISOString(),
-    })
-    .select()
-    .single();
+  const result = await db.execute(sql`
+    insert into public.content_asset_projects (created_by, created_by_email, project_name, notes, updated_at)
+    values (${input.createdBy}, ${input.createdByEmail || null}, ${projectName}, ${input.notes || null}, ${new Date().toISOString()}::timestamptz)
+    returning id, created_at::text, updated_at::text, created_by, created_by_email, project_name, notes
+  `);
+  const record = firstRowFromResult<RawRecord>(result);
 
-  if (error) {
-    throw new Error(`Gagal membuat project asset: ${error.message}`);
+  if (!record) {
+    throw new Error('Gagal membuat project asset.');
   }
 
-  return toContentAssetProject(data as Record<string, unknown>);
+  return toContentAssetProject({ ...record, tags: [] });
 }
 
 export async function createContentAsset(input: ContentAssetInput): Promise<ContentAsset> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_assets')
-    .insert({
-      project_id: input.projectId || null,
-      uploader: input.uploader,
-      uploader_email: input.uploaderEmail || null,
-      project_name: input.projectName,
-      original_filename: input.originalFilename,
-      storage_bucket: input.storageBucket,
-      storage_path: input.storagePath,
-      mime_type: input.mimeType,
-      file_size: input.fileSize,
-      notes: input.notes || null,
-      updated_at: new Date().toISOString(),
-    })
-    .select()
-    .single();
+  const result = await db.execute(sql`
+    insert into public.content_assets (
+      project_id,
+      uploader,
+      uploader_email,
+      project_name,
+      original_filename,
+      storage_bucket,
+      storage_path,
+      mime_type,
+      file_size,
+      notes,
+      updated_at
+    )
+    values (
+      ${input.projectId || null},
+      ${input.uploader},
+      ${input.uploaderEmail || null},
+      ${input.projectName},
+      ${input.originalFilename},
+      ${input.storageBucket},
+      ${input.storagePath},
+      ${input.mimeType},
+      ${input.fileSize},
+      ${input.notes || null},
+      ${new Date().toISOString()}::timestamptz
+    )
+    returning
+      id,
+      created_at::text,
+      updated_at::text,
+      uploader,
+      uploader_email,
+      project_id,
+      project_name,
+      original_filename,
+      storage_bucket,
+      storage_path,
+      mime_type,
+      file_size,
+      notes
+  `);
+  const record = firstRowFromResult<RawRecord>(result);
 
-  if (error) {
-    throw new Error(`Gagal menyimpan metadata asset: ${error.message}`);
+  if (!record) {
+    throw new Error('Gagal menyimpan metadata asset.');
   }
 
-  return toContentAsset({ ...(data as Record<string, unknown>), tags: [] }, await createSignedUrl(input.storageBucket, input.storagePath));
+  return toContentAsset(
+    { ...record, tags: [] },
+    await createSignedUrl(input.storageBucket, input.storagePath),
+  );
 }
 
 function normalizeTagIds(tagIds: string[] | undefined): string[] {
@@ -383,55 +393,43 @@ function normalizeTagIds(tagIds: string[] | undefined): string[] {
 }
 
 async function replaceContentAssetTags(assetId: string, tagIds: string[]): Promise<void> {
-  const supabase = getSupabaseAdminClient();
   const normalizedTagIds = normalizeTagIds(tagIds);
 
-  const { error: deleteError } = await supabase
-    .from('content_asset_tags')
-    .delete()
-    .eq('content_asset_id', assetId);
-
-  if (deleteError) {
-    throw new Error(`Gagal memperbarui tag asset: ${deleteError.message}`);
-  }
+  await db.execute(sql`
+    delete from public.content_asset_tags
+    where content_asset_id = ${assetId}
+  `);
 
   if (!normalizedTagIds.length) {
     return;
   }
 
-  const { error: insertError } = await supabase
-    .from('content_asset_tags')
-    .insert(normalizedTagIds.map((tagId) => ({ content_asset_id: assetId, tag_id: tagId })));
-
-  if (insertError) {
-    throw new Error(`Gagal memperbarui tag asset: ${insertError.message}`);
-  }
+  await db.execute(sql`
+    insert into public.content_asset_tags (content_asset_id, tag_id)
+    select ${assetId}, tag_id
+    from unnest(${pgUuidArray(normalizedTagIds)}) as tag_id
+    on conflict do nothing
+  `);
 }
 
 async function replaceContentAssetProjectTags(projectId: string, tagIds: string[]): Promise<void> {
-  const supabase = getSupabaseAdminClient();
   const normalizedTagIds = normalizeTagIds(tagIds);
 
-  const { error: deleteError } = await supabase
-    .from('content_asset_project_tags')
-    .delete()
-    .eq('content_asset_project_id', projectId);
-
-  if (deleteError) {
-    throw new Error(`Gagal memperbarui tag project: ${deleteError.message}`);
-  }
+  await db.execute(sql`
+    delete from public.content_asset_project_tags
+    where content_asset_project_id = ${projectId}
+  `);
 
   if (!normalizedTagIds.length) {
     return;
   }
 
-  const { error: insertError } = await supabase
-    .from('content_asset_project_tags')
-    .insert(normalizedTagIds.map((tagId) => ({ content_asset_project_id: projectId, tag_id: tagId })));
-
-  if (insertError) {
-    throw new Error(`Gagal memperbarui tag project: ${insertError.message}`);
-  }
+  await db.execute(sql`
+    insert into public.content_asset_project_tags (content_asset_project_id, tag_id)
+    select ${projectId}, tag_id
+    from unnest(${pgUuidArray(normalizedTagIds)}) as tag_id
+    on conflict do nothing
+  `);
 }
 
 export async function updateContentAsset(input: UpdateContentAssetInput): Promise<ContentAsset> {
@@ -446,29 +444,30 @@ export async function updateContentAsset(input: UpdateContentAssetInput): Promis
     throw new Error('Nama asset wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_assets')
-    .update({
-      ...(input.originalFilename !== undefined ? { original_filename: originalFilename } : {}),
-      notes: input.notes || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', normalizedId)
-    .select()
-    .single();
+  const result = await db.execute(sql`
+    update public.content_assets
+    set
+      original_filename = case when ${input.originalFilename !== undefined} then ${originalFilename} else original_filename end,
+      notes = ${input.notes || null},
+      updated_at = ${new Date().toISOString()}::timestamptz
+    where id = ${normalizedId}
+    returning id
+  `);
 
-  if (error) {
-    throw new Error(`Gagal mengubah metadata asset: ${error.message}`);
+  if (!firstRowFromResult<RawRecord>(result)) {
+    throw new Error('Asset tidak ditemukan.');
   }
 
   if (input.tagIds) {
     await replaceContentAssetTags(normalizedId, input.tagIds);
   }
 
-  const record = data as Record<string, unknown>;
-  return getContentAsset(normalizedId)
-    .then((asset) => asset || toContentAsset(record, null));
+  const asset = await getContentAsset(normalizedId);
+  if (!asset) {
+    throw new Error('Asset tidak ditemukan.');
+  }
+
+  return asset;
 }
 
 export async function updateContentAssetProject(input: UpdateContentAssetProjectInput): Promise<ContentAssetProject> {
@@ -483,28 +482,25 @@ export async function updateContentAssetProject(input: UpdateContentAssetProject
     throw new Error('Nama project wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('content_asset_projects')
-    .update({
-      project_name: projectName,
-      notes: input.notes || null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', normalizedId);
+  const result = await db.execute(sql`
+    update public.content_asset_projects
+    set
+      project_name = ${projectName},
+      notes = ${input.notes || null},
+      updated_at = ${new Date().toISOString()}::timestamptz
+    where id = ${normalizedId}
+    returning id
+  `);
 
-  if (error) {
-    throw new Error(`Gagal mengubah project asset: ${error.message}`);
+  if (!firstRowFromResult<RawRecord>(result)) {
+    throw new Error('Project asset tidak ditemukan.');
   }
 
-  const { error: assetError } = await supabase
-    .from('content_assets')
-    .update({ project_name: projectName, updated_at: new Date().toISOString() })
-    .eq('project_id', normalizedId);
-
-  if (assetError) {
-    throw new Error(`Gagal menyamakan nama project di asset: ${assetError.message}`);
-  }
+  await db.execute(sql`
+    update public.content_assets
+    set project_name = ${projectName}, updated_at = ${new Date().toISOString()}::timestamptz
+    where project_id = ${normalizedId}
+  `);
 
   if (input.tagIds) {
     await replaceContentAssetProjectTags(normalizedId, input.tagIds);
@@ -524,33 +520,17 @@ export async function deleteContentAsset(id: string): Promise<void> {
     throw new Error('Asset id wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error: lookupError } = await supabase
-    .from('content_assets')
-    .select('storage_bucket, storage_path')
-    .eq('id', normalizedId)
-    .single();
-
-  if (lookupError) {
-    throw new Error(`Gagal membaca asset: ${lookupError.message}`);
+  const asset = await getContentAsset(normalizedId);
+  if (!asset) {
+    throw new Error('Asset tidak ditemukan.');
   }
 
-  const record = data as Record<string, unknown>;
-  const bucket = String(record.storage_bucket || CONTENT_ASSET_BUCKET);
-  const path = String(record.storage_path || '');
+  await db.execute(sql`
+    delete from public.content_assets
+    where id = ${normalizedId}
+  `);
 
-  const { error: deleteRowError } = await supabase
-    .from('content_assets')
-    .delete()
-    .eq('id', normalizedId);
-
-  if (deleteRowError) {
-    throw new Error(`Gagal menghapus metadata asset: ${deleteRowError.message}`);
-  }
-
-  if (path) {
-    await supabase.storage.from(bucket).remove([path]);
-  }
+  await removeObject(asset.storage_bucket || CONTENT_ASSET_BUCKET, asset.storage_path);
 }
 
 export async function deleteContentAssetProject(id: string): Promise<void> {
@@ -559,65 +539,30 @@ export async function deleteContentAssetProject(id: string): Promise<void> {
     throw new Error('Project id wajib diisi.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data: project, error: projectError } = await supabase
-    .from('content_asset_projects')
-    .select('id')
-    .eq('id', normalizedId)
-    .single();
-
-  if (projectError) {
-    if (projectError.code === 'PGRST116') {
-      throw new Error('Project asset tidak ditemukan.');
-    }
-    throw new Error(`Gagal membaca project asset: ${projectError.message}`);
-  }
-
+  const project = await getContentAssetProject(normalizedId);
   if (!project) {
     throw new Error('Project asset tidak ditemukan.');
   }
 
-  const { data: assets, error: assetLookupError } = await supabase
-    .from('content_assets')
-    .select('storage_bucket, storage_path')
-    .eq('project_id', normalizedId);
-
-  if (assetLookupError) {
-    throw new Error(`Gagal membaca asset project: ${assetLookupError.message}`);
-  }
-
+  const assets = await listContentAssetsByProject(normalizedId);
   const storagePathsByBucket = new Map<string, string[]>();
-  (assets || []).forEach((asset) => {
-    const bucket = String(asset.storage_bucket || CONTENT_ASSET_BUCKET);
-    const path = String(asset.storage_path || '');
-    if (!path) {
+  assets.forEach((asset) => {
+    if (!asset.storage_path) {
       return;
     }
-    storagePathsByBucket.set(bucket, [...(storagePathsByBucket.get(bucket) || []), path]);
+    storagePathsByBucket.set(asset.storage_bucket, [...(storagePathsByBucket.get(asset.storage_bucket) || []), asset.storage_path]);
   });
 
-  const { error: deleteAssetsError } = await supabase
-    .from('content_assets')
-    .delete()
-    .eq('project_id', normalizedId);
-
-  if (deleteAssetsError) {
-    throw new Error(`Gagal menghapus metadata asset project: ${deleteAssetsError.message}`);
-  }
-
-  const { error: deleteProjectError } = await supabase
-    .from('content_asset_projects')
-    .delete()
-    .eq('id', normalizedId);
-
-  if (deleteProjectError) {
-    throw new Error(`Gagal menghapus project asset: ${deleteProjectError.message}`);
-  }
+  await db.execute(sql`
+    delete from public.content_assets
+    where project_id = ${normalizedId}
+  `);
+  await db.execute(sql`
+    delete from public.content_asset_projects
+    where id = ${normalizedId}
+  `);
 
   for (const [bucket, paths] of storagePathsByBucket) {
-    const { error } = await supabase.storage.from(bucket).remove(paths);
-    if (error) {
-      throw new Error(`Project terhapus, tapi gagal membersihkan storage bucket "${bucket}": ${error.message}`);
-    }
+    await removeObjects(bucket, paths);
   }
 }

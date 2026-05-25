@@ -2,7 +2,7 @@ import 'server-only';
 
 import crypto from 'node:crypto';
 
-import { getSupabaseAdminClient } from './supabase-server';
+import { createObjectSignedUrl, uploadObject } from './object-storage';
 
 export const TICKET_MEDIA_BUCKET = 'ticket-assets';
 export const MAX_TICKET_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -49,19 +49,14 @@ export async function uploadTicketImage(file: File): Promise<TicketMediaInput> {
     throw new Error('Ukuran image tiket maksimal 10 MB.');
   }
 
-  const supabase = getSupabaseAdminClient();
   const safeFileName = sanitizeTicketMediaFileName(file.name);
   const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName}`;
-  const { error } = await supabase.storage
-    .from(TICKET_MEDIA_BUCKET)
-    .upload(objectPath, await file.arrayBuffer(), {
-      contentType: file.type,
-      upsert: false,
-    });
-
-  if (error) {
-    throw new Error(`Gagal upload image tiket: ${error.message}`);
-  }
+  await uploadObject({
+    bucket: TICKET_MEDIA_BUCKET,
+    path: objectPath,
+    body: await file.arrayBuffer(),
+    contentType: file.type,
+  });
 
   return {
     bucket: TICKET_MEDIA_BUCKET,
@@ -73,16 +68,5 @@ export async function uploadTicketImage(file: File): Promise<TicketMediaInput> {
 }
 
 export async function createTicketMediaSignedUrl(bucket: string, path: string): Promise<string | null> {
-  if (!bucket || !path) {
-    return null;
-  }
-
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 60);
-
-  if (error) {
-    return null;
-  }
-
-  return data.signedUrl;
+  return createObjectSignedUrl(bucket, path, 60 * 60);
 }

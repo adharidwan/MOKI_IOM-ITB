@@ -172,7 +172,14 @@ function envArrayFor(instanceId, label) {
     'NEXT_PUBLIC_SUPABASE_URL',
     'NEXT_PUBLIC_SUPABASE_ANON_KEY',
     'SUPABASE_SERVICE_ROLE_KEY',
+    'DATABASE_URL',
     'REDIS_URL',
+    'S3_ENDPOINT',
+    'S3_ACCESS_KEY_ID',
+    'S3_SECRET_ACCESS_KEY',
+    'S3_BUCKET',
+    'S3_REGION',
+    'S3_FORCE_PATH_STYLE',
   ];
   const env = [
     `WHATSAPP_INSTANCE_ID=${instanceId}`,

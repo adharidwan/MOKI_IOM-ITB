@@ -1,9 +1,40 @@
 import 'server-only';
 
-import { getSupabaseServerClient, getSupabaseAdminClient } from './supabase-server';
 import { createTicketMediaSignedUrl, normalizeTicketMediaInput, type TicketMediaInput } from './ticket-media';
 import { Ticket, Reply, TicketWithReplies, CsvContact, ContentRecording, ContentRecordingPlatform, ContentRecordingType, ContentTag } from './types';
 import { createTicketReplyOutboundMessage } from './whatsapp-notification-repository';
+import {
+  addCsvContactGroups,
+  countCsvContacts,
+  countUngroupedCsvContacts,
+  createReplyRecord,
+  createTicketRecord,
+  deleteContentRecordingRecord,
+  deleteCsvContactRow,
+  deleteTicketRecord,
+  ensureContentTagRow,
+  findContentRecordingIdByLink,
+  getContentRecordingRowById,
+  getContentRecordingsOverviewRow,
+  getCsvContactRowsByPhoneNumbers,
+  getTicketForReplyQueue,
+  getTicketStatusSummaryRow,
+  getTicketWithRepliesRow,
+  listContentRecordingRows,
+  listContentTagRows,
+  listCsvContactRows,
+  listPaginatedContentRecordingRows,
+  listPaginatedCsvContactRows,
+  listTicketsRows,
+  markReplyDeliveryFailed,
+  updateCsvContactRow,
+  updateTicketAfterReply,
+  updateTicketStatusRecord,
+  upsertCsvContactRows,
+  updateContentRecordingRecordById,
+  upsertContentRecordingRecord,
+  upsertSingleCsvContactRow,
+} from './repositories';
 
 interface GetTicketsParams {
   page?: number;
@@ -333,17 +364,9 @@ export async function getCsvContactsByPhoneNumbers(phoneNumbers: string[]): Prom
     return [];
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .select('*')
-    .in('no_telp', normalizedPhoneNumbers);
+  const rows = await getCsvContactRowsByPhoneNumbers(normalizedPhoneNumbers);
 
-  if (error) {
-    throw new Error(`Failed to fetch contacts by phone number: ${error.message}`);
-  }
-
-  return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
+  return rows.map((record) => toCsvContact(record));
 }
 
 export async function getTickets({ 
@@ -354,28 +377,21 @@ export async function getTickets({
   pageSize = 10,
   instanceId,
 }: GetTicketsParams): Promise<GetTicketsResponse> {
-  const supabase = getSupabaseServerClient();
   const safePage = Math.max(1, Math.floor(page));
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
   const normalizedSort = normalizeTicketSortKey(sort);
   const normalizedSortDir = normalizeSortDirection(sortDir, DEFAULT_TICKET_SORT_DIR);
-  const { data, error } = await supabase.rpc('list_tickets', {
-    p_search: search.trim() || null,
-    p_instance_id: instanceId || null,
-    p_page: safePage,
-    p_page_size: safePageSize,
-    p_sort_by: normalizedSort,
-    p_sort_dir: normalizedSortDir,
+  const rows = await listTicketsRows({
+    search: search.trim() || null,
+    instanceId: instanceId || null,
+    page: safePage,
+    pageSize: safePageSize,
+    sortBy: normalizedSort,
+    sortDir: normalizedSortDir,
   });
 
-  if (error) {
-    throw new Error(`Failed to fetch tickets: ${error.message}`);
-  }
-
-  const rows = Array.isArray(data) ? data : [];
-
   return {
-    tickets: rows.map((row) => toTicketWithReplies(row as Record<string, unknown>)),
+    tickets: rows.map((row) => toTicketWithReplies(row)),
     total: Number(rows[0]?.total_count || 0),
   };
 }
@@ -384,17 +400,10 @@ export async function getTicketStatusSummary({
   search = '',
   instanceId,
 }: Pick<GetTicketsParams, 'search' | 'instanceId'> = {}): Promise<TicketStatusSummary> {
-  const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase.rpc('ticket_status_summary', {
-    p_search: search.trim() || null,
-    p_instance_id: instanceId || null,
+  const summary = await getTicketStatusSummaryRow({
+    search: search.trim() || null,
+    instanceId: instanceId || null,
   });
-
-  if (error) {
-    throw new Error(`Failed to fetch ticket status summary: ${error.message}`);
-  }
-
-  const summary = Array.isArray(data) ? data[0] : null;
 
   return {
     total: Number(summary?.total_count || 0),
@@ -407,18 +416,13 @@ export async function getTicketStatusSummary({
 
 // Fetch a single ticket by ID with its replies
 export async function getTicketById(id: string): Promise<TicketWithReplies> {
-  const supabase = getSupabaseServerClient();
-  const { data, error } = await supabase
-    .from('tickets')
-    .select('*, replies(*)')
-    .eq('id', id)
-    .single();
+  const data = await getTicketWithRepliesRow(id);
 
-  if (error) {
-    throw new Error(`Ticket not found: ${error.message}`);
+  if (!data) {
+    throw new Error('Ticket not found.');
   }
 
-  const ticket = toTicketWithReplies(data as Record<string, unknown>);
+  const ticket = toTicketWithReplies(data);
   const replies = await Promise.all(
     ticket.replies.map(async (reply) => ({
       ...reply,
@@ -436,35 +440,16 @@ export async function getTicketById(id: string): Promise<TicketWithReplies> {
 
 // Create a new ticket
 export async function createTicket(ticket: Omit<Ticket, 'id' | 'created_at'>): Promise<Ticket> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('tickets')
-    .insert(ticket)
-    .select()
-    .single();
+  const data = await createTicketRecord(ticket);
 
-  if (error) {
-    throw new Error(`Failed to create ticket: ${error.message}`);
-  }
-
-  return data as Ticket;
+  return data as unknown as Ticket;
 }
 
 // Update a ticket's status
 export async function updateTicketStatus(id: string, status: Ticket['status']): Promise<Ticket> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('tickets')
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select()
-    .single();
+  const data = await updateTicketStatusRecord(id, status, new Date().toISOString());
 
-  if (error) {
-    throw new Error(`Failed to update ticket: ${error.message}`);
-  }
-
-  return data as Ticket;
+  return data as unknown as Ticket;
 }
 
 // Add a reply to a ticket
@@ -474,59 +459,41 @@ export async function addReply(
   content: string,
   mediaInput?: TicketMediaInput | null,
 ): Promise<Reply> {
-  const supabase = getSupabaseAdminClient();
   const media = normalizeTicketMediaInput(mediaInput);
-  const { data: ticket, error: ticketLookupError } = await supabase
-    .from('tickets')
-    .select('id, channel, whatsapp_chat_id, phone_number, whatsapp_instance_id')
-    .eq('id', ticketId)
-    .single();
+  const ticket = await getTicketForReplyQueue(ticketId);
 
-  if (ticketLookupError || !ticket) {
-    throw new Error(`Ticket not found for reply: ${ticketLookupError?.message || 'Unknown error'}`);
+  if (!ticket) {
+    throw new Error('Ticket not found for reply.');
   }
 
   const shouldQueueWhatsapp =
     ticket.channel === 'whatsapp' && Boolean(ticket.whatsapp_chat_id);
-  const { data, error } = await supabase
-    .from('replies')
-    .insert({
-      ticket_id: ticketId,
-      author,
-      content,
-      sender_type: 'admin',
-      delivery_status: shouldQueueWhatsapp ? 'queued' : 'not_applicable',
-      delivery_attempts: 0,
-      media_bucket: media?.bucket || null,
-      media_path: media?.path || null,
-      media_mime_type: media?.mimeType || null,
-      media_file_name: media?.fileName || null,
-      media_size_bytes: media?.sizeBytes || null,
-    })
-    .select()
-    .single();
+  const data = await createReplyRecord({
+    ticket_id: ticketId,
+    author,
+    content,
+    sender_type: 'admin',
+    delivery_status: shouldQueueWhatsapp ? 'queued' : 'not_applicable',
+    delivery_attempts: 0,
+    media_bucket: media?.bucket || null,
+    media_path: media?.path || null,
+    media_mime_type: media?.mimeType || null,
+    media_file_name: media?.fileName || null,
+    media_size_bytes: media?.sizeBytes || null,
+  });
 
-  if (error) {
-    throw new Error(`Failed to add reply: ${error.message}`);
-  }
-
-  const { error: ticketError } = await supabase
-    .from('tickets')
-    .update({ status: 'In Progress', updated_at: new Date().toISOString() })
-    .eq('id', ticketId);
-
-  if (ticketError) {
-    throw new Error(`Reply created but failed to update ticket: ${ticketError.message}`);
-  }
+  await updateTicketAfterReply(ticketId, new Date().toISOString());
 
   if (shouldQueueWhatsapp && ticket.whatsapp_chat_id) {
     try {
       const outboundInput = {
-        replyId: data.id,
+        replyId: String(data.id),
         ticketId,
-        whatsappInstanceId: ticket.whatsapp_instance_id || 'default',
-        recipientPhoneNumber: ticket.phone_number,
-        recipientChatId: ticket.whatsapp_chat_id,
+        whatsappInstanceId: ticket.whatsapp_instance_id === null || ticket.whatsapp_instance_id === undefined
+          ? 'default'
+          : String(ticket.whatsapp_instance_id),
+        recipientPhoneNumber: ticket.phone_number === null || ticket.phone_number === undefined ? null : String(ticket.phone_number),
+        recipientChatId: String(ticket.whatsapp_chat_id),
         content,
         ...(media ? { media } : {}),
       };
@@ -536,33 +503,18 @@ export async function addReply(
       const queueErrorMessage =
         queueError instanceof Error ? queueError.message : 'Unknown outbound queue error';
 
-      await supabase
-        .from('replies')
-        .update({
-          delivery_status: 'failed',
-          last_delivery_error: queueErrorMessage,
-          next_retry_at: null,
-        })
-        .eq('id', data.id);
+      await markReplyDeliveryFailed(String(data.id), queueErrorMessage);
 
       throw new Error(`Reply created but failed to queue outbound message: ${queueErrorMessage}`);
     }
   }
 
-  return data as Reply;
+  return toReply(data);
 }
 
 // Delete a ticket
 export async function deleteTicket(id: string): Promise<void> {
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('tickets')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    throw new Error(`Failed to delete ticket: ${error.message}`);
-  }
+  await deleteTicketRecord(id);
 }
 
 export async function createCsvContacts(
@@ -573,7 +525,6 @@ export async function createCsvContacts(
     return 0;
   }
 
-  const supabase = getSupabaseAdminClient();
   const dedupedByPhone = new Map<string, CsvContactInput>();
 
   rows.forEach((row) => {
@@ -603,29 +554,13 @@ export async function createCsvContacts(
     imported_at: new Date().toISOString(),
   }));
 
-  const { error } = await supabase
-    .from('csv_contacts')
-    .upsert(payload, { onConflict: 'no_telp' });
-
-  if (error) {
-    throw new Error(`Failed to import CSV contacts: ${error.message}`);
-  }
-
-  return payload.length;
+  return upsertCsvContactRows(payload);
 }
 
 export async function getCsvContacts(): Promise<CsvContact[]> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const data = await listCsvContactRows();
 
-  if (error) {
-    throw new Error(`Failed to fetch phone list: ${error.message}`);
-  }
-
-  return (data || []).map((record) => toCsvContact(record as Record<string, unknown>));
+  return data.map((record) => toCsvContact(record));
 }
 
 export async function getPaginatedCsvContacts({
@@ -642,25 +577,19 @@ export async function getPaginatedCsvContacts({
   const normalizedGroupName = String(groupName || '').trim();
   const normalizedSortBy = normalizeCsvContactSortKey(sortBy);
   const normalizedSortDir = normalizeSortDirection(sortDir, DEFAULT_CONTACT_SORT_DIR);
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.rpc('list_csv_contacts', {
-    p_search: normalizedSearch || null,
-    p_group_name: normalizedGroupName || null,
-    p_page: safePage,
-    p_page_size: safePageSize,
-    p_sort_by: normalizedSortBy,
-    p_sort_dir: normalizedSortDir,
+  const rows = await listPaginatedCsvContactRows({
+    search: normalizedSearch || null,
+    groupName: normalizedGroupName || null,
+    page: safePage,
+    pageSize: safePageSize,
+    sortBy: normalizedSortBy,
+    sortDir: normalizedSortDir,
   });
 
-  if (error) {
-    throw new Error(`Failed to fetch paginated contacts: ${error.message}`);
-  }
-
-  const rows = Array.isArray(data) ? data : [];
   const total = Number(rows[0]?.total_count || 0);
 
   return {
-    items: rows.map((record) => toCsvContact(record as Record<string, unknown>)),
+    items: rows.map((record) => toCsvContact(record)),
     total,
     page: safePage,
     pageSize: safePageSize,
@@ -669,20 +598,10 @@ export async function getPaginatedCsvContacts({
 }
 
 export async function getCsvContactsOverview(): Promise<CsvContactsOverview> {
-  const supabase = getSupabaseAdminClient();
-  const [{ count: totalContacts, error: totalError }, { count: ungroupedContacts, error: ungroupedError }] =
-    await Promise.all([
-      supabase.from('csv_contacts').select('id', { count: 'exact', head: true }),
-      supabase.from('csv_contacts').select('id', { count: 'exact', head: true }).eq('group_names', '{}'),
-    ]);
-
-  if (totalError) {
-    throw new Error(`Failed to count contacts: ${totalError.message}`);
-  }
-
-  if (ungroupedError) {
-    throw new Error(`Failed to count ungrouped contacts: ${ungroupedError.message}`);
-  }
+  const [totalContacts, ungroupedContacts] = await Promise.all([
+    countCsvContacts(),
+    countUngroupedCsvContacts(),
+  ]);
 
   return {
     totalContacts: totalContacts || 0,
@@ -691,53 +610,31 @@ export async function getCsvContactsOverview(): Promise<CsvContactsOverview> {
 }
 
 export async function createCsvContact(row: CsvContactInput): Promise<CsvContact> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .upsert(
-      {
-        no_telp: row.no_telp.trim(),
-        nama: row.nama.trim(),
-        jenis_kelamin: row.jenis_kelamin.trim(),
-        jabatan: row.jabatan?.trim() || null,
-        group_names: normalizeGroupNames(row.group_names),
-        imported_at: new Date().toISOString(),
-      },
-      { onConflict: 'no_telp' },
-    )
-    .select()
-    .single();
+  const data = await upsertSingleCsvContactRow({
+    no_telp: row.no_telp.trim(),
+    nama: row.nama.trim(),
+    jenis_kelamin: row.jenis_kelamin.trim(),
+    jabatan: row.jabatan?.trim() || null,
+    group_names: normalizeGroupNames(row.group_names),
+    imported_at: new Date().toISOString(),
+  });
 
-  if (error) {
-    throw new Error(`Failed to create phone list row: ${error.message}`);
-  }
-
-  return toCsvContact(data as Record<string, unknown>);
+  return toCsvContact(data);
 }
 
 export async function updateCsvContact(
   id: string,
   row: CsvContactInput,
 ): Promise<CsvContact> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('csv_contacts')
-    .update({
-      no_telp: row.no_telp,
-      nama: row.nama,
-      jenis_kelamin: row.jenis_kelamin,
-      jabatan: row.jabatan || null,
-      group_names: normalizeGroupNames(row.group_names),
-    })
-    .eq('id', id)
-    .select()
-    .single();
+  const data = await updateCsvContactRow(id, {
+    no_telp: row.no_telp,
+    nama: row.nama,
+    jenis_kelamin: row.jenis_kelamin,
+    jabatan: row.jabatan || null,
+    group_names: normalizeGroupNames(row.group_names),
+  });
 
-  if (error) {
-    throw new Error(`Failed to update phone list row: ${error.message}`);
-  }
-
-  return toCsvContact(data as Record<string, unknown>);
+  return toCsvContact(data);
 }
 
 export async function addCsvContactsGroups(
@@ -750,17 +647,7 @@ export async function addCsvContactsGroups(
     return 0;
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.rpc('add_csv_contact_groups', {
-    p_contact_ids: ids,
-    p_group_names: normalizedGroupNames,
-  });
-
-  if (error) {
-    throw new Error(`Failed to update contact group: ${error.message}`);
-  }
-
-  return Number(data || 0);
+  return addCsvContactGroups(ids, normalizedGroupNames);
 }
 
 export async function syncCsvContactsToGroups(
@@ -797,37 +684,13 @@ export async function syncCsvContactsToGroups(
 }
 
 export async function deleteCsvContact(id: string): Promise<void> {
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('csv_contacts')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    throw new Error(`Failed to delete phone list row: ${error.message}`);
-  }
+  await deleteCsvContactRow(id);
 }
 
 export async function getContentRecordings(): Promise<ContentRecording[]> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_recordings')
-    .select('*, tags:content_recording_tags(tag:content_tags(id, name, created_at))')
-    .order('upload_date', { ascending: false })
-    .order('created_at', { ascending: false });
+  const data = await listContentRecordingRows();
 
-  if (error) {
-    throw new Error(`Failed to fetch content recordings: ${error.message}`);
-  }
-
-  return (data || []).map((record) => {
-    const rawRecord = record as Record<string, unknown>;
-    const tagLinks = Array.isArray(rawRecord.tags) ? rawRecord.tags : [];
-    return toContentRecording({
-      ...rawRecord,
-      tags: tagLinks.map((entry) => (entry as { tag?: unknown }).tag).filter(Boolean),
-    });
-  });
+  return data.map((record) => toContentRecording(record));
 }
 
 export async function getPaginatedContentRecordings({
@@ -841,7 +704,6 @@ export async function getPaginatedContentRecordings({
   sortBy = 'upload_date',
   sortDir = 'desc',
 }: PaginatedContentRecordingsParams): Promise<PaginatedContentRecordingsResponse> {
-  const supabase = getSupabaseAdminClient();
   const safePage = Math.max(1, Math.floor(page));
   const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
   const normalizedSortBy = normalizeContentRecordingSortKey(sortBy);
@@ -850,22 +712,17 @@ export async function getPaginatedContentRecordings({
     new Set([...(tagIds || []), tagId].map((id) => String(id || '').trim()).filter(Boolean)),
   );
 
-  const { data, error } = await supabase.rpc('list_content_recordings', {
-    p_search: search.trim() || null,
-    p_platform: platform.trim() || null,
-    p_content_type: contentType.trim() || null,
-    p_tag_ids: normalizedTagIds.length ? normalizedTagIds : null,
-    p_page: safePage,
-    p_page_size: safePageSize,
-    p_sort_by: normalizedSortBy,
-    p_sort_dir: normalizedSortDir,
+  const rows = await listPaginatedContentRecordingRows({
+    search: search.trim() || null,
+    platform: platform.trim() || null,
+    contentType: contentType.trim() || null,
+    tagIds: normalizedTagIds,
+    page: safePage,
+    pageSize: safePageSize,
+    sortBy: normalizedSortBy,
+    sortDir: normalizedSortDir,
   });
 
-  if (error) {
-    throw new Error(`Failed to fetch content recordings: ${error.message}`);
-  }
-
-  const rows = (data || []) as Array<Record<string, unknown> & { total_count?: number | string }>;
   const total = rows.length ? Number(rows[0].total_count || 0) : 0;
 
   return {
@@ -878,14 +735,7 @@ export async function getPaginatedContentRecordings({
 }
 
 export async function getContentRecordingsOverview(): Promise<ContentRecordingsOverview> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase.rpc('get_content_recordings_overview');
-
-  if (error) {
-    throw new Error(`Failed to fetch content overview: ${error.message}`);
-  }
-
-  const overview = ((data || [])[0] || {}) as Record<string, unknown>;
+  const overview = await getContentRecordingsOverviewRow() || {};
 
   return {
     totalRecords: Number(overview.total_records || 0),
@@ -896,17 +746,9 @@ export async function getContentRecordingsOverview(): Promise<ContentRecordingsO
 }
 
 export async function getContentTags(): Promise<ContentTag[]> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_tags')
-    .select('id, name, created_at')
-    .order('name', { ascending: true });
+  const data = await listContentTagRows();
 
-  if (error) {
-    throw new Error(`Failed to fetch content tags: ${error.message}`);
-  }
-
-  return (data || []).map((record) => ({
+  return data.map((record) => ({
     id: String(record.id || ''),
     name: String(record.name || ''),
     created_at: String(record.created_at || ''),
@@ -927,15 +769,9 @@ export async function ensureContentTags(names: string[]): Promise<ContentTag[]> 
     return [];
   }
 
-  const supabase = getSupabaseAdminClient();
   const results = await Promise.all(
     normalizedNames.map(async (name) => {
-      const { data, error } = await supabase.rpc('ensure_content_tag', { p_name: name });
-      if (error) {
-        throw new Error(`Failed to create content tag: ${error.message}`);
-      }
-
-      const record = ((data || [])[0] || {}) as Record<string, unknown>;
+      const record = await ensureContentTagRow(name) || {};
       return {
         id: String(record.id || ''),
         name: String(record.name || ''),
@@ -947,58 +783,9 @@ export async function ensureContentTags(names: string[]): Promise<ContentTag[]> 
   return results.filter((tag) => tag.id && tag.name);
 }
 
-async function replaceContentRecordingTags(contentRecordingId: string, tagIds: string[]): Promise<void> {
-  const supabase = getSupabaseAdminClient();
-  const normalizedTagIds = Array.from(new Set(tagIds.map((id) => String(id || '').trim()).filter(Boolean)));
-
-  const { error: deleteError } = await supabase
-    .from('content_recording_tags')
-    .delete()
-    .eq('content_recording_id', contentRecordingId);
-
-  if (deleteError) {
-    throw new Error(`Failed to update content tags: ${deleteError.message}`);
-  }
-
-  if (!normalizedTagIds.length) {
-    return;
-  }
-
-  const { error: insertError } = await supabase
-    .from('content_recording_tags')
-    .insert(normalizedTagIds.map((tagId) => ({ content_recording_id: contentRecordingId, tag_id: tagId })));
-
-  if (insertError) {
-    throw new Error(`Failed to update content tags: ${insertError.message}`);
-  }
-}
-
-async function findContentRecordingIdByLink(link: string): Promise<string | null> {
-  const normalizedLink = String(link || '').trim();
-  if (!normalizedLink) {
-    return null;
-  }
-
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_recordings')
-    .select('id')
-    .eq('link', normalizedLink)
-    .order('updated_at', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (error) {
-    throw new Error(`Failed to check existing content recording: ${error.message}`);
-  }
-
-  return data?.[0]?.id ? String(data[0].id) : null;
-}
-
 export async function upsertContentRecording(
   input: ContentRecordingInput,
 ): Promise<ContentRecording> {
-  const supabase = getSupabaseAdminClient();
   const title = String(input.title || '').trim();
   const link = input.link.trim();
   const mediaUrls = normalizeUrlList(input.media_urls);
@@ -1013,24 +800,12 @@ export async function upsertContentRecording(
     source_post_id: input.source_post_id || null,
     thumbnail_url: input.thumbnail_url || null,
     media_urls: mediaUrls.length ? mediaUrls : null,
-    updated_at: new Date().toISOString(),
   };
 
   const inputId = input.id ? String(input.id) : null;
 
   if (inputId) {
-    const { error } = await supabase
-      .from('content_recordings')
-      .update(payload)
-      .eq('id', inputId);
-
-    if (error) {
-      throw new Error(`Failed to save content recording: ${error.message}`);
-    }
-
-    if (input.tag_ids) {
-      await replaceContentRecordingTags(inputId, input.tag_ids);
-    }
+    await updateContentRecordingRecordById(inputId, payload, input.tag_ids);
 
     return getContentRecordingById(inputId);
   }
@@ -1038,36 +813,15 @@ export async function upsertContentRecording(
   const existingId = await findContentRecordingIdByLink(link);
 
   if (existingId) {
-    const { error } = await supabase
-      .from('content_recordings')
-      .update(payload)
-      .eq('id', existingId);
-
-    if (error) {
-      throw new Error(`Failed to save content recording: ${error.message}`);
-    }
-
-    if (input.tag_ids) {
-      await replaceContentRecordingTags(existingId, input.tag_ids);
-    }
+    await updateContentRecordingRecordById(existingId, payload, input.tag_ids);
 
     return getContentRecordingById(existingId);
   }
 
-  const { data, error } = await supabase
-    .from('content_recordings')
-    .insert(payload)
-    .select()
-    .single();
-
-  if (error) {
-    throw new Error(`Failed to save content recording: ${error.message}`);
-  }
-
-  const savedRecord = toContentRecording(data as Record<string, unknown>);
+  const data = await upsertContentRecordingRecord(payload, input.tag_ids || []);
+  const savedRecord = toContentRecording(data);
 
   if (input.tag_ids) {
-    await replaceContentRecordingTags(savedRecord.id, input.tag_ids);
     return getContentRecordingById(savedRecord.id);
   }
 
@@ -1075,23 +829,13 @@ export async function upsertContentRecording(
 }
 
 export async function getContentRecordingById(id: string): Promise<ContentRecording> {
-  const supabase = getSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from('content_recordings')
-    .select('*, tags:content_recording_tags(tag:content_tags(id, name, created_at))')
-    .eq('id', id)
-    .single();
+  const data = await getContentRecordingRowById(id);
 
-  if (error) {
-    throw new Error(`Failed to fetch content recording: ${error.message}`);
+  if (!data) {
+    throw new Error('Failed to fetch content recording: not found');
   }
 
-  const rawRecord = data as Record<string, unknown>;
-  const tagLinks = Array.isArray(rawRecord.tags) ? rawRecord.tags : [];
-  return toContentRecording({
-    ...rawRecord,
-    tags: tagLinks.map((entry) => (entry as { tag?: unknown }).tag).filter(Boolean),
-  });
+  return toContentRecording(data);
 }
 
 export async function deleteContentRecording(id: string): Promise<void> {
@@ -1100,13 +844,5 @@ export async function deleteContentRecording(id: string): Promise<void> {
     throw new Error('Content recording id is required.');
   }
 
-  const supabase = getSupabaseAdminClient();
-  const { error } = await supabase
-    .from('content_recordings')
-    .delete()
-    .eq('id', normalizedId);
-
-  if (error) {
-    throw new Error(`Failed to delete content recording: ${error.message}`);
-  }
+  await deleteContentRecordingRecord(normalizedId);
 }
