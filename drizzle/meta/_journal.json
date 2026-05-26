@@ -8,6 +8,13 @@
       "when": 1779389554552,
       "tag": "0000_huge_slipstream",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779732532000,
+      "tag": "0001_add_local_postgres_functions",
+      "breakpoints": true
     }
   ]
 }
