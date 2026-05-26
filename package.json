@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "concurrently -k -n web,scheduler -c blue,magenta \"next start\" \"npm run scheduler\"",
     "start:web": "next start",
+    "db:migrate": "drizzle-kit migrate",
     "scheduler": "node --env-file=.env.local scripts/scheduled-blast-worker.js",
     "lint": "eslint",
     "test": "vitest run",

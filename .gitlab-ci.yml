@@ -46,6 +46,16 @@ deploy:
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" config --quiet
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" build
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" up -d --remove-orphans postgres minio redis web orchestrator
+    - |
+      COMPOSE_NETWORK="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$(docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" ps -q postgres)" | head -n 1)"
+      docker run --rm \
+        --network "$COMPOSE_NETWORK" \
+        --env-file "$CI_PROJECT_DIR/.env.local" \
+        -v "$CI_PROJECT_DIR:/app" \
+        -w /app \
+        node:20-bookworm-slim \
+        sh -lc 'export DATABASE_URL="$DATABASE_URL_DOCKER" && npm ci --no-audit --fund=false && npm run db:migrate'
+    - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" restart web orchestrator
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" ps
     - docker image prune -f
   after_script:
