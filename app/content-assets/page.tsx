@@ -65,9 +65,9 @@ export default async function ContentAssetsPage({
 
   return (
     <AdminFeatureShell
-      badge="Asset Drafting"
+      badge="Asset Management"
       title="Content Assets"
-      description="Init project asset, lalu kelola kumpulan file image/video di halaman detail project."
+      description="Buat project, lalu kelola kumpulan file image/video di halaman detail project."
       currentPath="/content-assets"
     >
       <ContentAssetsWorkspace

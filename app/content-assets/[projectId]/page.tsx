@@ -69,7 +69,7 @@ export default async function ContentAssetDetailPage({ params, searchParams }: C
 
   return (
     <AdminFeatureShell
-      badge="Asset Drafting"
+      badge="Asset Management"
       title={project.project_name}
       description="Upload dan preview kumpulan asset image/video untuk project ini."
       currentPath="/content-assets"
