@@ -1,14 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import type { DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
 import MovieRoundedIcon from '@mui/icons-material/MovieRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 import Autocomplete, { createFilterOptions } from '@mui/material/Autocomplete';
 import {
   Alert,
@@ -19,6 +23,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Drawer,
   IconButton,
   InputAdornment,
   MenuItem,
@@ -108,6 +113,10 @@ const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
 const tagFilter = createFilterOptions<TagOption>();
 const EMPTY_PROJECT_FORM: ContentAssetProjectFormState = { id: '', project_name: '', notes: '', tag_ids: [], new_tag_names: [] };
 
+function createEmptyProjectForm(): ContentAssetProjectFormState {
+  return { ...EMPTY_PROJECT_FORM, tag_ids: [], new_tag_names: [] };
+}
+
 function setOptionalParam(params: URLSearchParams, key: string, value: string) {
   if (value) {
     params.set(key, value);
@@ -191,6 +200,18 @@ function formatBytes(value: number): string {
   return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function getFileKey(file: File): string {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
+function formatSelectedFiles(files: readonly File[]): string {
+  if (!files.length) {
+    return 'Drop image/video files here or browse from your device.';
+  }
+
+  return `${files.length} file siap dipakai saat project dibuat`;
+}
+
 function MetricTile({ label, value }: { label: string; value: number | string }) {
   return (
     <Box sx={adminMetricTileSx}>
@@ -239,11 +260,17 @@ export default function ContentAssetsWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const createFileInputRef = useRef<HTMLInputElement | null>(null);
   const [flash, setFlash] = useState<FlashState>(
     initialLoadError ? { severity: 'warning', message: initialLoadError } : null,
   );
   const [tagOptions, setTagOptions] = useState<TagOption[]>(tags);
   const [filters, setFilters] = useState({ search: currentSearch, assetFilter: currentAssetFilter, tagIds: currentTagIds });
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
+  const [createForm, setCreateForm] = useState<ContentAssetProjectFormState>(() => createEmptyProjectForm());
+  const [createFiles, setCreateFiles] = useState<File[]>([]);
+  const [createFileNotes, setCreateFileNotes] = useState<Record<string, string>>({});
+  const [createDropActive, setCreateDropActive] = useState(false);
   const [editTarget, setEditTarget] = useState<ContentAssetProject | null>(null);
   const [editForm, setEditForm] = useState<ContentAssetProjectFormState>(EMPTY_PROJECT_FORM);
   const [selectedEditTags, setSelectedEditTags] = useState<TagOption[]>([]);
@@ -313,6 +340,83 @@ export default function ContentAssetsWorkspace({
     }));
   }
 
+  function resetCreateDrawer() {
+    setCreateForm(createEmptyProjectForm());
+    setCreateFiles([]);
+    setCreateFileNotes({});
+    setCreateDropActive(false);
+    if (createFileInputRef.current) {
+      createFileInputRef.current.value = '';
+    }
+  }
+
+  function openCreateDrawer() {
+    resetCreateDrawer();
+    setCreateDrawerOpen(true);
+  }
+
+  function closeCreateDrawer() {
+    if (isCreating) {
+      return;
+    }
+
+    setCreateDrawerOpen(false);
+    resetCreateDrawer();
+  }
+
+  function updateCreateFiles(files: File[]) {
+    setCreateFiles(files);
+    setCreateFileNotes((current) => {
+      const nextNotes: Record<string, string> = {};
+      files.forEach((file) => {
+        const fileKey = getFileKey(file);
+        nextNotes[fileKey] = current[fileKey] || '';
+      });
+      return nextNotes;
+    });
+    if (!files.length && createFileInputRef.current) {
+      createFileInputRef.current.value = '';
+    }
+  }
+
+  function addCreateFiles(files: FileList | readonly File[] | null) {
+    const incomingFiles = Array.from(files || []).filter((file) => file.type.startsWith('image/') || file.type.startsWith('video/'));
+    if (!incomingFiles.length) {
+      return;
+    }
+
+    const selectedFileKeys = new Set(createFiles.map(getFileKey));
+    const nextFiles = [...createFiles];
+    incomingFiles.forEach((file) => {
+      const fileKey = getFileKey(file);
+      if (!selectedFileKeys.has(fileKey)) {
+        selectedFileKeys.add(fileKey);
+        nextFiles.push(file);
+      }
+    });
+
+    updateCreateFiles(nextFiles);
+  }
+
+  function handleCreateDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setCreateDropActive(false);
+    if (isCreating) {
+      return;
+    }
+
+    addCreateFiles(event.dataTransfer.files);
+  }
+
+  function removeCreateFile(file: File) {
+    updateCreateFiles(createFiles.filter((candidate) => getFileKey(candidate) !== getFileKey(file)));
+  }
+
+  function setCreateFileNote(file: File, notes: string) {
+    const fileKey = getFileKey(file);
+    setCreateFileNotes((current) => ({ ...current, [fileKey]: notes }));
+  }
+
   function openEditProject(project: ContentAssetProject) {
     setEditTarget(project);
     setSelectedEditTags(project.tags);
@@ -325,15 +429,54 @@ export default function ContentAssetsWorkspace({
     });
   }
 
-  function handleCreateProject(formData: FormData) {
+  function handleCreateProject() {
     setFlash(null);
     startCreateTransition(async () => {
+      const formData = new FormData();
+      formData.set('project_name', createForm.project_name);
+      formData.set('notes', createForm.notes || '');
+
       const result = await createContentAssetProjectAction(formData);
-      if (result.success && result.projectId) {
-        router.push(`/content-assets/${result.projectId}`);
-      } else {
+      if (!result.success || !result.projectId) {
         setFlash({ severity: 'error', message: result.error || 'Gagal membuat project asset.' });
+        return;
       }
+
+      if (createFiles.length) {
+        const uploadFormData = new FormData();
+        uploadFormData.set('project_id', result.projectId);
+        createFiles.forEach((file) => {
+          uploadFormData.append('asset_files', file);
+          uploadFormData.append('asset_notes', createFileNotes[getFileKey(file)] || '');
+        });
+
+        try {
+          const response = await fetch('/api/admin/content-assets/upload', {
+            method: 'POST',
+            body: uploadFormData,
+          });
+          const uploadResult = (await response.json().catch(() => null)) as { success?: boolean; count?: number; error?: string } | null;
+
+          if (!response.ok || !uploadResult?.success) {
+            setFlash({ severity: 'warning', message: uploadResult?.error || 'Project dibuat, tetapi upload asset gagal. Upload ulang dari detail project.' });
+            router.push(`/content-assets/${result.projectId}`);
+            return;
+          }
+        } catch (error) {
+          setFlash({
+            severity: 'warning',
+            message: error instanceof Error
+              ? `Project dibuat, tetapi upload asset gagal: ${error.message}`
+              : 'Project dibuat, tetapi upload asset gagal. Upload ulang dari detail project.',
+          });
+          router.push(`/content-assets/${result.projectId}`);
+          return;
+        }
+      }
+
+      setCreateDrawerOpen(false);
+      resetCreateDrawer();
+      router.push(`/content-assets/${result.projectId}`);
     });
   }
 
@@ -411,17 +554,10 @@ export default function ContentAssetsWorkspace({
                 Init project asset, lalu kelola kumpulan file image/video di halaman detail project.
               </Typography>
             </Box>
+            <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreateDrawer} sx={{ alignSelf: { xs: 'stretch', sm: 'flex-start', lg: 'center' }, minHeight: 36, borderRadius: 2, backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+              Add Assets
+            </Button>
           </Stack>
-
-          <Box component="form" action={handleCreateProject}>
-            <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.2} alignItems={{ xs: 'stretch', lg: 'flex-start' }}>
-              <TextField name="project_name" label="Nama project" required size="small" sx={{ minWidth: { lg: 280 } }} disabled={isCreating} />
-              <TextField name="notes" label="Notes project" size="small" multiline minRows={1} sx={{ flex: 1 }} disabled={isCreating} />
-              <Button type="submit" variant="contained" disabled={isCreating} sx={{ minHeight: 40, borderRadius: 2, backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
-                {isCreating ? 'Creating...' : 'Init Project'}
-              </Button>
-            </Stack>
-          </Box>
 
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={{ xs: 1, sm: 0.5 }} useFlexGap>
             <MetricTile label="Projects" value={projects.length} />
@@ -545,6 +681,112 @@ export default function ContentAssetsWorkspace({
           </Table>
         </TableContainer>
       </Paper>
+
+      <Drawer anchor="right" open={createDrawerOpen} onClose={closeCreateDrawer} PaperProps={{ sx: { width: { xs: '100%', sm: 560 }, backgroundColor: adminPalette.canvas, borderLeft: `1px solid ${adminPalette.border}` } }}>
+        <Stack sx={{ minHeight: '100%' }}>
+          <Stack spacing={1.5} sx={{ px: 2.5, py: 2.25, borderBottom: `1px solid ${adminPalette.border}` }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+              <Box>
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>Add Assets</Typography>
+                <Typography sx={{ mt: 0.7, fontSize: '1.45rem', fontWeight: 700, color: adminPalette.textPrimary }}>Init project with assets</Typography>
+                <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                  Buat project baru dan upload image/video awal dalam satu workflow.
+                </Typography>
+              </Box>
+              <IconButton onClick={closeCreateDrawer} size="small" disabled={isCreating}><CloseRoundedIcon fontSize="small" /></IconButton>
+            </Stack>
+          </Stack>
+
+          <Stack spacing={2.2} sx={{ p: 2.5, flex: 1, overflowY: 'auto' }}>
+            <Stack spacing={1.4}>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: adminPalette.textMuted }}>Project details</Typography>
+              <TextField label="Nama project" value={createForm.project_name} onChange={(event) => setCreateForm((current) => ({ ...current, project_name: event.target.value }))} required fullWidth disabled={isCreating} />
+              <TextField label="Notes project" value={createForm.notes || ''} onChange={(event) => setCreateForm((current) => ({ ...current, notes: event.target.value }))} helperText="Catatan level project. Notes untuk masing-masing file bisa diisi setelah file dipilih." multiline minRows={3} fullWidth disabled={isCreating} />
+            </Stack>
+
+            <Stack spacing={1.4}>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: adminPalette.textMuted }}>Initial assets</Typography>
+              <Box
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  if (!isCreating) {
+                    setCreateDropActive(true);
+                  }
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    return;
+                  }
+                  setCreateDropActive(false);
+                }}
+                onDrop={handleCreateDrop}
+                sx={{
+                  p: 2,
+                  borderRadius: 2.5,
+                  border: `1.5px dashed ${createDropActive ? adminPalette.brand : adminPalette.borderStrong}`,
+                  backgroundColor: createDropActive ? adminPalette.brandSoft : adminPalette.surface,
+                  transition: 'border-color 160ms ease, background-color 160ms ease',
+                }}
+              >
+                <Stack spacing={1.2} alignItems="center" textAlign="center">
+                  <UploadFileRoundedIcon sx={{ color: adminPalette.brand, fontSize: 34 }} />
+                  <Box>
+                    <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Drag & drop file image/video</Typography>
+                    <Typography sx={{ mt: 0.3, fontSize: '0.82rem', color: adminPalette.textSecondary }}>{formatSelectedFiles(createFiles)}</Typography>
+                  </Box>
+                  <Button component="label" variant="outlined" disabled={isCreating} sx={{ borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>
+                    Browse files
+                    <Box component="input" ref={createFileInputRef} type="file" accept="image/*,video/*" multiple onChange={(event) => addCreateFiles(event.target.files)} sx={{ display: 'none' }} />
+                  </Button>
+                </Stack>
+              </Box>
+
+              {createFiles.length ? (
+                <Stack spacing={1}>
+                  {createFiles.map((file) => {
+                    const fileKey = getFileKey(file);
+
+                    return (
+                      <Paper key={fileKey} elevation={0} sx={{ p: 1.25, borderRadius: 2, border: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+                        <Stack spacing={1}>
+                          <Stack direction="row" spacing={1} justifyContent="space-between" alignItems="flex-start">
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</Typography>
+                              <Typography sx={{ mt: 0.2, fontSize: '0.76rem', color: adminPalette.textMuted }}>{formatBytes(file.size)}</Typography>
+                            </Box>
+                            <IconButton size="small" onClick={() => removeCreateFile(file)} disabled={isCreating} aria-label={`Remove ${file.name}`}>
+                              <CloseRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Stack>
+                          <TextField
+                            label="Notes file"
+                            value={createFileNotes[fileKey] || ''}
+                            onChange={(event) => setCreateFileNote(file, event.target.value)}
+                            size="small"
+                            multiline
+                            minRows={2}
+                            fullWidth
+                            disabled={isCreating}
+                          />
+                        </Stack>
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              ) : null}
+            </Stack>
+          </Stack>
+
+          <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ p: 2.5, borderTop: `1px solid ${adminPalette.border}`, backgroundColor: adminPalette.surface }}>
+            <Button onClick={closeCreateDrawer} disabled={isCreating} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>
+            <Button variant="contained" startIcon={<UploadFileRoundedIcon />} onClick={handleCreateProject} disabled={isCreating || !createForm.project_name.trim()} sx={{ backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+              {isCreating ? 'Creating...' : createFiles.length ? 'Create & Upload' : 'Create Project'}
+            </Button>
+          </Stack>
+        </Stack>
+      </Drawer>
 
       <Dialog open={Boolean(deleteTarget)} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Delete project?</DialogTitle>

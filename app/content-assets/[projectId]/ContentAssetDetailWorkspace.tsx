@@ -1,5 +1,6 @@
 'use client';
 
+import type { DragEvent } from 'react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -242,6 +243,7 @@ export default function ContentAssetDetailWorkspace({
   const [tagOptions, setTagOptions] = useState<TagOption[]>(tags);
   const [filters, setFilters] = useState({ search: currentSearch, contentType: currentContentType, tagIds: currentTagIds });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [dropActive, setDropActive] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ContentAsset | null>(null);
   const [editAssetTarget, setEditAssetTarget] = useState<ContentAsset | null>(null);
   const [editAssetForm, setEditAssetForm] = useState<ContentAssetTagFormState>(EMPTY_ASSET_FORM);
@@ -339,6 +341,16 @@ export default function ContentAssetDetailWorkspace({
     });
 
     updateSelectedFiles(nextFiles);
+  }
+
+  function handleFileDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDropActive(false);
+    if (isUploading) {
+      return;
+    }
+
+    handleFileSelection(event.dataTransfer.files);
   }
 
   function removeSelectedFile(file: File) {
@@ -490,6 +502,39 @@ export default function ContentAssetDetailWorkspace({
         <Box component="form" ref={formRef} action={handleUpload} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
           <Box component="input" type="hidden" name="project_id" value={project.id} />
           <Stack spacing={1.25}>
+            <Box
+              onDragEnter={(event) => {
+                event.preventDefault();
+                if (!isUploading) {
+                  setDropActive(true);
+                }
+              }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  return;
+                }
+                setDropActive(false);
+              }}
+              onDrop={handleFileDrop}
+              sx={{
+                p: { xs: 1.4, md: 1.8 },
+                borderRadius: 2.5,
+                border: `1.5px dashed ${dropActive ? adminPalette.brand : adminPalette.borderStrong}`,
+                backgroundColor: dropActive ? adminPalette.brandSoft : adminPalette.surface,
+                transition: 'border-color 160ms ease, background-color 160ms ease',
+              }}
+            >
+              <Stack spacing={0.7} alignItems="center" textAlign="center">
+                <UploadFileRoundedIcon sx={{ color: adminPalette.brand, fontSize: 32 }} />
+                <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Drag & drop file image/video ke sini</Typography>
+                <Typography sx={{ fontSize: '0.82rem', color: adminPalette.textSecondary }}>
+                  Bisa drop beberapa file sekaligus, atau pakai tombol tambah file di bawah.
+                </Typography>
+              </Stack>
+            </Box>
+
             <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.2} alignItems={{ xs: 'stretch', lg: 'flex-start' }}>
               <Button
                 component="label"
