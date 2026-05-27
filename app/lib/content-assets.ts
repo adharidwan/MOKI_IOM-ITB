@@ -8,6 +8,8 @@ import { createObjectSignedUrl, downloadObject, removeObject, removeObjects } fr
 import type { ContentAsset, ContentAssetProject, ContentTag } from './types';
 
 export const CONTENT_ASSET_BUCKET = 'content-assets';
+const DUPLICATE_PROJECT_NAME_MESSAGE = 'Nama project asset sudah digunakan. Gunakan nama lain.';
+const PROJECT_NAME_UNIQUE_CONSTRAINT = 'content_asset_projects_project_name_key';
 
 export interface ContentAssetInput {
   projectId?: string | null;
@@ -44,6 +46,11 @@ export interface ContentAssetProjectInput {
 }
 
 type RawRecord = Record<string, unknown>;
+type PgErrorLike = {
+  code?: string;
+  constraint?: string;
+  message?: string;
+};
 
 function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
   return (Array.isArray(result.rows) ? result.rows : []) as T[];
@@ -51,6 +58,27 @@ function rowsFromResult<T>(result: { rows?: unknown[] }): T[] {
 
 function firstRowFromResult<T>(result: { rows?: unknown[] }): T | null {
   return rowsFromResult<T>(result)[0] ?? null;
+}
+
+function isDuplicateProjectNameError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+
+  const pgError = error as PgErrorLike;
+
+  return pgError.code === '23505' && (
+    pgError.constraint === PROJECT_NAME_UNIQUE_CONSTRAINT ||
+    String(pgError.message || '').includes(PROJECT_NAME_UNIQUE_CONSTRAINT)
+  );
+}
+
+function rethrowFriendlyProjectNameError(error: unknown): never {
+  if (isDuplicateProjectNameError(error)) {
+    throw new Error(DUPLICATE_PROJECT_NAME_MESSAGE);
+  }
+
+  throw error;
 }
 
 function toContentTags(value: unknown): ContentTag[] {
@@ -323,7 +351,7 @@ export async function createContentAssetProject(input: ContentAssetProjectInput)
     insert into public.content_asset_projects (created_by, created_by_email, project_name, notes, updated_at)
     values (${input.createdBy}, ${input.createdByEmail || null}, ${projectName}, ${input.notes || null}, ${new Date().toISOString()}::timestamptz)
     returning id, created_at::text, updated_at::text, created_by, created_by_email, project_name, notes
-  `);
+  `).catch(rethrowFriendlyProjectNameError);
   const record = firstRowFromResult<RawRecord>(result);
 
   if (!record) {
@@ -490,7 +518,7 @@ export async function updateContentAssetProject(input: UpdateContentAssetProject
       updated_at = ${new Date().toISOString()}::timestamptz
     where id = ${normalizedId}
     returning id
-  `);
+  `).catch(rethrowFriendlyProjectNameError);
 
   if (!firstRowFromResult<RawRecord>(result)) {
     throw new Error('Project asset tidak ditemukan.');
