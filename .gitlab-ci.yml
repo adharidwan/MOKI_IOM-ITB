@@ -3,24 +3,21 @@ stages:
 
 workflow:
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: $CI_COMMIT_BRANCH == "main"
 
 deploy:
   stage: deploy
   tags:
     - proxmox
-
   variables:
     DOCKER_BUILDKIT: "1"
     COMPOSE_DOCKER_CLI_BUILD: "1"
     DEPLOY_ENV_FILE: "/home/ppl/IF3250_K02_G10_IOM4/.env.local"
-    
-  before_script:
-    - rm -rf node_modules .next || true
 
   script:
     - test -f "$DEPLOY_ENV_FILE"
     - cp "$DEPLOY_ENV_FILE" "$CI_PROJECT_DIR/.env.local"
+
     - |
       for key in \
         POSTGRES_DB \
@@ -48,11 +45,14 @@ deploy:
           exit 1
         fi
       done
+
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" config --quiet
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" build
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" up -d --remove-orphans postgres minio redis web orchestrator
+
     - |
       COMPOSE_NETWORK="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$(docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" ps -q postgres)" | head -n 1)"
+
       docker run --rm \
         --user "$(id -u):$(id -g)" \
         --network "$COMPOSE_NETWORK" \
@@ -64,5 +64,6 @@ deploy:
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" restart web orchestrator
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" ps
     - docker image prune -f
+
   after_script:
     - docker builder prune -f --filter "until=24h"
