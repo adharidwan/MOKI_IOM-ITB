@@ -12,7 +12,6 @@ import {
   ListItem,
   ListItemButton,
   ListItemIcon,
-  ListItemText,
   Checkbox,
   Stack,
   Tooltip,
@@ -44,6 +43,17 @@ export default function YouTubeScraper() {
   const [itemWarnings, setItemWarnings] = useState<Record<string, boolean>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [channelInput, setChannelInput] = useState("IOM-ITB");
+  const [maxVideosInput, setMaxVideosInput] = useState("10");
+
+  function parsePositiveInt(value: string): number | undefined {
+    const parsed = Number.parseInt(value.trim(), 10);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+
+    return parsed;
+  }
 
   function setWarningsFromFailures(
     failures: Array<{ link: string; error: string }>,
@@ -68,13 +78,15 @@ export default function YouTubeScraper() {
 
     setLoading(true);
     try {
-      const result = await scrape_youtube(buildYouTubeChannelUrl(channel));
+      const result = await scrape_youtube(buildYouTubeChannelUrl(channel), {
+        maxVideos: parsePositiveInt(maxVideosInput),
+      });
       setData(result);
       setSelectedIds([]); // Reset seleksi saat refresh
       setExportMessage("");
       setExportError("");
       setItemWarnings({});
-    } catch (error) {
+    } catch {
       setData({ error: "Gagal mengambil data IOM ITB." });
     } finally {
       setLoading(false);
@@ -195,6 +207,16 @@ export default function YouTubeScraper() {
             value={channelInput}
             onChange={(event) => setChannelInput(event.target.value)}
             disabled={loading}
+          />
+          <TextField
+            size="small"
+            label="Max video"
+            type="number"
+            value={maxVideosInput}
+            onChange={(event) => setMaxVideosInput(event.target.value)}
+            disabled={loading}
+            sx={{ width: { xs: "100%", md: 130 }, flexShrink: 0 }}
+            inputProps={{ min: 1, max: 50 }}
           />
           <Button
             variant="contained"

@@ -21,7 +21,12 @@ export interface ScrapeResult {
   error?: string;
 }
 
+interface YouTubeScrapeOptions {
+  maxVideos?: number;
+}
+
 interface YouTubeScrapeEntry {
+  _type?: string;
   id?: string;
   title?: string;
   url?: string;
@@ -30,6 +35,7 @@ interface YouTubeScrapeEntry {
   duration?: number;
   view_count?: number;
   thumbnails?: Array<{ url?: string }>;
+  entries?: YouTubeScrapeEntry[];
 }
 
 interface YouTubeScrapePayload {
@@ -109,6 +115,7 @@ function parseYouTubeRssXml(xml: string): YouTubeVideo[] {
 async function fetchRssFeed(
   channelId: string,
   handle: string,
+  maxVideos: number,
 ): Promise<YouTubeVideo[]> {
   const rssUrls = [
     `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,
@@ -137,7 +144,7 @@ async function fetchRssFeed(
       const xml = await response.text();
       console.log(`[YT scrape] RSS XML length: ${xml.length} from ${rssUrl}`);
 
-      const videos = parseYouTubeRssXml(xml).slice(0, 10);
+      const videos = parseYouTubeRssXml(xml).slice(0, maxVideos);
       if (videos.length > 0) {
         console.log(`[YT scrape] RSS parsed ${videos.length} videos`);
         return videos;
@@ -157,8 +164,11 @@ async function fetchRssFeed(
 
 export async function scrape_youtube(
   channelUrl: string,
+  options: YouTubeScrapeOptions = {},
 ): Promise<ScrapeResult> {
   console.log(`[YT scrape] Starting scrape for: ${channelUrl}`);
+
+  const maxVideos = Math.min(Math.max(Math.trunc(options.maxVideos || 10), 1), 50);
 
   const baseUrl = channelUrl.replace(/\/(videos|shorts|streams|live)\/?$/, "");
   // Ekstrak handle dari URL, misal "@IOM-ITB" → "IOM-ITB"
@@ -170,7 +180,7 @@ export async function scrape_youtube(
     const channelId = await fetchYouTubeChannelId(baseUrl);
 
     if (channelId) {
-      const videos = await fetchRssFeed(channelId, handle);
+      const videos = await fetchRssFeed(channelId, handle, maxVideos);
       if (videos.length > 0) {
         return {
           channel: handle || "Unknown Channel",
@@ -195,7 +205,7 @@ export async function scrape_youtube(
       `${baseUrl}/videos`,
       "--flat-playlist",
       "--playlist-items",
-      "1:10",
+      `1:${maxVideos}`,
       "--dump-single-json",
       "--no-warnings",
     ];
@@ -207,15 +217,14 @@ export async function scrape_youtube(
 
     const data = JSON.parse(stdout) as YouTubeScrapePayload;
     console.log(
-      `[YT scrape] yt-dlp _type: ${(data as any)._type}, entries: ${data.entries?.length ?? 0}`,
+      `[YT scrape] yt-dlp entries: ${data.entries?.length ?? 0}`,
     );
 
     const rawEntries: YouTubeScrapeEntry[] = [];
     for (const entry of data.entries || []) {
-      const e = entry as any;
-      if (e._type === "playlist" && Array.isArray(e.entries)) {
-        console.log(`[YT scrape] Expanding sub-playlist "${e.title}"`);
-        rawEntries.push(...e.entries);
+      if (entry._type === "playlist" && Array.isArray(entry.entries)) {
+        console.log(`[YT scrape] Expanding sub-playlist "${entry.title}"`);
+        rawEntries.push(...entry.entries);
       } else {
         rawEntries.push(entry);
       }
@@ -229,7 +238,7 @@ export async function scrape_youtube(
         }
         return keep;
       })
-      .slice(0, 10)
+      .slice(0, maxVideos)
       .map((entry) => {
         const id = entry.id!;
         return {

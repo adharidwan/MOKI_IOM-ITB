@@ -54,6 +54,17 @@ export default function XScraper() {
   const [itemWarnings, setItemWarnings] = useState<Record<string, boolean>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [usernameInput, setUsernameInput] = useState("IomITB");
+  const [maxPostsInput, setMaxPostsInput] = useState("25");
+
+  function parsePositiveInt(value: string): number | undefined {
+    const parsed = Number.parseInt(value.trim(), 10);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return undefined;
+    }
+
+    return parsed;
+  }
 
   function setWarningsFromFailures(
     failures: Array<{ link: string; error: string }>,
@@ -79,7 +90,7 @@ export default function XScraper() {
     setLoading(true);
     try {
       const result = await scrape_x(username, {
-        minPosts: 25,
+        minPosts: parsePositiveInt(maxPostsInput),
       });
       setData(result);
       setSelectedIds([]);
@@ -207,6 +218,16 @@ export default function XScraper() {
             value={usernameInput}
             onChange={(event) => setUsernameInput(event.target.value)}
             disabled={loading}
+          />
+          <TextField
+            size="small"
+            label="Max tweet"
+            type="number"
+            value={maxPostsInput}
+            onChange={(event) => setMaxPostsInput(event.target.value)}
+            disabled={loading}
+            sx={{ width: { xs: "100%", md: 130 }, flexShrink: 0 }}
+            inputProps={{ min: 1, max: 50 }}
           />
           <Button
             variant="contained"

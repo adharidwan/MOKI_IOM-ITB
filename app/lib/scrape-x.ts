@@ -142,7 +142,7 @@ export async function scrape_x(
   username: string,
   options: ScrapeOptions = {},
 ): Promise<XScrapeResult> {
-  const { minPosts = 20 } = options;
+  const minPosts = Math.min(Math.max(Math.trunc(options.minPosts || 20), 1), 50);
   const normalizedUsername = normalizeUsername(username);
 
   if (!normalizedUsername) {

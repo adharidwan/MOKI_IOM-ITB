@@ -5,7 +5,6 @@ import { Instagram, X, YouTube } from '@mui/icons-material';
 import {
   Box,
   Button,
-  Divider,
   Paper,
   Stack,
   Typography,
@@ -78,7 +77,7 @@ export default function ContentScrapingWorkspace() {
         <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
           <Box>
             <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
-              Content
+              Content Scraping
             </Typography>
             <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
               Channel Content Scraping
@@ -87,59 +86,66 @@ export default function ContentScrapingWorkspace() {
               Ambil data konten level channel dari YouTube, X, dan Instagram sekaligus.
             </Typography>
           </Box>
+        </Stack>
+      </Paper>
 
-          <Stack spacing={1.25}>
-            <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} useFlexGap>
-              {PLATFORM_OPTIONS.map((platform) => {
-                const active = platform.id === activePlatform;
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Box>
+            <Typography sx={{ fontSize: '1rem', fontWeight: 800, color: adminPalette.textPrimary }}>Source scraping</Typography>
+            <Typography sx={{ mt: 0.3, fontSize: '0.84rem', color: adminPalette.textSecondary }}>
+              Pilih platform terlebih dahulu, lalu atur channel dan jumlah konten di form scraping.
+            </Typography>
+          </Box>
 
-                return (
-                  <Button
-                    key={platform.id}
-                    variant={active ? 'contained' : 'outlined'}
-                    onClick={() => setActivePlatform(platform.id)}
-                    startIcon={platform.icon}
-                    sx={{
-                      minHeight: 48,
-                      borderRadius: 999,
-                      px: 2,
-                      justifyContent: 'flex-start',
-                      textTransform: 'none',
-                      fontWeight: 700,
-                      borderColor: active ? platform.color : adminPalette.borderStrong,
-                      color: active ? '#ffffff' : adminPalette.textSecondary,
-                      backgroundColor: active ? platform.color : adminPalette.surface,
-                      '&:hover': {
-                        borderColor: platform.color,
-                        backgroundColor: active ? platform.color : adminPalette.brandSoft,
-                      },
-                    }}
-                  >
-                    {platform.label}
-                  </Button>
-                );
-              })}
-            </Stack>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.25} useFlexGap>
+            {PLATFORM_OPTIONS.map((platform) => {
+              const active = platform.id === activePlatform;
 
-            <Divider />
-
-            <Paper
-              elevation={0}
-              sx={{
-                p: { xs: 1.25, md: 1.5 },
-                borderRadius: 2.5,
-                border: `1px solid ${adminPalette.border}`,
-                backgroundColor: adminPalette.surfaceSoft,
-              }}
-            >
-              <Stack spacing={0.75}>
-                <Typography sx={{ fontWeight: 700, color: adminPalette.textPrimary }}>
-                  {activeOption.label}
-                </Typography>
-                <Typography sx={{ color: adminPalette.textSecondary }}>{activeOption.subtitle}</Typography>
-              </Stack>
-            </Paper>
+              return (
+                <Button
+                  key={platform.id}
+                  variant={active ? 'contained' : 'outlined'}
+                  onClick={() => setActivePlatform(platform.id)}
+                  startIcon={platform.icon}
+                  sx={{
+                    minHeight: 48,
+                    borderRadius: 999,
+                    px: 2,
+                    justifyContent: 'flex-start',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    borderColor: active ? platform.color : adminPalette.borderStrong,
+                    color: active ? '#ffffff' : adminPalette.textSecondary,
+                    backgroundColor: active ? platform.color : adminPalette.surface,
+                    '&:hover': {
+                      borderColor: platform.color,
+                      backgroundColor: active ? platform.color : adminPalette.brandSoft,
+                    },
+                  }}
+                >
+                  {platform.label}
+                </Button>
+              );
+            })}
           </Stack>
+
+          <Paper
+            elevation={0}
+            sx={{
+              p: { xs: 1.25, md: 1.5 },
+              borderRadius: 2.5,
+              border: `1px solid ${adminPalette.border}`,
+              backgroundColor: adminPalette.surfaceSoft,
+            }}
+          >
+            <Stack spacing={0.75}>
+              <Typography sx={{ fontWeight: 700, color: adminPalette.textPrimary }}>
+                {activeOption.label}
+              </Typography>
+              <Typography sx={{ color: adminPalette.textSecondary }}>{activeOption.subtitle}</Typography>
+            </Stack>
+          </Paper>
         </Stack>
       </Paper>
 
