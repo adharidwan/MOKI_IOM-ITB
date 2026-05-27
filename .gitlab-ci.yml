@@ -13,6 +13,7 @@ deploy:
     DOCKER_BUILDKIT: "1"
     COMPOSE_DOCKER_CLI_BUILD: "1"
     DEPLOY_ENV_FILE: "/home/ppl/IF3250_K02_G10_IOM4/.env.local"
+    GIT_CLEAN_FLAGS: "-ffdx -e node_modules/ -e .next/"
 
   script:
     - test -f "$DEPLOY_ENV_FILE"
