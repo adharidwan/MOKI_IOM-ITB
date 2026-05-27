@@ -58,10 +58,12 @@ deploy:
         --user "$(id -u):$(id -g)" \
         --network "$COMPOSE_NETWORK" \
         --env-file "$CI_PROJECT_DIR/.env.local" \
+        -e HOME=/tmp \
+        -e npm_config_cache=/tmp/.npm \
         -v "$CI_PROJECT_DIR:/app" \
         -w /app \
         node:20-bookworm-slim \
-        sh -lc 'export DATABASE_URL="$DATABASE_URL_DOCKER" && npm ci --no-audit --fund=false && npm run db:migrate'
+        sh -lc 'rm -rf node_modules && export DATABASE_URL="$DATABASE_URL_DOCKER" && npm ci --no-audit --fund=false && npm run db:migrate'
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" restart web orchestrator
     - docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" ps
     - docker image prune -f
