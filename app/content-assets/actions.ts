@@ -105,10 +105,11 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
     const projectId = normalizeText(formData.get('project_id'));
     const project = await getContentAssetProject(projectId);
     const projectName = project?.project_name || '';
-    const notes = normalizeText(formData.get('notes'));
+    const sharedNotes = normalizeText(formData.get('notes'));
     const files = formData
       .getAll('asset_files')
       .filter((value): value is File => value instanceof File && value.size > 0);
+    const assetNotes = formData.getAll('asset_notes').map((value) => normalizeText(value));
 
     if (!projectName) {
       return { success: false, error: 'Project asset tidak ditemukan.' };
@@ -131,9 +132,10 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
     const uploadedObjects: string[] = [];
 
     try {
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         const safeFileName = sanitizeFileName(file.name);
         const objectPath = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safeFileName}`;
+        const notes = assetNotes[index] ?? sharedNotes;
         await uploadObject({
           bucket: CONTENT_ASSET_BUCKET,
           path: objectPath,
