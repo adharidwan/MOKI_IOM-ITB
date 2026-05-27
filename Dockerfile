@@ -49,6 +49,7 @@ RUN apt-get update \
 COPY --from=builder --chown=pwuser:pwuser /app/.next/standalone ./
 COPY --from=builder --chown=pwuser:pwuser /app/.next/static ./.next/static
 COPY --from=builder --chown=pwuser:pwuser /app/public ./public
+RUN mkdir -p /app/.cache && chown -R pwuser:pwuser /app/.cache
 USER pwuser
 EXPOSE 3000
 CMD ["node", "server.js"]

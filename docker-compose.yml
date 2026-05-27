@@ -89,6 +89,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./secret/x.com_cookies.txt:/app/secrets/x-cookies.txt:ro
+      - web_cache:/app/.cache
 
   bot:
     build:
@@ -143,3 +144,4 @@ volumes:
   minio_data:
   postgres_data:
   redis_data:
+  web_cache:
