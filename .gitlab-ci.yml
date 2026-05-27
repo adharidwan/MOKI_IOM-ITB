@@ -3,16 +3,21 @@ stages:
 
 workflow:
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 deploy:
   stage: deploy
   tags:
     - proxmox
+
   variables:
     DOCKER_BUILDKIT: "1"
     COMPOSE_DOCKER_CLI_BUILD: "1"
     DEPLOY_ENV_FILE: "/home/ppl/IF3250_K02_G10_IOM4/.env.local"
+    
+  before_script:
+    - rm -rf node_modules .next || true
+
   script:
     - test -f "$DEPLOY_ENV_FILE"
     - cp "$DEPLOY_ENV_FILE" "$CI_PROJECT_DIR/.env.local"
@@ -49,6 +54,7 @@ deploy:
     - |
       COMPOSE_NETWORK="$(docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' "$(docker compose --env-file "$CI_PROJECT_DIR/.env.local" -f "$CI_PROJECT_DIR/docker-compose.yml" ps -q postgres)" | head -n 1)"
       docker run --rm \
+        --user "$(id -u):$(id -g)" \
         --network "$COMPOSE_NETWORK" \
         --env-file "$CI_PROJECT_DIR/.env.local" \
         -v "$CI_PROJECT_DIR:/app" \
