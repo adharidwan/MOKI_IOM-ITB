@@ -757,7 +757,7 @@ function getCookieValue(cookie: string, key: string): string {
 function getInstagramHeaders(
   referer: string,
   cookieHeader: string,
-): HeadersInit {
+): Record<string, string> {
   const csrfToken = getCookieValue(cookieHeader, "csrftoken");
 
   return {
