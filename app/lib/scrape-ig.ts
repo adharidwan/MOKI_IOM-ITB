@@ -1,6 +1,7 @@
 "use server";
 
 import fs from "node:fs";
+import https from "node:https";
 import path from "node:path";
 
 import { getPlaywrightLaunchOptions } from "./chromium-path";
@@ -210,9 +211,12 @@ export async function loginInstagramAndSaveSession(): Promise<{
 
   ensureStorageStateDir();
 
+  const launchOptions = await getPlaywrightLaunchOptions();
+
   const browser = await chromium.launch({
-    headless: false,
+    ...launchOptions,
     args: [
+      ...(launchOptions.args || []),
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--window-size=1366,900",
@@ -704,6 +708,42 @@ function normalizeMediaUrls(
   return Array.from(byUrl.values());
 }
 
+const INSTAGRAM_AGENT = new https.Agent({ keepAlive: true, timeout: 15000 });
+
+async function httpsGet(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: u.pathname + u.search,
+        method: "GET",
+        agent: INSTAGRAM_AGENT,
+        timeout: 15000,
+        headers: { ...headers, "Accept-Encoding": "identity" },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf-8");
+          resolve({
+            ok: !!res.statusCode && res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode ?? 0,
+            json: () => Promise.resolve(JSON.parse(body)),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
+    req.end();
+  });
+}
+
 function getCookieValue(cookie: string, key: string): string {
   return (
     cookie
@@ -810,19 +850,19 @@ async function fetchPostMediaUrls(
   )}/info/`;
 
   try {
-    const response = await fetch(url, {
-      headers: getInstagramHeaders(
+    const response = await httpsGet(
+      url,
+      getInstagramHeaders(
         `https://www.instagram.com/p/${shortcode}/`,
         cookieHeader,
       ),
-      cache: "no-store",
-    });
+    );
 
     if (!response.ok) {
       return normalizeMediaUrls(fallbackUrls);
     }
 
-    const mediaUrls = parseInstagramMediaInfoUrls(await response.json());
+    const mediaUrls = parseInstagramMediaInfoUrls(await response.json() as Record<string, unknown>);
 
     return mediaUrls.length ? mediaUrls : normalizeMediaUrls(fallbackUrls);
   } catch (error) {
@@ -1006,33 +1046,21 @@ async function fetchProfilePosts(
   )}`;
   const referer = `https://www.instagram.com/${username}/`;
 
-  let response: Response;
+  let response: { ok: boolean; status: number; json(): Promise<unknown> };
 
   try {
-    response = await fetch(url, {
-      headers: getInstagramHeaders(referer, cookieHeader),
-      cache: "no-store",
-    });
+    response = await httpsGet(url, getInstagramHeaders(referer, cookieHeader));
   } catch (error) {
-    const cause =
-      error instanceof Error && "cause" in error
-        ? String((error as Error & { cause?: unknown }).cause || "")
-        : "";
-
     throw new Error(
       `Fetch profile API gagal: ${
         error instanceof Error ? error.message : String(error)
-      } ${cause}`.trim(),
+      }`,
     );
   }
 
   if (!response.ok) {
-    const body = (await response.text().catch(() => ""))
-      .slice(0, 220)
-      .replace(/\s+/g, " ");
-
     throw new Error(
-      `Profile API HTTP ${response.status}: ${body || response.statusText}`,
+      `Profile API HTTP ${response.status}`,
     );
   }
 
