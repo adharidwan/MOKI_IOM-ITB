@@ -28,8 +28,10 @@ const FEED_URL_BUILDERS = [
     `https://rsshub.rssforever.com/instagram/user/${username}`,
 ];
 
-const INSTAGRAM_PROFILE_API =
-  "https://i.instagram.com/api/v1/users/web_profile_info/";
+const INSTAGRAM_PROFILE_API_URLS = [
+  "https://www.instagram.com/api/v1/users/web_profile_info/",
+  "https://i.instagram.com/api/v1/users/web_profile_info/",
+];
 const INSTAGRAM_MEDIA_INFO_API = "https://i.instagram.com/api/v1/media/";
 
 interface InstagramScrapeOptions {
@@ -141,6 +143,63 @@ function saveCookieHeader(cookieHeader: string): void {
   fs.writeFileSync(IG_COOKIE_HEADER_PATH, cookieHeader, "utf-8");
 }
 
+function parseCookieHeader(cookieHeader: string): Array<{ name: string; value: string }> {
+  return cookieHeader
+    .split(";")
+    .map((entry) => entry.trim())
+    .map((entry) => {
+      const separatorIndex = entry.indexOf("=");
+
+      if (separatorIndex <= 0) {
+        return null;
+      }
+
+      return {
+        name: entry.slice(0, separatorIndex).trim(),
+        value: entry.slice(separatorIndex + 1).trim(),
+      };
+    })
+    .filter((cookie): cookie is { name: string; value: string } =>
+      Boolean(cookie?.name && cookie.value),
+    );
+}
+
+function saveStorageStateFromCookieHeader(cookieHeader: string): boolean {
+  const cookies = parseCookieHeader(cookieHeader);
+  const hasSession = cookies.some((cookie) => cookie.name === "sessionid");
+
+  if (!hasSession) {
+    return false;
+  }
+
+  ensureStorageStateDir();
+
+  fs.writeFileSync(
+    STORAGE_STATE_PATH,
+    JSON.stringify(
+      {
+        cookies: cookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: ".instagram.com",
+          path: "/",
+          expires: -1,
+          httpOnly: cookie.name === "sessionid",
+          secure: true,
+          sameSite: "Lax",
+        })),
+        origins: [],
+      },
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+  saveCookieHeader(cookieHeader);
+
+  return true;
+}
+
 function ensureStatusDir(): void {
   const statusDir = path.dirname(IG_STATUS_PATH);
 
@@ -207,6 +266,15 @@ export async function loginInstagramAndSaveSession(): Promise<{
   ok: boolean;
   message: string;
 }> {
+  const cookieHeader = loadCookieHeaderFromEnv();
+
+  if (cookieHeader && saveStorageStateFromCookieHeader(cookieHeader)) {
+    return {
+      ok: true,
+      message: "Session Instagram tersimpan dari INSTAGRAM_COOKIE.",
+    };
+  }
+
   const chromium = await loadPlaywrightChromium();
 
   ensureStorageStateDir();
@@ -327,6 +395,14 @@ async function scrapeInstagramProfileLinks(
   console.log(`[IG scrape] Starting profile link extraction for ${username}`);
 
   const chromium = await loadPlaywrightChromium();
+
+  if (!fs.existsSync(STORAGE_STATE_PATH)) {
+    const cookieHeader = loadCookieHeaderFromEnv();
+
+    if (cookieHeader && saveStorageStateFromCookieHeader(cookieHeader)) {
+      console.log("[IG scrape] Session dibuat dari INSTAGRAM_COOKIE");
+    }
+  }
 
   if (!fs.existsSync(STORAGE_STATE_PATH)) {
     throw new Error(
@@ -758,7 +834,10 @@ function getInstagramHeaders(
 
   return {
     Accept: "application/json",
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
     "User-Agent": USER_AGENT,
+    "X-ASBD-ID": "129477",
+    "X-Requested-With": "XMLHttpRequest",
     "x-ig-app-id": "936619743392459",
     ...(csrfToken ? { "x-csrftoken": csrfToken } : {}),
     ...(cookieHeader ? { Cookie: cookieHeader } : {}),
@@ -1037,43 +1116,42 @@ async function fetchProfilePosts(
   username: string,
   cookieHeader: string,
 ): Promise<InstagramPost[]> {
-  const url = `${INSTAGRAM_PROFILE_API}?username=${encodeURIComponent(
-    username,
-  )}`;
   const referer = `https://www.instagram.com/${username}/`;
+  let lastError = "";
 
-  let response: { ok: boolean; status: number; json(): Promise<unknown> };
+  for (const profileApiUrl of INSTAGRAM_PROFILE_API_URLS) {
+    const url = `${profileApiUrl}?username=${encodeURIComponent(username)}`;
+    let response: { ok: boolean; status: number; json(): Promise<unknown> };
 
-  try {
-    response = await httpsGet(url, getInstagramHeaders(referer, cookieHeader));
-  } catch (error) {
-    throw new Error(
-      `Fetch profile API gagal: ${
+    try {
+      response = await httpsGet(url, getInstagramHeaders(referer, cookieHeader));
+    } catch (error) {
+      lastError = `Fetch profile API gagal: ${
         error instanceof Error ? error.message : String(error)
-      }`,
+      }`;
+      continue;
+    }
+
+    if (!response.ok) {
+      lastError = `Profile API HTTP ${response.status} dari ${profileApiUrl}`;
+      continue;
+    }
+
+    const payload = await response.json();
+    const posts = await parseInstagramProfilePosts(
+      payload,
+      username,
+      cookieHeader,
     );
+
+    if (posts.length > 0) {
+      return posts;
+    }
+
+    lastError = `Profile API ${profileApiUrl} berhasil tapi timeline kosong.`;
   }
 
-  if (!response.ok) {
-    throw new Error(
-      `Profile API HTTP ${response.status}`,
-    );
-  }
-
-  const payload = await response.json();
-  const posts = await parseInstagramProfilePosts(
-    payload,
-    username,
-    cookieHeader,
-  );
-
-  if (posts.length === 0) {
-    throw new Error(
-      "Profile API berhasil tapi tidak ada post yang dapat diparse.",
-    );
-  }
-
-  return posts;
+  throw new Error(lastError || "Profile API berhasil tapi tidak ada post yang dapat diparse.");
 }
 
 async function fetchFeedXml(username: string): Promise<string> {
