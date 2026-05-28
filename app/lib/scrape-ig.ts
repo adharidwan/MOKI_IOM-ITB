@@ -1,7 +1,7 @@
 "use server";
 
+import child_process from "node:child_process";
 import fs from "node:fs";
-import https from "node:https";
 import path from "node:path";
 
 import { getPlaywrightLaunchOptions } from "./chromium-path";
@@ -708,39 +708,35 @@ function normalizeMediaUrls(
   return Array.from(byUrl.values());
 }
 
-const INSTAGRAM_AGENT = new https.Agent({ keepAlive: true, timeout: 15000 });
-
 async function httpsGet(
   url: string,
   headers: Record<string, string>,
 ): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }> {
+  const headerArgs = Object.entries(headers).flatMap(([k, v]) => ["-H", `${k}: ${v}`]);
+  const u = new URL(url);
+  const fullUrl = `${u.protocol}//${u.host}${u.pathname}${u.search}`;
+
   return new Promise((resolve, reject) => {
-    const u = new URL(url);
-    const req = https.request(
-      {
-        hostname: u.hostname,
-        path: u.pathname + u.search,
-        method: "GET",
-        agent: INSTAGRAM_AGENT,
-        timeout: 15000,
-        headers: { ...headers, "Accept-Encoding": "identity" },
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          const body = Buffer.concat(chunks).toString("utf-8");
-          resolve({
-            ok: !!res.statusCode && res.statusCode >= 200 && res.statusCode < 300,
-            status: res.statusCode ?? 0,
-            json: () => Promise.resolve(JSON.parse(body)),
-          });
+    const proc = child_process.execFile(
+      "curl",
+      ["-s", "-w", "\n%{http_code}", ...headerArgs, fullUrl],
+      { timeout: 15000, maxBuffer: 2 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err && !stdout) {
+          reject(new Error(`curl failed: ${err.message}`));
+          return;
+        }
+        const output = stdout || "";
+        const lines = output.trim().split("\n");
+        const status = Number(lines.pop());
+        const body = lines.join("\n");
+        resolve({
+          ok: status >= 200 && status < 300,
+          status,
+          json: () => Promise.resolve(JSON.parse(body)),
         });
       },
     );
-    req.on("error", reject);
-    req.on("timeout", () => { req.destroy(); reject(new Error("Request timed out")); });
-    req.end();
   });
 }
 
