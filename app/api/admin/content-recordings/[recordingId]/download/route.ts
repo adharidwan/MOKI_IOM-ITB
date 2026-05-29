@@ -1,11 +1,11 @@
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
+import { once } from 'events';
 import fs from 'fs';
 import { copyFile, mkdir, readdir, readFile, rm, stat } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
 
 import { NextResponse } from 'next/server';
 
@@ -666,10 +666,29 @@ async function writeResponseBodyToFile(response: Response, filePath: string): Pr
     throw new Error('Response media tidak memiliki body.');
   }
 
-  await pipeline(
-    Readable.fromWeb(response.body as ReadableStream<Uint8Array>),
-    fs.createWriteStream(filePath),
-  );
+  const reader = response.body.getReader();
+  const writer = fs.createWriteStream(filePath);
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      if (!writer.write(value)) {
+        await once(writer, 'drain');
+      }
+    }
+  } catch (error) {
+    writer.destroy();
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  writer.end();
+  await once(writer, 'finish');
 }
 
 function ensureUniqueName(fileName: string, usedNames: Set<string>): string {
