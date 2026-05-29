@@ -1013,7 +1013,6 @@ export default function ContentRecordingWorkspace({
                               onClick={() => {
                                 void startContentRecordingDownload({
                                   id: record.id,
-                                  fallbackFileName: `${record.source_post_id || record.id}.mp4`,
                                 });
                               }}
                               disabled={Boolean(activeDownloadId)}

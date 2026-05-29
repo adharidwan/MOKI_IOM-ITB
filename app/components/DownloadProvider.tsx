@@ -1,12 +1,11 @@
 'use client';
 
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import { Alert, IconButton, Snackbar, Tooltip } from '@mui/material';
 
 interface ContentRecordingDownloadInput {
   id: string;
-  fallbackFileName: string;
 }
 
 interface DownloadManagerContextValue {
@@ -21,83 +20,61 @@ type DownloadMessage = {
 } | null;
 
 const DownloadManagerContext = createContext<DownloadManagerContextValue | null>(null);
+const DOWNLOAD_FRAME_NAME = 'content-recording-download-frame';
 
-function resolveDownloadFileName(contentDisposition: string, fallbackFileName: string): string {
-  const encodedFileName = contentDisposition.match(/filename\*=UTF-8''([^;]+)/)?.[1];
-  const quotedFileName = contentDisposition.match(/filename="([^"]+)"/)?.[1];
+function ensureDownloadFrame(): HTMLIFrameElement {
+  const existingFrame = document.querySelector<HTMLIFrameElement>(`iframe[name="${DOWNLOAD_FRAME_NAME}"]`);
+  if (existingFrame) {
+    return existingFrame;
+  }
 
-  return encodedFileName
-    ? decodeURIComponent(encodedFileName)
-    : quotedFileName || fallbackFileName;
+  const frame = document.createElement('iframe');
+  frame.name = DOWNLOAD_FRAME_NAME;
+  frame.hidden = true;
+  document.body.appendChild(frame);
+
+  return frame;
 }
 
-function triggerBrowserDownload(blob: Blob, fileName: string) {
-  const objectUrl = URL.createObjectURL(blob);
+function triggerBrowserDownload(url: string) {
+  const frame = ensureDownloadFrame();
   const link = document.createElement('a');
 
-  link.href = objectUrl;
-  link.download = fileName;
+  link.href = url;
+  link.target = frame.name;
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(objectUrl);
 }
 
 export default function DownloadProvider({ children }: { children: ReactNode }) {
-  const abortControllerRef = useRef<AbortController | null>(null);
   const [activeDownloadId, setActiveDownloadId] = useState<string | null>(null);
   const [message, setMessage] = useState<DownloadMessage>(null);
 
   const cancelDownload = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
     setActiveDownloadId(null);
-    setMessage({ severity: 'info', text: 'Download media dibatalkan.' });
+    setMessage({ severity: 'info', text: 'Download media sudah dikirim ke browser.' });
   }, []);
 
   const startContentRecordingDownload = useCallback(async (input: ContentRecordingDownloadInput) => {
-    if (abortControllerRef.current || activeDownloadId) {
+    if (activeDownloadId) {
       setMessage({ severity: 'warning', text: 'Tunggu download yang sedang berjalan selesai terlebih dahulu.' });
       return;
     }
 
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
     setActiveDownloadId(input.id);
     setMessage({ severity: 'info', text: 'Menyiapkan download media...' });
 
     try {
-      const response = await fetch(`/api/admin/content-recordings/${input.id}/download`, {
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null) as { error?: string } | null;
-        throw new Error(payload?.error || 'Gagal download media.');
-      }
-
-      const blob = await response.blob();
-      const fileName = resolveDownloadFileName(
-        response.headers.get('Content-Disposition') || '',
-        input.fallbackFileName,
-      );
-
-      triggerBrowserDownload(blob, fileName);
+      triggerBrowserDownload(`/api/admin/content-recordings/${input.id}/download`);
       setMessage({ severity: 'success', text: 'Download media dimulai.' });
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return;
-      }
-
       setMessage({
         severity: 'error',
         text: error instanceof Error ? error.message : 'Gagal download media.',
       });
     } finally {
-      if (abortControllerRef.current === abortController) {
-        abortControllerRef.current = null;
-        setActiveDownloadId(null);
-      }
+      setActiveDownloadId(null);
     }
   }, [activeDownloadId]);
 
