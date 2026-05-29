@@ -66,6 +66,25 @@ const HEARTBEAT_INTERVAL_MS = 15000;
 const WHATSAPP_INSTANCE_ID_PATTERN = /^[a-z0-9_-]+$/;
 const TICKET_MEDIA_BUCKET = 'ticket-assets';
 const MAX_TICKET_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_CHROMIUM_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+  '--disable-extensions',
+  '--disable-component-extensions-with-background-pages',
+  '--disable-default-apps',
+  '--disable-sync',
+  '--disable-background-networking',
+  '--disable-background-timer-throttling',
+  '--disable-renderer-backgrounding',
+  '--disable-breakpad',
+  '--metrics-recording-only',
+  '--mute-audio',
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--renderer-process-limit=1',
+];
 let queryFn = query;
 let downloadObjectBufferFn = downloadObjectBuffer;
 
@@ -103,6 +122,15 @@ function createInstanceContext() {
     lastKnownPhoneNumber: null,
     lastKnownChatId: null,
   };
+}
+
+function getChromiumArgs() {
+  const extraArgs = String(process.env.WHATSAPP_CHROMIUM_EXTRA_ARGS || '')
+    .split(/\s+/)
+    .map((arg) => arg.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([...DEFAULT_CHROMIUM_ARGS, ...extraArgs]));
 }
 
 async function ensureWhatsappInstanceRecord(instanceContext, status = 'starting') {
@@ -1040,7 +1068,7 @@ async function main() {
     puppeteer: {
       executablePath: chromiumPath,
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: getChromiumArgs(),
     },
   });
 
