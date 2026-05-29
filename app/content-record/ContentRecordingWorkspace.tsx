@@ -905,6 +905,7 @@ export default function ContentRecordingWorkspace({
           <Table size="small" sx={{ minWidth: 1360 }}>
             <TableHead sx={{ backgroundColor: adminPalette.brand }}>
               <TableRow>
+                <TableCell align="center" sx={{ width: 72, color: '#ffffff', fontWeight: 800 }}>No</TableCell>
                 <TableCell sx={{ width: 132, color: '#ffffff', fontWeight: 800 }}>Preview</TableCell>
                 {(['title', 'platform', 'content_type', 'upload_date'] as ContentRecordingSortKey[]).map((sortKey) => (
                   <TableCell key={sortKey} sx={{ color: '#ffffff', fontWeight: 800 }}>
@@ -918,7 +919,6 @@ export default function ContentRecordingWorkspace({
                     {SORT_LABELS.created_at}
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="center" sx={{ width: 92, color: '#ffffff', fontWeight: 800 }}>ID</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Tags</TableCell>
                 <TableCell sx={{ color: '#ffffff', fontWeight: 800 }}>Metadata</TableCell>
                 <TableCell align="right" sx={{ color: '#ffffff', fontWeight: 800 }}>Actions</TableCell>
@@ -941,6 +941,19 @@ export default function ContentRecordingWorkspace({
 
                 return (
                   <TableRow key={record.id} hover>
+                    <TableCell align="center">
+                      <Typography
+                        title={`Content nomor ${frontendDisplayId}`}
+                        sx={{
+                          color: adminPalette.textSecondary,
+                          fontFamily: 'var(--font-geist-mono), monospace',
+                          fontSize: '0.78rem',
+                          fontWeight: 800,
+                        }}
+                      >
+                        {frontendDisplayId}
+                      </Typography>
+                    </TableCell>
                     <TableCell>
                       <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: previewUrls.length ? 0.5 : instagramEmbedUrl || xEmbedUrl ? 0 : 0.5 }}>
                         {previewUrls.length ? (
@@ -963,19 +976,6 @@ export default function ContentRecordingWorkspace({
                     <TableCell><Chip size="small" label={formatContentTypeLabel(record.content_type)} variant="outlined" sx={{ fontWeight: 700, borderColor: adminPalette.border }} /></TableCell>
                     <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.upload_date)}</TableCell>
                     <TableCell sx={{ color: adminPalette.textSecondary, fontWeight: 700 }}>{formatDateLabel(record.created_at)}</TableCell>
-                    <TableCell align="center">
-                      <Typography
-                        title={`Content nomor ${frontendDisplayId}`}
-                        sx={{
-                          color: adminPalette.textSecondary,
-                          fontFamily: 'var(--font-geist-mono), monospace',
-                          fontSize: '0.78rem',
-                          fontWeight: 800,
-                        }}
-                      >
-                        {frontendDisplayId}
-                      </Typography>
-                    </TableCell>
                     <TableCell sx={{ maxWidth: 220 }}>
                       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
                         {record.tags.length ? record.tags.slice(0, VISIBLE_TAG_LIMIT).map((tag) => <Chip key={tag.id} size="small" label={tag.name} sx={CONTENT_TAG_SX} />) : <Chip size="small" label="Untagged" sx={{ color: adminPalette.warningText, backgroundColor: adminPalette.warningBg }} />}
