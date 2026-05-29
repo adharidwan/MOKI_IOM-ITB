@@ -5,12 +5,20 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getPlaywrightLaunchOptions } from "./chromium-path";
+import { getRedisClient } from "./redis-server";
 import { scrapeContentFromLink } from "./scrape-content-link";
 
 const SCRAPE_ERROR_MESSAGE = "Gagal mengambil data Instagram saat ini.";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const INSTAGRAM_PROFILE_MAX_POSTS = 12;
+const INSTAGRAM_SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const INSTAGRAM_DETAIL_SCRAPE_LIMIT = Number(
+  process.env.INSTAGRAM_DETAIL_SCRAPE_LIMIT || INSTAGRAM_PROFILE_MAX_POSTS,
+);
+const INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS = Number(
+  process.env.INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS || 600,
+);
 
 interface InstagramPost {
   id: string;
@@ -18,8 +26,19 @@ interface InstagramPost {
   link: string;
   thumbnail: string;
   media_urls: string[];
+  caption?: string;
   owner_username?: string;
   upload_date?: string;
+}
+
+interface InstagramProfilePostPreview {
+  link: string;
+  thumbnail: string;
+}
+
+interface InstagramScrapeSuccess {
+  channel: string;
+  videos: InstagramPost[];
 }
 
 const FEED_URL_BUILDERS = [
@@ -92,6 +111,28 @@ function extractInstagramShortcode(link: string): string {
   }
 
   return cleanText(pathSegments[marker + 1] || "");
+}
+
+function instagramShortcodeToMediaId(shortcode: string | null | undefined): string {
+  const cleanShortcode = cleanText(shortcode || "");
+
+  if (!cleanShortcode) {
+    return "";
+  }
+
+  let mediaId = BigInt(0);
+
+  for (const char of cleanShortcode) {
+    const index = INSTAGRAM_SHORTCODE_ALPHABET.indexOf(char);
+
+    if (index === -1) {
+      return "";
+    }
+
+    mediaId = mediaId * BigInt(64) + BigInt(index);
+  }
+
+  return mediaId > BigInt(0) ? mediaId.toString() : "";
 }
 
 async function loadPlaywrightChromium(): Promise<any> {
@@ -380,7 +421,7 @@ export async function loginInstagramAndSaveSession(): Promise<{
 async function scrapeInstagramProfileLinks(
   username: string,
   options?: InstagramScrapeOptions,
-): Promise<string[]> {
+): Promise<InstagramProfilePostPreview[]> {
   const profileUrl = `https://www.instagram.com/${username}/`;
   const maxPosts = Math.max(
     1,
@@ -543,14 +584,14 @@ async function scrapeInstagramProfileLinks(
       );
     }
 
-    const seen = new Set<string>();
+    const seen = new Map<string, InstagramProfilePostPreview>();
     let lastNewLinkAt = Date.now();
 
     while (
       seen.size < maxPosts &&
       Date.now() - lastNewLinkAt < noNewPostsTimeoutMs
     ) {
-      const discoveredLinks = await page.evaluate(() => {
+      const discoveredPosts = await page.evaluate(() => {
         const anchors = Array.from(
           document.querySelectorAll(
             'a[href*="/p/"], a[href*="/reel/"], a[href*="/tv/"]',
@@ -560,27 +601,36 @@ async function scrapeInstagramProfileLinks(
         return anchors
           .map((anchor) => {
             const href = anchor.getAttribute("href") || "";
+            const image = anchor.querySelector("img");
 
             try {
-              return href.startsWith("http")
+              const link = href.startsWith("http")
                 ? href
                 : new URL(href, window.location.origin).toString();
+
+              return {
+                link,
+                thumbnail:
+                  image?.getAttribute("src") ||
+                  image?.getAttribute("data-src") ||
+                  "",
+              };
             } catch {
-              return "";
+              return { link: "", thumbnail: "" };
             }
           })
-          .filter(Boolean);
+          .filter((item) => item.link.length > 0);
       });
 
       const previousSize = seen.size;
 
-      for (const link of discoveredLinks) {
+      for (const post of discoveredPosts) {
         if (seen.size >= maxPosts) {
           break;
         }
 
-        if (!seen.has(link)) {
-          seen.add(link);
+        if (!seen.has(post.link)) {
+          seen.set(post.link, post);
         }
       }
 
@@ -633,7 +683,7 @@ async function scrapeInstagramProfileLinks(
       console.warn("[IG scrape] Failed to save session state");
     }
 
-    return Array.from(seen).slice(0, maxPosts);
+    return Array.from(seen.values()).slice(0, maxPosts);
   } catch (error) {
     console.error(
       `[IG scrape] Profile link extraction failed: ${
@@ -656,16 +706,16 @@ async function scrapeInstagramPostsFromPlaywright(
 
   try {
     const linksStartedAt = Date.now();
-    const links = await scrapeInstagramProfileLinks(username, options);
+    const previews = await scrapeInstagramProfileLinks(username, options);
 
     console.log(
       `[IG timing] Playwright profile links: ${formatDuration(linksStartedAt)}`,
     );
     console.log(
-      `[IG scrape] Retrieved ${links.length} profile links for ${username}`,
+      `[IG scrape] Retrieved ${previews.length} profile links for ${username}`,
     );
 
-    if (links.length === 0) {
+    if (previews.length === 0) {
       console.warn(`[IG scrape] No post links found in profile ${username}`);
       return [];
     }
@@ -674,13 +724,63 @@ async function scrapeInstagramPostsFromPlaywright(
       1,
       options?.maxPosts || INSTAGRAM_PROFILE_MAX_POSTS,
     );
+    const detailLimit = Math.max(0, INSTAGRAM_DETAIL_SCRAPE_LIMIT);
 
     const detailsStartedAt = Date.now();
     const results = await Promise.allSettled(
-      links.slice(0, maxPosts).map(async (link, index) => {
+      previews.slice(0, maxPosts).map(async (preview, index) => {
+        const link = preview.link;
         const postStartedAt = Date.now();
         console.log(
-          `[IG scrape] Processing post ${index + 1}/${links.length}: ${link}`,
+          `[IG scrape] Processing post ${index + 1}/${previews.length}: ${link}`,
+        );
+
+        const cookieHeader =
+          loadCookieHeaderFromEnv() ||
+          loadCookieHeaderFromCache() ||
+          loadCookieHeaderFromStorageState();
+        const mediaInfoStartedAt = Date.now();
+        const mediaInfoPost = await fetchPostFromMediaInfo(
+          link,
+          preview.thumbnail,
+          username,
+          index,
+          cookieHeader,
+        );
+
+        if (mediaInfoPost?.upload_date && mediaInfoPost.media_urls.length > 0) {
+          console.log(
+            `[IG timing] Instagram media info post ${index + 1}: ${formatDuration(mediaInfoStartedAt)}`,
+          );
+          console.log(
+            `[IG timing] Playwright post ${index + 1}: ${formatDuration(postStartedAt)}`,
+          );
+          return mediaInfoPost;
+        }
+
+        if (index >= detailLimit) {
+          const shortcode = extractInstagramShortcode(link) || `ig-${index}`;
+          console.log(
+            `[IG timing] Instagram media info post ${index + 1}: incomplete (${formatDuration(mediaInfoStartedAt)})`,
+          );
+          console.log(
+            `[IG timing] Playwright post ${index + 1}: skipped browser fallback`,
+          );
+
+          return {
+            id: shortcode,
+            title: `Instagram Post ${index + 1}`,
+            link,
+            thumbnail: preview.thumbnail,
+            media_urls: normalizeMediaUrls([preview.thumbnail]),
+            owner_username: username,
+            upload_date: "",
+            caption: undefined,
+          } as InstagramPost;
+        }
+
+        console.log(
+          `[IG timing] Instagram media info post ${index + 1}: incomplete (${formatDuration(mediaInfoStartedAt)}), using browser fallback`,
         );
 
         const scraped = await scrapeContentFromLink(link);
@@ -705,6 +805,7 @@ async function scrapeInstagramPostsFromPlaywright(
           link: cleanText(scraped.link || link),
           thumbnail: mediaUrls[0] || cleanText(scraped.thumbnail_url || ""),
           media_urls: mediaUrls,
+          caption: cleanText(scraped.caption || "") || undefined,
           owner_username: username,
           upload_date: cleanText(scraped.upload_date || ""),
         } as InstagramPost;
@@ -802,6 +903,68 @@ function normalizeMediaUrls(
 
 function formatDuration(startedAt: number): string {
   return `${Date.now() - startedAt}ms`;
+}
+
+function buildInstagramScrapeCacheKey(
+  username: string,
+  options?: InstagramScrapeOptions,
+): string {
+  return [
+    "ig-scrape",
+    username,
+    options?.maxPosts || INSTAGRAM_PROFILE_MAX_POSTS,
+    options?.noNewPostsTimeoutMs || "default",
+    options?.scrollPauseMs || "default",
+  ].join(":");
+}
+
+async function getCachedInstagramScrape(
+  cacheKey: string,
+): Promise<InstagramScrapeSuccess | null> {
+  try {
+    const raw = await getRedisClient().get(cacheKey);
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as InstagramScrapeSuccess;
+
+    if (!parsed.channel || !Array.isArray(parsed.videos)) {
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    console.warn(
+      "[IG cache] Read failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
+}
+
+async function setCachedInstagramScrape(
+  cacheKey: string,
+  payload: InstagramScrapeSuccess,
+): Promise<void> {
+  if (!Number.isFinite(INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS) || INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS <= 0) {
+    return;
+  }
+
+  try {
+    await getRedisClient().set(
+      cacheKey,
+      JSON.stringify(payload),
+      "EX",
+      INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS,
+    );
+  } catch (error) {
+    console.warn(
+      "[IG cache] Write failed:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 async function httpsGet(
@@ -928,6 +1091,107 @@ function parseInstagramMediaInfoUrls(payload: unknown): string[] {
   return normalizeMediaUrls([pickInstagramImageUrl(item)]);
 }
 
+function parseInstagramMediaInfoPost(
+  payload: unknown,
+  link: string,
+  fallbackThumbnail: string,
+  username: string,
+  index: number,
+): InstagramPost | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const item = (payload as {
+    items?: Array<{
+      id?: string;
+      pk?: string | number;
+      code?: string;
+      taken_at?: number;
+      taken_at_ts?: number;
+      caption?: { text?: string; created_at?: number };
+      caption_text?: string;
+      user?: { username?: string };
+      carousel_media?: unknown[];
+      image_versions2?: {
+        candidates?: Array<{ url?: string; width?: number; height?: number }>;
+      };
+      video_versions?: Array<{ url?: string }>;
+    }>;
+  }).items?.[0];
+
+  if (!item) {
+    return null;
+  }
+
+  const shortcode = String(item.code || extractInstagramShortcode(link)).trim();
+  const id = String(item.id || item.pk || shortcode || `ig-${index}`).trim();
+  const caption = cleanText(item.caption?.text || item.caption_text || "");
+  const mediaUrls = parseInstagramMediaInfoUrls(payload);
+  const uploadDate = toIsoDate(
+    item.taken_at || item.taken_at_ts || item.caption?.created_at,
+  );
+  const canonicalLink = shortcode
+    ? `https://www.instagram.com/p/${shortcode}/`
+    : link;
+
+  return {
+    id,
+    title: caption ? caption.slice(0, 80) : `Instagram Post ${index + 1}`,
+    link: canonicalLink,
+    thumbnail: mediaUrls[0] || fallbackThumbnail,
+    media_urls: mediaUrls.length ? mediaUrls : normalizeMediaUrls([fallbackThumbnail]),
+    caption: caption || undefined,
+    owner_username: cleanText(item.user?.username || username),
+    upload_date: uploadDate,
+  };
+}
+
+async function fetchPostFromMediaInfo(
+  link: string,
+  fallbackThumbnail: string,
+  username: string,
+  index: number,
+  cookieHeader: string,
+): Promise<InstagramPost | null> {
+  const shortcode = extractInstagramShortcode(link);
+  const mediaId = instagramShortcodeToMediaId(shortcode);
+
+  if (!mediaId) {
+    return null;
+  }
+
+  const url = `${INSTAGRAM_MEDIA_INFO_API}${encodeURIComponent(mediaId)}/info/`;
+
+  try {
+    const response = await httpsGet(
+      url,
+      getInstagramHeaders(
+        shortcode ? `https://www.instagram.com/p/${shortcode}/` : link,
+        cookieHeader,
+      ),
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return parseInstagramMediaInfoPost(
+      await response.json(),
+      link,
+      fallbackThumbnail,
+      username,
+      index,
+    );
+  } catch (error) {
+    console.warn("[IG scrape] media info post failed", {
+      link,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 async function fetchPostMediaUrls(
   mediaId: string,
   shortcode: string,
@@ -1015,6 +1279,7 @@ function parseXmlItems(xml: string, username: string): InstagramPost[] {
         link,
         thumbnail: mediaUrls[0] || "",
         media_urls: mediaUrls,
+        caption: description || title || undefined,
         owner_username: username,
         upload_date: toIsoDate(pubDate),
       };
@@ -1104,6 +1369,7 @@ async function parseInstagramProfilePosts(
         link: `https://www.instagram.com/p/${shortcode}/`,
         thumbnail: mediaUrls[0] || thumbnail,
         media_urls: mediaUrls,
+        caption: caption || undefined,
         owner_username: username,
         upload_date: uploadDate,
       } as InstagramPost;
@@ -1238,6 +1504,20 @@ export async function scrape_ig(
     `[IG scrape] Starting scrape for username: ${normalizedUsername}`,
   );
 
+  const cacheKey = buildInstagramScrapeCacheKey(normalizedUsername, options);
+  const cacheStartedAt = Date.now();
+  const cached = await getCachedInstagramScrape(cacheKey);
+
+  if (cached) {
+    console.log(`[IG cache] Hit for ${normalizedUsername}`);
+    console.log(`[IG timing] Cache read: ${formatDuration(cacheStartedAt)}`);
+    console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
+    return cached;
+  }
+
+  console.log(`[IG cache] Miss for ${normalizedUsername}`);
+  console.log(`[IG timing] Cache read: ${formatDuration(cacheStartedAt)}`);
+
   writeInstagramScrapeStatus({
     stage: "finding-posts",
     message: `Menyiapkan pengambilan post untuk @${normalizedUsername}...`,
@@ -1254,9 +1534,11 @@ export async function scrape_ig(
     console.log(`[IG timing] RSS feed: ${formatDuration(rssStartedAt)}`);
 
     if (posts.length > 0) {
+      const payload = { channel: `@${normalizedUsername}`, videos: posts };
+      await setCachedInstagramScrape(cacheKey, payload);
       clearInstagramScrapeStatus();
       console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
-      return { channel: `@${normalizedUsername}`, videos: posts };
+      return payload;
     }
 
     console.warn("[IG scrape] RSS returned 0 items, trying API...");
@@ -1287,10 +1569,12 @@ export async function scrape_ig(
     console.log(`[IG scrape] Profile API success: ${posts.length} posts`);
     console.log(`[IG timing] Profile API: ${formatDuration(apiStartedAt)}`);
 
+    const payload = { channel: `@${normalizedUsername}`, videos: posts };
+    await setCachedInstagramScrape(cacheKey, payload);
     clearInstagramScrapeStatus();
     console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
 
-    return { channel: `@${normalizedUsername}`, videos: posts };
+    return payload;
   } catch (apiError) {
     console.warn(
       "[IG scrape] Profile API failed:",
@@ -1316,10 +1600,12 @@ export async function scrape_ig(
     console.log(`[IG scrape] Playwright success: ${posts.length} posts`);
     console.log(`[IG timing] Playwright strategy: ${formatDuration(playwrightStartedAt)}`);
 
+    const payload = { channel: `@${normalizedUsername}`, videos: posts };
+    await setCachedInstagramScrape(cacheKey, payload);
     clearInstagramScrapeStatus();
     console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
 
-    return { channel: `@${normalizedUsername}`, videos: posts };
+    return payload;
   } catch (scrapeError) {
     console.error(
       "[IG scrape] All strategies failed:",
