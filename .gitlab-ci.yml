@@ -18,6 +18,10 @@ deploy:
   script:
     - test -f "$DEPLOY_ENV_FILE"
     - cp "$DEPLOY_ENV_FILE" "$CI_PROJECT_DIR/.env.local"
+    - mkdir -p "$CI_PROJECT_DIR/secret"
+    - test -f "/home/ppl/IF3250_K02_G10_IOM4/secret/x.com_cookies.txt"
+    - cp "/home/ppl/IF3250_K02_G10_IOM4/secret/x.com_cookies.txt" "$CI_PROJECT_DIR/secret/x.com_cookies.txt"
+    - chmod 600 "$CI_PROJECT_DIR/secret/x.com_cookies.txt"
 
     - |
       for key in \
