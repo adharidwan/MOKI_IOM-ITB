@@ -652,9 +652,15 @@ async function scrapeInstagramPostsFromPlaywright(
   username: string,
   options?: InstagramScrapeOptions,
 ): Promise<InstagramPost[]> {
+  const startedAt = Date.now();
+
   try {
+    const linksStartedAt = Date.now();
     const links = await scrapeInstagramProfileLinks(username, options);
 
+    console.log(
+      `[IG timing] Playwright profile links: ${formatDuration(linksStartedAt)}`,
+    );
     console.log(
       `[IG scrape] Retrieved ${links.length} profile links for ${username}`,
     );
@@ -669,13 +675,18 @@ async function scrapeInstagramPostsFromPlaywright(
       options?.maxPosts || INSTAGRAM_PROFILE_MAX_POSTS,
     );
 
+    const detailsStartedAt = Date.now();
     const results = await Promise.allSettled(
       links.slice(0, maxPosts).map(async (link, index) => {
+        const postStartedAt = Date.now();
         console.log(
           `[IG scrape] Processing post ${index + 1}/${links.length}: ${link}`,
         );
 
         const scraped = await scrapeContentFromLink(link);
+        console.log(
+          `[IG timing] Playwright post ${index + 1}: ${formatDuration(postStartedAt)}`,
+        );
         const shortcode =
           extractInstagramShortcode(scraped.link || link) || `ig-${index}`;
 
@@ -698,6 +709,10 @@ async function scrapeInstagramPostsFromPlaywright(
           upload_date: cleanText(scraped.upload_date || ""),
         } as InstagramPost;
       }),
+    );
+
+    console.log(
+      `[IG timing] Playwright post details total: ${formatDuration(detailsStartedAt)}`,
     );
 
     const fulfilled = results.filter(
@@ -723,6 +738,7 @@ async function scrapeInstagramPostsFromPlaywright(
       .filter((item) => item.link.startsWith("http"));
 
     console.log(`[IG scrape] Successfully scraped ${posts.length} posts`);
+    console.log(`[IG timing] Playwright total: ${formatDuration(startedAt)}`);
 
     return posts;
   } catch (error) {
@@ -782,6 +798,10 @@ function normalizeMediaUrls(
   });
 
   return Array.from(byUrl.values());
+}
+
+function formatDuration(startedAt: number): string {
+  return `${Date.now() - startedAt}ms`;
 }
 
 async function httpsGet(
@@ -1206,6 +1226,7 @@ export async function scrape_ig(
   username: string,
   options?: InstagramScrapeOptions,
 ) {
+  const scrapeStartedAt = Date.now();
   const normalizedUsername = normalizeUsername(username);
 
   if (!normalizedUsername) {
@@ -1222,6 +1243,7 @@ export async function scrape_ig(
     message: `Menyiapkan pengambilan post untuk @${normalizedUsername}...`,
   });
 
+  const rssStartedAt = Date.now();
   try {
     console.log("[IG scrape] Trying RSS feed...");
 
@@ -1229,9 +1251,11 @@ export async function scrape_ig(
     const posts = parseXmlItems(xml, normalizedUsername);
 
     console.log(`[IG scrape] RSS feed success: ${posts.length} posts`);
+    console.log(`[IG timing] RSS feed: ${formatDuration(rssStartedAt)}`);
 
     if (posts.length > 0) {
       clearInstagramScrapeStatus();
+      console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
       return { channel: `@${normalizedUsername}`, videos: posts };
     }
 
@@ -1241,8 +1265,10 @@ export async function scrape_ig(
       "[IG scrape] RSS feed failed:",
       rssError instanceof Error ? rssError.message : String(rssError),
     );
+    console.log(`[IG timing] RSS feed: ${formatDuration(rssStartedAt)}`);
   }
 
+  const apiStartedAt = Date.now();
   try {
     console.log("[IG scrape] Trying Instagram Profile API...");
 
@@ -1259,8 +1285,10 @@ export async function scrape_ig(
     );
 
     console.log(`[IG scrape] Profile API success: ${posts.length} posts`);
+    console.log(`[IG timing] Profile API: ${formatDuration(apiStartedAt)}`);
 
     clearInstagramScrapeStatus();
+    console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
 
     return { channel: `@${normalizedUsername}`, videos: posts };
   } catch (apiError) {
@@ -1268,8 +1296,10 @@ export async function scrape_ig(
       "[IG scrape] Profile API failed:",
       apiError instanceof Error ? apiError.message : String(apiError),
     );
+    console.log(`[IG timing] Profile API: ${formatDuration(apiStartedAt)}`);
   }
 
+  const playwrightStartedAt = Date.now();
   try {
     console.log("[IG scrape] Trying Playwright as last resort...");
 
@@ -1284,8 +1314,10 @@ export async function scrape_ig(
     );
 
     console.log(`[IG scrape] Playwright success: ${posts.length} posts`);
+    console.log(`[IG timing] Playwright strategy: ${formatDuration(playwrightStartedAt)}`);
 
     clearInstagramScrapeStatus();
+    console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
 
     return { channel: `@${normalizedUsername}`, videos: posts };
   } catch (scrapeError) {
@@ -1293,6 +1325,8 @@ export async function scrape_ig(
       "[IG scrape] All strategies failed:",
       scrapeError instanceof Error ? scrapeError.message : String(scrapeError),
     );
+    console.log(`[IG timing] Playwright strategy: ${formatDuration(playwrightStartedAt)}`);
+    console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
 
     writeInstagramScrapeStatus({
       stage: "error",
