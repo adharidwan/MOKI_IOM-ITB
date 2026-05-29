@@ -1150,35 +1150,53 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     if (!files.length && recording.platform === 'Instagram') {
       const instagramFallbackStartedAt = nowMs();
       const shortcode = extractInstagramShortcode(downloadLink);
-      const username =
-        extractInstagramUsername(downloadLink) ||
-        extractInstagramUsernameFromSourcePostId(recording.source_post_id) ||
-        extractInstagramUsernameFromText(recording.title, recording.caption, recording.description) ||
-        await fetchInstagramUsernameFromMediaInfo(shortcode) ||
-        await fetchInstagramUsernameFromPost(shortcode);
-
-      const feedMediaUrls = username
-        ? await fetchInstagramMediaUrlsFromFeeds(username, shortcode)
-        : [];
-      const directMediaUrls = [
-        ...await fetchInstagramMediaUrlsFromMediaInfo(shortcode),
-        ...await fetchInstagramMediaUrlsFromPostMetadata(shortcode, downloadLink),
-      ];
-      const fallbackMediaUrls = filterInstagramOriginalMediaUrls([...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || [])]);
+      const mediaInfoUrls = await fetchInstagramMediaUrlsFromMediaInfo(shortcode);
 
       files = await downloadFallbackMediaUrls(
-        fallbackMediaUrls,
+        mediaInfoUrls,
         tempDir,
         'https://www.instagram.com/',
         'gambar',
       );
+
+      let username = '';
+      let feedMediaUrls: string[] = [];
+      let postMetadataUrls: string[] = [];
+      let fallbackMediaUrls = mediaInfoUrls;
+      let fallbackSource = 'media-info';
+
+      if (!files.length) {
+        fallbackSource = 'metadata';
+        username =
+          extractInstagramUsername(downloadLink) ||
+          extractInstagramUsernameFromSourcePostId(recording.source_post_id) ||
+          extractInstagramUsernameFromText(recording.title, recording.caption, recording.description) ||
+          await fetchInstagramUsernameFromMediaInfo(shortcode) ||
+          await fetchInstagramUsernameFromPost(shortcode);
+
+        feedMediaUrls = username
+          ? await fetchInstagramMediaUrlsFromFeeds(username, shortcode)
+          : [];
+        postMetadataUrls = await fetchInstagramMediaUrlsFromPostMetadata(shortcode, downloadLink);
+        fallbackMediaUrls = filterInstagramOriginalMediaUrls([...feedMediaUrls, ...postMetadataUrls, ...(recording.media_urls || [])]);
+
+        files = await downloadFallbackMediaUrls(
+          fallbackMediaUrls,
+          tempDir,
+          'https://www.instagram.com/',
+          'gambar',
+        );
+      }
+
       logDownloadTiming('instagram-fallback-download', instagramFallbackStartedAt, {
         recordingId,
         platform: recording.platform,
         candidateCount: fallbackMediaUrls.length,
-        directCandidateCount: directMediaUrls.length,
+        mediaInfoCandidateCount: mediaInfoUrls.length,
+        postMetadataCandidateCount: postMetadataUrls.length,
         feedCandidateCount: feedMediaUrls.length,
         fileCount: files.length,
+        fallbackSource,
         foundUsername: Boolean(username),
       });
     }
