@@ -5,13 +5,14 @@ import { copyFile, mkdir, readdir, readFile, rm, stat } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 
 import { NextResponse } from 'next/server';
 
 import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import { getContentRecordingById } from '@/app/lib/api';
 import type { ContentRecordingPlatform } from '@/app/lib/types';
-import { createZip, type ZipFileEntry } from '@/app/lib/zip';
+import { createZipFileStream, type ZipFilePathEntry } from '@/app/lib/zip';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,7 @@ const X_GRAPHQL_TWEET_RESULT_API = 'https://x.com/i/api/graphql/2ICDjqPd81tulZcY
 const X_GRAPHQL_BEARER_TOKEN = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
 const X_YT_DLP_COOKIES_PATH = String(process.env.X_YT_DLP_COOKIES_PATH || '').trim();
 const X_YT_DLP_TEMP_COOKIES_FILE_NAME = 'x-yt-dlp-cookies.txt';
+const FALLBACK_MEDIA_DOWNLOAD_CONCURRENCY = 4;
 const X_GRAPHQL_FEATURES = {
   creator_subscriptions_tweet_preview_api_enabled: true,
   tweetypie_unmention_optimization_enabled: true,
@@ -63,6 +65,22 @@ const X_GRAPHQL_FEATURES = {
   responsive_web_graphql_timeline_navigation_enabled: true,
   responsive_web_enhance_cards_enabled: false,
 };
+
+function nowMs(): number {
+  return Math.round(performance.now());
+}
+
+function logDownloadTiming(
+  stage: string,
+  startedAt: number,
+  details: Record<string, string | number | boolean | null | undefined> = {},
+) {
+  console.info('[content-record-download]', {
+    stage,
+    durationMs: nowMs() - startedAt,
+    ...details,
+  });
+}
 
 function resolveYtDlpBinaryPath(): string {
   return YT_DLP_CANDIDATE_PATHS.find((candidate) => candidate && fs.existsSync(candidate)) || 'yt-dlp';
@@ -602,6 +620,58 @@ function createFileDownloadStream(filePath: string, cleanupPath: string): Readab
   return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
 }
 
+function createCleanupReadableStream(stream: ReadableStream<Uint8Array>, cleanupPath: string): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  let cleanedUp = false;
+
+  async function cleanup() {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    reader.releaseLock();
+    await rm(cleanupPath, { force: true, recursive: true });
+  }
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          await cleanup();
+          return;
+        }
+
+        controller.enqueue(value);
+      } catch (error) {
+        await cleanup();
+        controller.error(error);
+      }
+    },
+    async cancel() {
+      if (cleanedUp) {
+        return;
+      }
+
+      await reader.cancel();
+      await cleanup();
+    },
+  });
+}
+
+async function writeResponseBodyToFile(response: Response, filePath: string): Promise<void> {
+  if (!response.body) {
+    throw new Error('Response media tidak memiliki body.');
+  }
+
+  await pipeline(
+    Readable.fromWeb(response.body as ReadableStream<Uint8Array>),
+    fs.createWriteStream(filePath),
+  );
+}
+
 function ensureUniqueName(fileName: string, usedNames: Set<string>): string {
   if (!usedNames.has(fileName)) {
     usedNames.add(fileName);
@@ -673,9 +743,9 @@ async function downloadFallbackMediaUrls(
   fileBaseName = 'fallback',
 ): Promise<string[]> {
   const normalizedUrls = Array.from(new Set(urls.map((url) => String(url || '').trim()).filter(Boolean)));
-  const downloadedFiles: string[] = [];
+  const downloadedFiles = new Array<string | null>(normalizedUrls.length).fill(null);
 
-  for (const url of normalizedUrls) {
+  async function downloadUrl(url: string, index: number): Promise<void> {
     const response = await fetch(url, {
       headers: {
         'User-Agent': USER_AGENT,
@@ -685,21 +755,34 @@ async function downloadFallbackMediaUrls(
     }).catch(() => null);
 
     if (!response?.ok) {
-      continue;
+      return;
     }
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.startsWith('image/') && !contentType.startsWith('video/')) {
-      continue;
+      return;
     }
 
     const extension = extensionFromUrl(url) || extensionFromContentType(contentType) || '.bin';
-    const filePath = path.join(tempDir, `${fileBaseName}-${downloadedFiles.length + 1}${extension}`);
-    await fs.promises.writeFile(filePath, Buffer.from(await response.arrayBuffer()));
-    downloadedFiles.push(filePath);
+    const filePath = path.join(tempDir, `${fileBaseName}-${index + 1}${extension}`);
+    await writeResponseBodyToFile(response, filePath);
+
+    downloadedFiles[index] = filePath;
   }
 
-  return downloadedFiles;
+  let nextIndex = 0;
+  const workerCount = Math.min(FALLBACK_MEDIA_DOWNLOAD_CONCURRENCY, normalizedUrls.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < normalizedUrls.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await downloadUrl(normalizedUrls[index], index).catch(() => undefined);
+    }
+  });
+
+  await Promise.all(workers);
+
+  return downloadedFiles.filter((filePath): filePath is string => Boolean(filePath));
 }
 
 function normalizeMediaUrls(values: Array<string | null | undefined>): string[] {
@@ -950,11 +1033,22 @@ async function fetchInstagramMediaUrlsFromFeeds(username: string, shortcode: str
 
 export async function GET(request: Request, { params }: { params: Promise<{ recordingId: string }> }) {
   let tempDir = '';
+  const requestStartedAt = nowMs();
+  let recordingIdForLog = '';
+  let platformForLog: ContentRecordingPlatform | '' = '';
 
   try {
+    const loadStartedAt = nowMs();
     await requireAnyFeatureFromRequest(request, ['content-record']);
     const { recordingId } = await params;
+    recordingIdForLog = recordingId;
     const recording = await getContentRecordingById(recordingId);
+    platformForLog = recording.platform;
+
+    logDownloadTiming('load-record', loadStartedAt, {
+      recordingId,
+      platform: recording.platform,
+    });
 
     if (recording.platform !== 'youtube' && recording.platform !== 'x' && recording.platform !== 'Instagram') {
       return NextResponse.json({ error: 'Download media saat ini hanya tersedia untuk konten YouTube, X, dan Instagram.' }, { status: 400 });
@@ -971,10 +1065,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     tempDir = path.join(os.tmpdir(), 'content-recording-downloads', crypto.randomUUID());
     await mkdir(tempDir, { recursive: true });
 
+    const normalizeStartedAt = nowMs();
     const downloadLink = await normalizeDownloadLink(recording.platform, recording.link, recording.source_post_id);
+    logDownloadTiming('normalize-link', normalizeStartedAt, {
+      recordingId,
+      platform: recording.platform,
+    });
     let xYtDlpCookiesPath = '';
 
     if (recording.platform === 'youtube' || recording.platform === 'x') {
+      const ytDlpStartedAt = nowMs();
       xYtDlpCookiesPath = recording.platform === 'x' && X_YT_DLP_COOKIES_PATH
         ? path.join(tempDir, X_YT_DLP_TEMP_COOKIES_FILE_NAME)
         : '';
@@ -993,10 +1093,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
           throw error;
         }
       });
+      logDownloadTiming('yt-dlp-download', ytDlpStartedAt, {
+        recordingId,
+        platform: recording.platform,
+        usedCookies: Boolean(xYtDlpCookiesPath),
+      });
     }
 
     let files = await listDownloadedFiles(tempDir);
     if (!files.length && recording.platform === 'x') {
+      const xFallbackStartedAt = nowMs();
       const statusId = extractXStatusId(downloadLink);
       const username = extractXUsername(recording.link) || extractXUsername(downloadLink);
       const graphqlPhotoUrls = await fetchXPhotoUrlsFromGraphql(statusId, xYtDlpCookiesPath);
@@ -1013,9 +1119,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
         tempDir,
         'https://x.com/',
       );
+      logDownloadTiming('x-fallback-download', xFallbackStartedAt, {
+        recordingId,
+        platform: recording.platform,
+        candidateCount: fallbackMediaUrls.length,
+        fileCount: files.length,
+        usedGraphql: graphqlPhotoUrls.length > 0,
+      });
     }
 
     if (!files.length && recording.platform === 'Instagram') {
+      const instagramFallbackStartedAt = nowMs();
       const shortcode = extractInstagramShortcode(downloadLink);
       const username =
         extractInstagramUsername(downloadLink) ||
@@ -1031,16 +1145,32 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
         ...await fetchInstagramMediaUrlsFromMediaInfo(shortcode),
         ...await fetchInstagramMediaUrlsFromPostMetadata(shortcode, downloadLink),
       ];
+      const fallbackMediaUrls = filterInstagramOriginalMediaUrls([...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || [])]);
 
       files = await downloadFallbackMediaUrls(
-        filterInstagramOriginalMediaUrls([...feedMediaUrls, ...directMediaUrls, ...(recording.media_urls || [])]),
+        fallbackMediaUrls,
         tempDir,
         'https://www.instagram.com/',
         'gambar',
       );
+      logDownloadTiming('instagram-fallback-download', instagramFallbackStartedAt, {
+        recordingId,
+        platform: recording.platform,
+        candidateCount: fallbackMediaUrls.length,
+        directCandidateCount: directMediaUrls.length,
+        feedCandidateCount: feedMediaUrls.length,
+        fileCount: files.length,
+        foundUsername: Boolean(username),
+      });
     }
 
+    const dedupeStartedAt = nowMs();
     files = await removeDuplicateDownloadedFiles(files);
+    logDownloadTiming('dedupe-files', dedupeStartedAt, {
+      recordingId,
+      platform: recording.platform,
+      fileCount: files.length,
+    });
 
     if (!files.length) {
       throw new Error(
@@ -1053,28 +1183,38 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     }
 
     if (files.length > 1) {
+      const zipStartedAt = nowMs();
       const usedNames = new Set<string>();
-      const zipEntries: ZipFileEntry[] = await Promise.all(
-        files.map(async (filePath, index) => ({
-          name: ensureUniqueName(
-            sanitizeDownloadName(path.basename(filePath), `media-${index + 1}${path.extname(filePath)}`),
-            usedNames,
-          ),
-          data: new Uint8Array(await readFile(filePath)),
-        })),
-      );
-      const zip = createZip(zipEntries);
-      const zipBody = zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength) as ArrayBuffer;
+      const zipEntries: ZipFilePathEntry[] = files.map((filePath, index) => ({
+        name: ensureUniqueName(
+          sanitizeDownloadName(path.basename(filePath), `media-${index + 1}${path.extname(filePath)}`),
+          usedNames,
+        ),
+        path: filePath,
+      }));
+      const zip = await createZipFileStream(zipEntries);
       const zipName = `${baseFileName}.zip`;
+      logDownloadTiming('zip-prepare', zipStartedAt, {
+        recordingId,
+        platform: recording.platform,
+        fileCount: files.length,
+        zipBytes: zip.size,
+      });
+      logDownloadTiming('response-ready', requestStartedAt, {
+        recordingId,
+        platform: recording.platform,
+        fileCount: files.length,
+        responseType: 'zip',
+      });
 
-      await rm(tempDir, { force: true, recursive: true });
+      const zipStream = createCleanupReadableStream(zip.stream, tempDir);
       tempDir = '';
 
-      return new Response(zipBody, {
+      return new Response(zipStream, {
         status: 200,
         headers: {
           'Content-Type': 'application/zip',
-          'Content-Length': String(zip.length),
+          'Content-Length': String(zip.size),
           'Content-Disposition': attachmentDisposition(zipName),
           'Cache-Control': 'private, no-store',
         },
@@ -1085,6 +1225,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     const extension = path.extname(filePath) || '.bin';
     const fileName = `${baseFileName}${extension}`;
     const fileStats = await stat(filePath);
+    logDownloadTiming('response-ready', requestStartedAt, {
+      recordingId,
+      platform: recording.platform,
+      fileCount: files.length,
+      responseType: 'single-file',
+      fileBytes: fileStats.size,
+    });
 
     return new Response(createFileDownloadStream(filePath, tempDir), {
       status: 200,
@@ -1101,6 +1248,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
     }
 
     const errorMessage = error instanceof Error ? error.message : 'Gagal download media.';
+    logDownloadTiming('error', requestStartedAt, {
+      recordingId: recordingIdForLog,
+      platform: platformForLog,
+      error: errorMessage,
+    });
     const isClientError =
       errorMessage.includes('bukan link') ||
       errorMessage.includes('Unsupported URL') ||
