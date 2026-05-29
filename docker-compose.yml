@@ -88,7 +88,12 @@ services:
         condition: service_started
     restart: unless-stopped
     volumes:
-      - ./secret/x.com_cookies.txt:/app/secrets/x-cookies.txt:ro
+      - type: bind
+        source: ./secret/x.com_cookies.txt
+        target: /app/secrets/x-cookies.txt
+        read_only: true
+        bind:
+          create_host_path: false
       - web_cache:/app/.cache
 
   bot:
