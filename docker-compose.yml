@@ -78,7 +78,6 @@ services:
       S3_ENDPOINT: ${S3_ENDPOINT_DOCKER:-http://minio:9000}
       WHATSAPP_ORCHESTRATOR_ENABLED: ${WHATSAPP_ORCHESTRATOR_ENABLED:-false}
       WHATSAPP_ORCHESTRATOR_BASE_URL: ${WHATSAPP_ORCHESTRATOR_BASE_URL:-http://orchestrator:3099}
-      WHATSAPP_ORCHESTRATOR_TOKEN: ${WHATSAPP_ORCHESTRATOR_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
