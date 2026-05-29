@@ -63,12 +63,33 @@ export async function resolveGroupRecipientRows(
   sortBy: 'nama' | 'created_at',
 ): Promise<DatabaseRow[]> {
   const result = await db.execute(sql`
-    select *
-    from public.resolve_csv_contact_group_recipients(
-      ${pgTextArray(groupNames)},
-      ${limit},
-      ${sortBy}
+    with filtered_contacts as (
+      select
+        contact.id,
+        contact.no_telp,
+        contact.nama,
+        contact.jenis_kelamin,
+        contact.jabatan,
+        coalesce(contact.group_names, '{}'::text[]) as group_names,
+        contact.source_file,
+        contact.imported_at,
+        contact.created_at
+      from public.csv_contacts as contact
+      where coalesce(contact.group_names, '{}'::text[]) && ${pgTextArray(groupNames)}
+    ),
+    ordered_contacts as (
+      select
+        filtered_contacts.*,
+        count(*) over ()::integer as total_count
+      from filtered_contacts
+      order by
+        case when ${sortBy} = 'created_at' then filtered_contacts.created_at end desc,
+        lower(filtered_contacts.nama),
+        filtered_contacts.nama,
+        filtered_contacts.id
+      ${limit === null ? sql`` : sql`limit ${limit}`}
     )
+    select * from ordered_contacts
   `);
 
   return rowsFromResult(result);
