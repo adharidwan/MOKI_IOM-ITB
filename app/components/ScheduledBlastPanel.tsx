@@ -106,11 +106,14 @@ const PRIMARY_BUTTON_SX = {
   },
 } as const;
 
-function formatDate(value: string | null): string {
+const DEFAULT_SCHEDULE_TIME_ZONE = 'Asia/Jakarta';
+
+function formatDate(value: string | null, timeZone = DEFAULT_SCHEDULE_TIME_ZONE): string {
   if (!value) return '-';
   return new Intl.DateTimeFormat('id-ID', {
     dateStyle: 'medium',
     timeStyle: 'short',
+    timeZone: timeZone || DEFAULT_SCHEDULE_TIME_ZONE,
   }).format(new Date(value));
 }
 
@@ -128,11 +131,29 @@ function recurrenceLabel(type: RecurrenceType | null): string {
   return 'Sekali';
 }
 
-function toDatetimeLocal(value: string | null): string {
+function toDatetimeLocal(value: string | null, timeZone = DEFAULT_SCHEDULE_TIME_ZONE): string {
   if (!value) return '';
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
-  return date.toISOString().slice(0, 16);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timeZone || DEFAULT_SCHEDULE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const valueByType = new Map(parts.map((part) => [part.type, part.value]));
+
+  return `${valueByType.get('year')}-${valueByType.get('month')}-${valueByType.get('day')}T${valueByType.get('hour')}:${valueByType.get('minute')}`;
+}
+
+function datetimeLocalToJakartaISOString(value: string): string {
+  if (!value) return '';
+  const valueWithSeconds = value.length === 16 ? `${value}:00` : value;
+  return new Date(`${valueWithSeconds}+07:00`).toISOString();
 }
 
 export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanelProps) {
@@ -215,7 +236,7 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
     setEditName(item.name);
     setEditMessage(item.message);
     setEditScheduleType(item.scheduleType);
-    setEditRunAt(toDatetimeLocal(item.runAt || item.nextRunAt));
+    setEditRunAt(toDatetimeLocal(item.runAt || item.nextRunAt, item.timezone));
     setEditRecurrenceType(item.recurrenceType || 'daily');
   };
 
@@ -245,7 +266,8 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
         message: editMessage,
         scheduleType: editScheduleType,
         recurrenceType: editScheduleType === 'recurring' ? editRecurrenceType : null,
-        runAt: editRunAt ? new Date(editRunAt).toISOString() : null,
+        runAt: editRunAt ? datetimeLocalToJakartaISOString(editRunAt) : null,
+        timezone: DEFAULT_SCHEDULE_TIME_ZONE,
       },
       'Scheduled blast berhasil diperbarui.',
     );
@@ -408,10 +430,10 @@ export default function ScheduledBlastPanel({ initialData }: ScheduledBlastPanel
                     <Typography sx={{ fontSize: '0.82rem', color: adminPalette.textPrimary }}>{recurrenceLabel(item.recurrenceType)}</Typography>
                   </TableCell>
                   <TableCell sx={{ py: 0.9 }}>
-                    <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{formatDate(item.nextRunAt)}</Typography>
+                    <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{formatDate(item.nextRunAt, item.timezone)}</Typography>
                   </TableCell>
                   <TableCell sx={{ py: 0.9 }}>
-                    <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{formatDate(item.lastRunAt)}</Typography>
+                    <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{formatDate(item.lastRunAt, item.timezone)}</Typography>
                     {item.lastRun?.error_message ? <Typography sx={{ fontSize: '0.74rem', color: adminPalette.dangerText }}>{item.lastRun.error_message}</Typography> : null}
                   </TableCell>
                   <TableCell sx={{ py: 0.9 }}>

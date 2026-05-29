@@ -174,6 +174,8 @@ const SOURCE_OPTIONS = [
   { value: 'manual' as const, label: 'Manual', helper: 'Masukkan nomor satu per satu.' },
 ];
 
+const SCHEDULE_TIME_ZONE = 'Asia/Jakarta';
+
 function normalizePhoneNumber(rawValue: string): string | null {
   const digitsOnly = String(rawValue || '').replace(/\D/g, '');
   return digitsOnly.length >= 8 && digitsOnly.length <= 15 ? digitsOnly : null;
@@ -227,6 +229,28 @@ function formatDate(value: string): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function toJakartaDatetimeLocal(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: SCHEDULE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const valueByType = new Map(parts.map((part) => [part.type, part.value]));
+
+  return `${valueByType.get('year')}-${valueByType.get('month')}-${valueByType.get('day')}T${valueByType.get('hour')}:${valueByType.get('minute')}`;
+}
+
+function jakartaDatetimeLocalToISOString(value: string): string {
+  if (!value) return '';
+  const valueWithSeconds = value.length === 16 ? `${value}:00` : value;
+  return new Date(`${valueWithSeconds}+07:00`).toISOString();
 }
 
 function formatFileSize(value: number): string {
@@ -791,7 +815,7 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
     tomorrow.setMinutes(0, 0, 0);
     setScheduleName(scheduleName || `Blast ${sourceLabel(selectedSource)}`);
-    setScheduleRunAt(tomorrow.toISOString().slice(0, 16));
+    setScheduleRunAt(toJakartaDatetimeLocal(tomorrow));
     setScheduleOpen(true);
   };
 
@@ -811,7 +835,8 @@ export default function BlastComposer({ initialContacts, initialGroups }: BlastC
     formData.append('name', scheduleName.trim() || `Blast ${sourceLabel(selectedSource)}`);
     formData.append('scheduleType', scheduleType);
     formData.append('recurrenceType', scheduleType === 'recurring' ? scheduleRecurrence : '');
-    formData.append('runAt', scheduleRunAt ? new Date(scheduleRunAt).toISOString() : '');
+    formData.append('runAt', scheduleRunAt ? jakartaDatetimeLocalToISOString(scheduleRunAt) : '');
+    formData.append('timezone', SCHEDULE_TIME_ZONE);
 
     const response = await fetch('/api/admin/scheduled-blasts', {
       method: 'POST',

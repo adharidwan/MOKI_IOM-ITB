@@ -46,6 +46,7 @@ async function parseScheduledBlastRequest(request: Request): Promise<SaveSchedul
     scheduleType: String(formData.get('scheduleType') || 'once') as ScheduledBlastScheduleType,
     recurrenceType: (String(formData.get('recurrenceType') || '') || null) as ScheduledBlastRecurrenceType | null,
     runAt: String(formData.get('runAt') || '') || null,
+    timezone: String(formData.get('timezone') || 'Asia/Jakarta'),
     saveToGroup: parseBoolean(formData.get('saveToGroup')),
     saveGroupName: String(formData.get('saveGroupName') || ''),
     media,
