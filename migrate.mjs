@@ -30,9 +30,17 @@ for (const file of files) {
     console.log(`Skipping (already run): ${file}`);
     continue;
   }
-  const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-  console.log(`Running migration: ${file}`);
-  await client.query(sql);
+  
+  const raw = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+  const statements = raw
+    .split('--> statement-breakpoint')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  
+  console.log(`Running migration: ${file} (${statements.length} statements)`);
+  for (const stmt of statements) {
+    await client.query(stmt);
+  }
   await client.query('INSERT INTO __migrations (name) VALUES ($1)', [file]);
 }
 
