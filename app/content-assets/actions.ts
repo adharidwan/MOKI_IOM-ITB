@@ -47,6 +47,13 @@ export interface SaveContentAssetProjectResult extends ContentAssetActionResult 
   project?: ContentAssetProject;
 }
 
+export interface CreateContentAssetUrlInput {
+  project_id: string;
+  url: string;
+  name?: string;
+  notes?: string;
+}
+
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 const ALLOWED_MIME_PREFIXES = ['image/', 'video/'];
 
@@ -74,6 +81,29 @@ function normalizeTagNames(values: string[]): string[] {
   });
 
   return Array.from(byKey.values());
+}
+
+function normalizeAssetUrl(value: string): string {
+  const normalized = String(value || '').trim();
+  let url: URL;
+
+  try {
+    url = new URL(normalized);
+  } catch {
+    throw new Error('URL asset tidak valid. Gunakan URL lengkap dengan http:// atau https://.');
+  }
+
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('URL asset harus menggunakan http:// atau https://.');
+  }
+
+  return url.toString();
+}
+
+function defaultNameFromUrl(value: string): string {
+  const url = new URL(value);
+  const lastPath = url.pathname.split('/').filter(Boolean).pop();
+  return decodeURIComponent(lastPath || url.hostname);
 }
 
 export async function createContentAssetProjectAction(formData: FormData): Promise<ContentAssetActionResult & { projectId?: string }> {
@@ -172,6 +202,46 @@ export async function uploadContentAssetAction(formData: FormData): Promise<Cont
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Gagal menyimpan asset.',
+    };
+  }
+}
+
+export async function createContentAssetUrlAction(input: CreateContentAssetUrlInput): Promise<SaveContentAssetResult> {
+  try {
+    const user = await requireFeatureAccess('content-assets');
+    const projectId = normalizeText(input.project_id || null);
+    const project = await getContentAssetProject(projectId);
+    const projectName = project?.project_name || '';
+    const sourceUrl = normalizeAssetUrl(input.url);
+    const originalFilename = normalizeText(input.name || null) || defaultNameFromUrl(sourceUrl);
+    const notes = normalizeText(input.notes || null);
+
+    if (!projectName) {
+      return { success: false, error: 'Project asset tidak ditemukan.' };
+    }
+
+    const asset = await createContentAsset({
+      projectId,
+      sourceType: 'url',
+      sourceUrl,
+      uploader: user.name || user.email || user.sub,
+      uploaderEmail: user.email,
+      projectName,
+      originalFilename,
+      storageBucket: null,
+      storagePath: null,
+      mimeType: 'text/uri-list',
+      fileSize: 0,
+      notes: notes || null,
+    });
+
+    revalidatePath('/content-assets');
+    revalidatePath(`/content-assets/${projectId}`);
+    return { success: true, asset };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Gagal menyimpan URL asset.',
     };
   }
 }
