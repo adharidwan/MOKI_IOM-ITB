@@ -13,6 +13,7 @@ const BOT_MEMORY_BYTES = parseMemoryBytes(process.env.WHATSAPP_BOT_MEMORY_LIMIT 
 const BOT_NANO_CPUS = Math.floor(Number(process.env.WHATSAPP_BOT_CPUS || 1) * 1_000_000_000);
 const INSTANCE_ID_PATTERN = /^[a-z0-9_-]+$/;
 const lastLifecycleActionAt = new Map();
+let botNetworkingConfigPromise = null;
 
 if (!TOKEN) {
   throw new Error('WHATSAPP_ORCHESTRATOR_TOKEN is required. Refusing to start without token auth.');
@@ -68,6 +69,10 @@ function containerNameFor(instanceId) {
 
 function authVolumeFor(instanceId) {
   return `iom4_bot_auth_${instanceId}`;
+}
+
+function currentContainerId() {
+  return process.env.HOSTNAME || '';
 }
 
 function dockerRequest(method, path, body) {
@@ -264,6 +269,50 @@ async function inspectContainer(instanceId) {
   return result.body;
 }
 
+async function inspectCurrentContainer() {
+  const containerId = currentContainerId();
+
+  if (!containerId) {
+    return null;
+  }
+
+  const result = await dockerRequest('GET', `/containers/${encodeURIComponent(containerId)}/json`);
+
+  if (result.statusCode === 404) {
+    return null;
+  }
+
+  if (result.statusCode >= 400) {
+    const error = new Error(result.body?.message || 'Failed to inspect orchestrator container.');
+    error.statusCode = 502;
+    error.code = 'docker_self_inspect_failed';
+    throw error;
+  }
+
+  return result.body;
+}
+
+async function resolveBotNetworkingConfig() {
+  if (BOT_NETWORK) {
+    return null;
+  }
+
+  if (!botNetworkingConfigPromise) {
+    botNetworkingConfigPromise = inspectCurrentContainer().then((container) => {
+      const networks = container?.NetworkSettings?.Networks || {};
+      const endpoints = Object.fromEntries(
+        Object.keys(networks)
+          .filter((network) => network && !['host', 'none'].includes(network))
+          .map((network) => [network, {}]),
+      );
+
+      return Object.keys(endpoints).length ? { EndpointsConfig: endpoints } : null;
+    });
+  }
+
+  return botNetworkingConfigPromise;
+}
+
 async function listManagedContainers() {
   const filters = encodeURIComponent(JSON.stringify({
     label: ['iom4.kind=whatsapp-bot', 'iom4.managed=true'],
@@ -346,20 +395,27 @@ async function ensureContainer(instanceId, label) {
     hostConfig.NetworkMode = BOT_NETWORK;
   }
 
+  const networkingConfig = await resolveBotNetworkingConfig();
+  const createBody = {
+    Image: BOT_IMAGE,
+    Env: envArrayFor(instanceId, label),
+    HostConfig: hostConfig,
+    Labels: {
+      'iom4.managed': 'true',
+      'iom4.kind': 'whatsapp-bot',
+      'iom4.whatsapp_instance_id': instanceId,
+      'iom4.created_by': 'whatsapp-orchestrator',
+    },
+  };
+
+  if (networkingConfig) {
+    createBody.NetworkingConfig = networkingConfig;
+  }
+
   const createResult = await dockerRequest(
     'POST',
     `/containers/create?name=${encodeURIComponent(name)}`,
-    {
-      Image: BOT_IMAGE,
-      Env: envArrayFor(instanceId, label),
-      HostConfig: hostConfig,
-      Labels: {
-        'iom4.managed': 'true',
-        'iom4.kind': 'whatsapp-bot',
-        'iom4.whatsapp_instance_id': instanceId,
-        'iom4.created_by': 'whatsapp-orchestrator',
-      },
-    },
+    createBody,
   );
 
   if (createResult.statusCode >= 400) {

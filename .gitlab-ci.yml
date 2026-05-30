@@ -43,8 +43,7 @@ deploy:
         WHATSAPP_ORCHESTRATOR_ENABLED \
         WHATSAPP_ORCHESTRATOR_BASE_URL \
         WHATSAPP_ORCHESTRATOR_TOKEN \
-        WHATSAPP_BOT_IMAGE \
-        WHATSAPP_BOT_NETWORK; do
+        WHATSAPP_BOT_IMAGE; do
         if ! grep -q "^${key}=" "$CI_PROJECT_DIR/.env.local"; then
           echo "Missing required env var in $DEPLOY_ENV_FILE: ${key}"
           exit 1
