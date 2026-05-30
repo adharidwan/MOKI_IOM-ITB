@@ -2,11 +2,9 @@ FROM node:20-bookworm-slim AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PUPPETEER_SKIP_DOWNLOAD=true
-
 FROM base AS deps
 COPY package*.json ./
 RUN npm ci --no-audit --fund=false
-
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -35,7 +33,6 @@ ENV SSO_ALLOWED_ROLES=$SSO_ALLOWED_ROLES
 ENV SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY
 ENV DATABASE_URL=$DATABASE_URL
 RUN npm run build
-
 FROM mcr.microsoft.com/playwright:v1.59.1-noble AS runner
 WORKDIR /app
 ENV NODE_ENV=production
@@ -49,7 +46,9 @@ RUN apt-get update \
 COPY --from=builder --chown=pwuser:pwuser /app/.next/standalone ./
 COPY --from=builder --chown=pwuser:pwuser /app/.next/static ./.next/static
 COPY --from=builder --chown=pwuser:pwuser /app/public ./public
+COPY --from=builder --chown=pwuser:pwuser /app/drizzle ./drizzle
+COPY --from=builder --chown=pwuser:pwuser /app/migrate.mjs ./migrate.mjs
 RUN mkdir -p /app/.cache && chown -R pwuser:pwuser /app/.cache
 USER pwuser
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "node migrate.mjs && node server.js"]
