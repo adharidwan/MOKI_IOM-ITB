@@ -11,6 +11,8 @@ import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
+import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
+import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 import Autocomplete, { createFilterOptions } from '@mui/material/Autocomplete';
@@ -42,6 +44,7 @@ import {
 } from '../../lib/adminPalette';
 import type { ContentAsset, ContentAssetProject, ContentTag } from '../../lib/types';
 import {
+  createContentAssetUrlAction,
   deleteContentAssetAction,
   saveContentAssetTagsAction,
   type ContentAssetTagFormState,
@@ -101,6 +104,7 @@ const CONTENT_TAG_TOOLTIP_SLOT_PROPS = {
 } as const;
 const tagFilter = createFilterOptions<TagOption>();
 const EMPTY_ASSET_FORM: ContentAssetTagFormState = { id: '', original_filename: '', notes: '', tag_ids: [], new_tag_names: [] };
+const EMPTY_URL_FORM = { url: '', name: '', notes: '' };
 
 function setOptionalParam(params: URLSearchParams, key: string, value: string) {
   if (value) {
@@ -193,6 +197,18 @@ function formatSelectedFiles(files: readonly File[]): string {
   return `${files.length} file siap upload`;
 }
 
+function getUrlHost(value: string | null): string {
+  if (!value) {
+    return 'External URL';
+  }
+
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return 'External URL';
+  }
+}
+
 function MetricTile({ label, value }: { label: string; value: number | string }) {
   return (
     <Box sx={adminMetricTileSx}>
@@ -207,6 +223,18 @@ function MetricTile({ label, value }: { label: string; value: number | string })
 }
 
 function AssetPreview({ asset }: { asset: ContentAsset }) {
+  if (asset.source_type === 'url') {
+    return (
+      <Box sx={{ minHeight: 150, aspectRatio: '16 / 10', display: 'grid', placeItems: 'center', backgroundColor: adminPalette.brandSoft }}>
+        <Stack spacing={0.75} alignItems="center" sx={{ px: 2, textAlign: 'center' }}>
+          <LinkRoundedIcon sx={{ color: adminPalette.brand, fontSize: 34 }} />
+          <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: adminPalette.brandDark }}>{getUrlHost(asset.source_url)}</Typography>
+          <Typography sx={{ maxWidth: '100%', fontSize: '0.72rem', color: adminPalette.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asset.source_url}</Typography>
+        </Stack>
+      </Box>
+    );
+  }
+
   const isVideo = asset.mime_type.startsWith('video/');
   const previewUrl = `/api/admin/content-assets/${asset.id}/download`;
 
@@ -243,17 +271,20 @@ export default function ContentAssetDetailWorkspace({
   const [tagOptions, setTagOptions] = useState<TagOption[]>(tags);
   const [filters, setFilters] = useState({ search: currentSearch, contentType: currentContentType, tagIds: currentTagIds });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [urlForm, setUrlForm] = useState(EMPTY_URL_FORM);
   const [dropActive, setDropActive] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ContentAsset | null>(null);
   const [editAssetTarget, setEditAssetTarget] = useState<ContentAsset | null>(null);
   const [editAssetForm, setEditAssetForm] = useState<ContentAssetTagFormState>(EMPTY_ASSET_FORM);
   const [selectedAssetTags, setSelectedAssetTags] = useState<TagOption[]>([]);
   const [isUploading, startUploadTransition] = useTransition();
+  const [isSavingUrl, startSaveUrlTransition] = useTransition();
   const [isSavingAsset, startSaveAssetTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
 
-  const imageCount = assets.filter((asset) => asset.mime_type.startsWith('image/')).length;
-  const videoCount = assets.filter((asset) => asset.mime_type.startsWith('video/')).length;
+  const imageCount = assets.filter((asset) => asset.source_type === 'file' && asset.mime_type.startsWith('image/')).length;
+  const videoCount = assets.filter((asset) => asset.source_type === 'file' && asset.mime_type.startsWith('video/')).length;
+  const linkCount = assets.filter((asset) => asset.source_type === 'url').length;
   const totalSize = assets.reduce((total, asset) => total + asset.file_size, 0);
   const selectedFilterTags = useMemo(
     () => tagOptions.filter((tag) => filters.tagIds.includes(tag.id)),
@@ -402,6 +433,27 @@ export default function ContentAssetDetailWorkspace({
     });
   }
 
+  function handleSaveUrl() {
+    setFlash(null);
+    startSaveUrlTransition(async () => {
+      const result = await createContentAssetUrlAction({
+        project_id: project.id,
+        url: urlForm.url,
+        name: urlForm.name,
+        notes: urlForm.notes,
+      });
+
+      if (!result.success) {
+        setFlash({ severity: 'error', message: result.error || 'Gagal menyimpan URL asset.' });
+        return;
+      }
+
+      setUrlForm(EMPTY_URL_FORM);
+      setFlash({ severity: 'success', message: 'URL asset berhasil disimpan.' });
+      router.refresh();
+    });
+  }
+
   function handleDelete() {
     if (!deleteTarget) {
       return;
@@ -489,11 +541,32 @@ export default function ContentAssetDetailWorkspace({
             <MetricTile label="Assets" value={assets.length} />
             <MetricTile label="Images" value={imageCount} />
             <MetricTile label="Videos" value={videoCount} />
+            <MetricTile label="Links" value={linkCount} />
             <MetricTile label="Size" value={formatBytes(totalSize)} />
           </Stack>
 
           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
             <TagChips tags={project.tags} />
+          </Stack>
+        </Stack>
+      </Paper>
+
+      <Paper elevation={0} sx={adminPanelSx}>
+        <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
+          <Stack direction="row" spacing={0.8} alignItems="center">
+            <LinkRoundedIcon sx={{ color: adminPalette.brand }} />
+            <Box>
+              <Typography sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Add URL Asset</Typography>
+              <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>Simpan link eksternal tanpa preview atau upload file.</Typography>
+            </Box>
+          </Stack>
+          <Stack direction={{ xs: 'column', lg: 'row' }} spacing={1.2} alignItems={{ xs: 'stretch', lg: 'flex-start' }}>
+            <TextField label="URL" value={urlForm.url} onChange={(event) => setUrlForm((current) => ({ ...current, url: event.target.value }))} size="small" placeholder="https://..." disabled={isSavingUrl} sx={{ flex: 1.2 }} />
+            <TextField label="Nama asset" value={urlForm.name} onChange={(event) => setUrlForm((current) => ({ ...current, name: event.target.value }))} size="small" disabled={isSavingUrl} sx={{ flex: 0.8 }} />
+            <TextField label="Notes" value={urlForm.notes} onChange={(event) => setUrlForm((current) => ({ ...current, notes: event.target.value }))} size="small" disabled={isSavingUrl} sx={{ flex: 1 }} />
+            <Button variant="contained" startIcon={<LinkRoundedIcon />} onClick={handleSaveUrl} disabled={isSavingUrl || !urlForm.url.trim()} sx={{ minHeight: 40, borderRadius: 2, backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
+              {isSavingUrl ? 'Saving...' : 'Save URL'}
+            </Button>
           </Stack>
         </Stack>
       </Paper>
@@ -604,6 +677,7 @@ export default function ContentAssetDetailWorkspace({
             <MenuItem value="">All assets</MenuItem>
             <MenuItem value="image">Image</MenuItem>
             <MenuItem value="video">Video</MenuItem>
+            <MenuItem value="url">URL</MenuItem>
           </TextField>
           <Autocomplete
             multiple
@@ -648,11 +722,19 @@ export default function ContentAssetDetailWorkspace({
                       <Typography sx={{ mt: 0.3, fontSize: '0.76rem', color: adminPalette.textMuted }}>{formatDateTime(asset.created_at)}</Typography>
                     </Box>
                     <Stack direction="row" spacing={0.25}>
-                      <Tooltip title="Download asset">
-                        <IconButton component="a" href={`/api/admin/content-assets/${asset.id}/download`} size="small" sx={{ color: adminPalette.textMuted }}>
-                          <DownloadRoundedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      {asset.source_type === 'url' ? (
+                        <Tooltip title="Open URL">
+                          <IconButton component="a" href={asset.source_url || undefined} target="_blank" rel="noopener noreferrer" size="small" sx={{ color: adminPalette.textMuted }}>
+                            <OpenInNewRoundedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip title="Download asset">
+                          <IconButton component="a" href={`/api/admin/content-assets/${asset.id}/download`} size="small" sx={{ color: adminPalette.textMuted }}>
+                            <DownloadRoundedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                       <Tooltip title="Edit asset">
                         <IconButton size="small" onClick={() => openEditAsset(asset)} sx={{ color: adminPalette.textMuted }}>
                           <EditRoundedIcon fontSize="small" />
@@ -666,8 +748,8 @@ export default function ContentAssetDetailWorkspace({
                     </Stack>
                   </Stack>
                   <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
-                    <Chip size="small" label={asset.mime_type.startsWith('video/') ? 'Video' : 'Image'} sx={{ height: 22, fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} />
-                    <Chip size="small" label={formatBytes(asset.file_size)} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} />
+                    <Chip size="small" label={asset.source_type === 'url' ? 'URL' : asset.mime_type.startsWith('video/') ? 'Video' : 'Image'} sx={{ height: 22, fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} />
+                    {asset.source_type === 'url' ? <Chip size="small" label={getUrlHost(asset.source_url)} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} /> : <Chip size="small" label={formatBytes(asset.file_size)} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} />}
                   </Stack>
                   <Box>
                     <Typography sx={{ fontSize: '0.69rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: adminPalette.textMuted }}>Uploaded by</Typography>
@@ -675,6 +757,7 @@ export default function ContentAssetDetailWorkspace({
                     {asset.uploader_email ? <Typography sx={{ fontSize: '0.72rem', color: adminPalette.textMuted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asset.uploader_email}</Typography> : null}
                   </Box>
                   <TagChips tags={asset.tags} />
+                  {asset.source_type === 'url' && asset.source_url ? <Typography component="a" href={asset.source_url} target="_blank" rel="noopener noreferrer" sx={{ fontSize: '0.78rem', color: adminPalette.brand, fontWeight: 700, textDecoration: 'none', overflowWrap: 'anywhere' }}>{asset.source_url}</Typography> : null}
                   {asset.notes ? <Typography sx={{ fontSize: '0.8rem', color: adminPalette.textSecondary }}>{asset.notes}</Typography> : null}
                 </Stack>
               </Paper>
@@ -687,7 +770,9 @@ export default function ContentAssetDetailWorkspace({
         <DialogTitle sx={{ fontWeight: 800, color: adminPalette.textPrimary }}>Delete asset?</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: adminPalette.textSecondary }}>
-            {`File "${deleteTarget?.original_filename || ''}" akan dihapus dari database dan Supabase Storage.`}
+            {deleteTarget?.source_type === 'url'
+              ? `URL asset "${deleteTarget?.original_filename || ''}" akan dihapus dari database.`
+              : `File "${deleteTarget?.original_filename || ''}" akan dihapus dari database dan Supabase Storage.`}
           </Typography>
         </DialogContent>
         <DialogActions sx={{ p: 2.5, pt: 1 }}>

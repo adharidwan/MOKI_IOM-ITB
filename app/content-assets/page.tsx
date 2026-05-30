@@ -50,9 +50,11 @@ export default async function ContentAssetsPage({
           ? project.image_count > 0
           : assetFilter === 'video'
             ? project.video_count > 0
-            : assetFilter === 'empty'
-              ? project.asset_count === 0
-              : true;
+            : assetFilter === 'url'
+              ? project.link_count > 0
+              : assetFilter === 'empty'
+                ? project.asset_count === 0
+                : true;
       const matchesTags = !normalizedTagIds.size || project.tags.some((tag) => normalizedTagIds.has(tag.id));
 
       return matchesSearch && matchesAssets && matchesTags;

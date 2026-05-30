@@ -10,6 +10,7 @@ import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import InsertPhotoRoundedIcon from '@mui/icons-material/InsertPhotoRounded';
+import LinkRoundedIcon from '@mui/icons-material/LinkRounded';
 import MovieRoundedIcon from '@mui/icons-material/MovieRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -229,7 +230,7 @@ function ProjectPreview({ asset }: { asset: ContentAsset | null }) {
   if (!asset?.storage_path) {
     return (
       <Box sx={{ width: 86, height: 62, borderRadius: 1.5, display: 'grid', placeItems: 'center', backgroundColor: adminPalette.surfaceSoft, border: `1px solid ${adminPalette.border}` }}>
-        <FolderRoundedIcon sx={{ color: adminPalette.textSubtle }} />
+        {asset?.source_type === 'url' ? <LinkRoundedIcon sx={{ color: adminPalette.brand }} /> : <FolderRoundedIcon sx={{ color: adminPalette.textSubtle }} />}
       </Box>
     );
   }
@@ -282,6 +283,7 @@ export default function ContentAssetsWorkspace({
   const totalAssets = projects.reduce((total, project) => total + project.asset_count, 0);
   const totalImages = projects.reduce((total, project) => total + project.image_count, 0);
   const totalVideos = projects.reduce((total, project) => total + project.video_count, 0);
+  const totalLinks = projects.reduce((total, project) => total + project.link_count, 0);
   const selectedFilterTags = useMemo(
     () => tagOptions.filter((tag) => filters.tagIds.includes(tag.id)),
     [filters.tagIds, tagOptions],
@@ -564,6 +566,7 @@ export default function ContentAssetsWorkspace({
             <MetricTile label="Assets" value={totalAssets} />
             <MetricTile label="Images" value={totalImages} />
             <MetricTile label="Videos" value={totalVideos} />
+            <MetricTile label="Links" value={totalLinks} />
           </Stack>
         </Stack>
       </Paper>
@@ -582,6 +585,7 @@ export default function ContentAssetsWorkspace({
             <MenuItem value="">All projects</MenuItem>
             <MenuItem value="image">Has image</MenuItem>
             <MenuItem value="video">Has video</MenuItem>
+            <MenuItem value="url">Has URL</MenuItem>
             <MenuItem value="empty">Empty project</MenuItem>
           </TextField>
           <Autocomplete
@@ -654,6 +658,7 @@ export default function ContentAssetsWorkspace({
                       <Chip size="small" label={`${project.asset_count} file`} sx={{ height: 22, fontWeight: 700, color: adminPalette.brandDark, backgroundColor: adminPalette.brandSoft }} />
                       <Chip size="small" icon={<InsertPhotoRoundedIcon />} label={project.image_count} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} />
                       <Chip size="small" icon={<MovieRoundedIcon />} label={project.video_count} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} />
+                      <Chip size="small" icon={<LinkRoundedIcon />} label={project.link_count} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} />
                       <Chip size="small" label={formatBytes(project.total_file_size)} variant="outlined" sx={{ height: 22, fontWeight: 700, borderColor: adminPalette.border }} />
                     </Stack>
                   </TableCell>
