@@ -51,6 +51,7 @@ export default async function ContentAssetDetailPage({ params, searchParams }: C
   assets = assets.filter((asset) => {
     const matchesSearch = !normalizedSearch || [
       asset.original_filename,
+      asset.source_url || '',
       asset.notes || '',
       asset.uploader,
       asset.uploader_email || '',
@@ -58,10 +59,12 @@ export default async function ContentAssetDetailPage({ params, searchParams }: C
     ].some((value) => value.toLowerCase().includes(normalizedSearch));
     const matchesContentType =
       contentType === 'image'
-        ? asset.mime_type.startsWith('image/')
+        ? asset.source_type === 'file' && asset.mime_type.startsWith('image/')
         : contentType === 'video'
-          ? asset.mime_type.startsWith('video/')
-          : true;
+          ? asset.source_type === 'file' && asset.mime_type.startsWith('video/')
+          : contentType === 'url'
+            ? asset.source_type === 'url'
+            : true;
     const matchesTags = !normalizedTagIds.size || asset.tags.some((tag) => normalizedTagIds.has(tag.id));
 
     return matchesSearch && matchesContentType && matchesTags;
@@ -71,7 +74,7 @@ export default async function ContentAssetDetailPage({ params, searchParams }: C
     <AdminFeatureShell
       badge="Asset Management"
       title={project.project_name}
-      description="Upload dan preview kumpulan asset image/video untuk project ini."
+      description="Upload file atau simpan URL asset untuk project ini."
       currentPath="/content-assets"
     >
       <ContentAssetDetailWorkspace

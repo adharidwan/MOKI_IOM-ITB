@@ -23,6 +23,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ asse
       return NextResponse.json({ error: 'Asset tidak ditemukan.' }, { status: 404 });
     }
 
+    if (asset.source_type === 'url') {
+      return NextResponse.json({ error: 'Asset URL eksternal tidak memiliki file untuk didownload.' }, { status: 400 });
+    }
+
     const file = await downloadContentAssetObject(asset);
     const fileName = sanitizeDownloadName(asset.original_filename, `asset-${asset.id}`);
 

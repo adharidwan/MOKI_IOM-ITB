@@ -13,12 +13,14 @@ const PROJECT_NAME_UNIQUE_CONSTRAINT = 'content_asset_projects_project_name_key'
 
 export interface ContentAssetInput {
   projectId?: string | null;
+  sourceType?: 'file' | 'url';
+  sourceUrl?: string | null;
   uploader: string;
   uploaderEmail?: string | null;
   projectName: string;
   originalFilename: string;
-  storageBucket: string;
-  storagePath: string;
+  storageBucket?: string | null;
+  storagePath?: string | null;
   mimeType: string;
   fileSize: number;
   notes?: string | null;
@@ -99,10 +101,17 @@ function toContentTags(value: unknown): ContentTag[] {
 }
 
 function toContentAsset(record: RawRecord, signedUrl: string | null = null): ContentAsset {
+  const sourceType = record.source_type === 'url' ? 'url' : 'file';
+
   return {
     id: String(record.id || ''),
     created_at: String(record.created_at || ''),
     updated_at: String(record.updated_at || ''),
+    source_type: sourceType,
+    source_url:
+      record.source_url === null || record.source_url === undefined
+        ? null
+        : String(record.source_url),
     uploader: String(record.uploader || ''),
     uploader_email:
       record.uploader_email === null || record.uploader_email === undefined
@@ -114,8 +123,14 @@ function toContentAsset(record: RawRecord, signedUrl: string | null = null): Con
         : String(record.project_id),
     project_name: String(record.project_name || ''),
     original_filename: String(record.original_filename || ''),
-    storage_bucket: String(record.storage_bucket || CONTENT_ASSET_BUCKET),
-    storage_path: String(record.storage_path || ''),
+    storage_bucket:
+      record.storage_bucket === null || record.storage_bucket === undefined
+        ? null
+        : String(record.storage_bucket || CONTENT_ASSET_BUCKET),
+    storage_path:
+      record.storage_path === null || record.storage_path === undefined
+        ? null
+        : String(record.storage_path),
     mime_type: String(record.mime_type || ''),
     file_size: Number(record.file_size || 0),
     notes: record.notes === null || record.notes === undefined ? null : String(record.notes),
@@ -139,6 +154,7 @@ function toContentAssetProject(record: RawRecord, previewAsset: ContentAsset | n
     asset_count: Number(record.asset_count || 0),
     image_count: Number(record.image_count || 0),
     video_count: Number(record.video_count || 0),
+    link_count: Number(record.link_count || 0),
     total_file_size: Number(record.total_file_size || 0),
     latest_asset_at:
       record.latest_asset_at === null || record.latest_asset_at === undefined
@@ -150,6 +166,10 @@ function toContentAssetProject(record: RawRecord, previewAsset: ContentAsset | n
 }
 
 async function createSignedUrl(bucket: string, path: string): Promise<string | null> {
+  if (!bucket || !path) {
+    return null;
+  }
+
   return createObjectSignedUrl(bucket, path, 60 * 60);
 }
 
@@ -171,6 +191,8 @@ async function queryContentAssets(whereSql = sql`true`, limit = 200): Promise<Ra
       content_assets.id,
       content_assets.created_at::text,
       content_assets.updated_at::text,
+      content_assets.source_type,
+      content_assets.source_url,
       content_assets.uploader,
       content_assets.uploader_email,
       content_assets.project_id,
@@ -256,8 +278,9 @@ export async function listContentAssetProjects(): Promise<ContentAssetProject[]>
       {
         ...project,
         asset_count: projectAssets.length,
-        image_count: projectAssets.filter((asset) => asset.mime_type.startsWith('image/')).length,
-        video_count: projectAssets.filter((asset) => asset.mime_type.startsWith('video/')).length,
+        image_count: projectAssets.filter((asset) => asset.source_type === 'file' && asset.mime_type.startsWith('image/')).length,
+        video_count: projectAssets.filter((asset) => asset.source_type === 'file' && asset.mime_type.startsWith('video/')).length,
+        link_count: projectAssets.filter((asset) => asset.source_type === 'url').length,
         total_file_size: projectAssets.reduce((total, asset) => total + asset.file_size, 0),
         latest_asset_at: latestAsset?.created_at || null,
       },
@@ -287,8 +310,9 @@ export async function getContentAssetProject(id: string): Promise<ContentAssetPr
     {
       ...project,
       asset_count: assets.length,
-      image_count: assets.filter((asset) => asset.mime_type.startsWith('image/')).length,
-      video_count: assets.filter((asset) => asset.mime_type.startsWith('video/')).length,
+      image_count: assets.filter((asset) => asset.source_type === 'file' && asset.mime_type.startsWith('image/')).length,
+      video_count: assets.filter((asset) => asset.source_type === 'file' && asset.mime_type.startsWith('video/')).length,
+      link_count: assets.filter((asset) => asset.source_type === 'url').length,
       total_file_size: assets.reduce((total, asset) => total + asset.file_size, 0),
       latest_asset_at: latestAsset?.created_at || null,
     },
@@ -329,6 +353,10 @@ export async function getContentAsset(id: string): Promise<ContentAsset | null> 
 }
 
 export async function downloadContentAssetObject(asset: ContentAsset): Promise<Blob> {
+  if (asset.source_type === 'url') {
+    throw new Error('Asset URL eksternal tidak memiliki file untuk didownload.');
+  }
+
   if (!asset.storage_bucket || !asset.storage_path) {
     throw new Error('Lokasi storage asset tidak valid.');
   }
@@ -362,9 +390,21 @@ export async function createContentAssetProject(input: ContentAssetProjectInput)
 }
 
 export async function createContentAsset(input: ContentAssetInput): Promise<ContentAsset> {
+  const sourceType = input.sourceType === 'url' ? 'url' : 'file';
+
+  if (sourceType === 'file' && (!input.storageBucket || !input.storagePath)) {
+    throw new Error('Lokasi storage asset wajib diisi.');
+  }
+
+  if (sourceType === 'url' && !input.sourceUrl) {
+    throw new Error('URL asset wajib diisi.');
+  }
+
   const result = await db.execute(sql`
     insert into public.content_assets (
       project_id,
+      source_type,
+      source_url,
       uploader,
       uploader_email,
       project_name,
@@ -378,12 +418,14 @@ export async function createContentAsset(input: ContentAssetInput): Promise<Cont
     )
     values (
       ${input.projectId || null},
+      ${sourceType},
+      ${input.sourceUrl || null},
       ${input.uploader},
       ${input.uploaderEmail || null},
       ${input.projectName},
       ${input.originalFilename},
-      ${input.storageBucket},
-      ${input.storagePath},
+      ${input.storageBucket || null},
+      ${input.storagePath || null},
       ${input.mimeType},
       ${input.fileSize},
       ${input.notes || null},
@@ -393,6 +435,8 @@ export async function createContentAsset(input: ContentAssetInput): Promise<Cont
       id,
       created_at::text,
       updated_at::text,
+      source_type,
+      source_url,
       uploader,
       uploader_email,
       project_id,
@@ -412,7 +456,7 @@ export async function createContentAsset(input: ContentAssetInput): Promise<Cont
 
   return toContentAsset(
     { ...record, tags: [] },
-    await createSignedUrl(input.storageBucket, input.storagePath),
+    sourceType === 'file' ? await createSignedUrl(input.storageBucket || '', input.storagePath || '') : null,
   );
 }
 
@@ -558,7 +602,9 @@ export async function deleteContentAsset(id: string): Promise<void> {
     where id = ${normalizedId}
   `);
 
-  await removeObject(asset.storage_bucket || CONTENT_ASSET_BUCKET, asset.storage_path);
+  if (asset.source_type === 'file' && asset.storage_path) {
+    await removeObject(asset.storage_bucket || CONTENT_ASSET_BUCKET, asset.storage_path);
+  }
 }
 
 export async function deleteContentAssetProject(id: string): Promise<void> {
@@ -575,10 +621,11 @@ export async function deleteContentAssetProject(id: string): Promise<void> {
   const assets = await listContentAssetsByProject(normalizedId);
   const storagePathsByBucket = new Map<string, string[]>();
   assets.forEach((asset) => {
-    if (!asset.storage_path) {
+    if (asset.source_type !== 'file' || !asset.storage_path) {
       return;
     }
-    storagePathsByBucket.set(asset.storage_bucket, [...(storagePathsByBucket.get(asset.storage_bucket) || []), asset.storage_path]);
+    const bucket = asset.storage_bucket || CONTENT_ASSET_BUCKET;
+    storagePathsByBucket.set(bucket, [...(storagePathsByBucket.get(bucket) || []), asset.storage_path]);
   });
 
   await db.execute(sql`

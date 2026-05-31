@@ -82,13 +82,15 @@ export interface ContentAsset {
   id: string;
   created_at: string;
   updated_at: string;
+  source_type: 'file' | 'url';
+  source_url: string | null;
   uploader: string;
   uploader_email: string | null;
   project_id: string | null;
   project_name: string;
   original_filename: string;
-  storage_bucket: string;
-  storage_path: string;
+  storage_bucket: string | null;
+  storage_path: string | null;
   mime_type: string;
   file_size: number;
   notes: string | null;
@@ -107,6 +109,7 @@ export interface ContentAssetProject {
   asset_count: number;
   image_count: number;
   video_count: number;
+  link_count: number;
   total_file_size: number;
   latest_asset_at: string | null;
   tags: ContentTag[];

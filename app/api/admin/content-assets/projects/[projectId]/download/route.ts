@@ -67,8 +67,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
 
     const usedNames = new Set<string>();
     const zipEntries: ZipFileEntry[] = [];
+    const externalLinks: string[] = [];
 
     for (const asset of assets) {
+      if (asset.source_type === 'url') {
+        externalLinks.push(`${asset.original_filename}\n${asset.source_url || ''}${asset.notes ? `\nNotes: ${asset.notes}` : ''}`);
+        continue;
+      }
+
       const file = await downloadContentAssetObject(asset);
       const fallbackName = `asset-${asset.id}${extensionFromMimeType(asset.mime_type)}`;
       const safeName = sanitizeDownloadName(asset.original_filename, fallbackName);
@@ -77,6 +83,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
       zipEntries.push({
         name: zipName,
         data: new Uint8Array(await file.arrayBuffer()),
+      });
+    }
+
+    if (externalLinks.length) {
+      zipEntries.push({
+        name: ensureUniqueName('external-links.txt', usedNames),
+        data: new TextEncoder().encode(externalLinks.join('\n\n---\n\n')),
       });
     }
 
