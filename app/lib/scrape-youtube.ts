@@ -76,6 +76,8 @@ async function fetchYouTubeChannelId(baseUrl: string): Promise<string> {
     "0",
     "--dump-single-json",
     "--no-warnings",
+    "--js-runtimes",
+    "node",
   ]);
   const data = JSON.parse(stdout) as YouTubeScrapePayload;
   const channelId = data.channel_id || data.id || "";
@@ -208,6 +210,8 @@ export async function scrape_youtube(
       `1:${maxVideos}`,
       "--dump-single-json",
       "--no-warnings",
+      "--js-runtimes",
+      "node",
     ];
 
     console.log(`[YT scrape] yt-dlp args:`, args);

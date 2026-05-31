@@ -389,6 +389,8 @@ async function scrapeYoutubeLinkJson(link: string, cookiesPath = ''): Promise<st
     '--no-warnings',
     '--quiet',
     '--ignore-no-formats-error',
+    '--js-runtimes',
+    'node',
     '--format',
     'best[vcodec!=none][acodec!=none]/best',
     ...(cookiesPath ? ['--cookies', cookiesPath] : []),

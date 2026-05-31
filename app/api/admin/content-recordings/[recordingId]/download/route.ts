@@ -556,6 +556,8 @@ function getYtDlpArgs(
       '--no-playlist',
       '--referer',
       'https://www.youtube.com/',
+      '--js-runtimes',
+      'node',
       ...(cookiesPath ? ['--cookies', cookiesPath] : []),
       '--format',
       'best[vcodec!=none][acodec!=none]/best',
