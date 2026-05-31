@@ -249,7 +249,7 @@ export default function AdminFeatureShell({
                 letterSpacing: "-0.01em",
               }}
             >
-              OKI IOM
+              MOKI ITB
             </Typography>
           </Stack>
 
@@ -317,7 +317,7 @@ export default function AdminFeatureShell({
                     color: "rgba(255,255,255,0.72)",
                   }}
                 >
-                  {userEmail || roles.join(", ") || "IOM SSO"}
+                  {userEmail || roles.join(", ") || "MOKI ITB SSO"}
                 </Typography>
               </Box>
               <Button

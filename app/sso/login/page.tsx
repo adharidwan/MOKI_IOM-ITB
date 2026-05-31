@@ -132,7 +132,7 @@ export default function SsoLoginPage() {
           }}
         >
           <Typography sx={{ fontSize: '0.95rem', fontWeight: 700 }}>
-            OKI IOM
+            MOKI ITB
           </Typography>
           <Box
             sx={{
@@ -144,7 +144,7 @@ export default function SsoLoginPage() {
             }}
           >
             <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: 'inherit' }}>
-              IOM SSO
+              MOKI ITB SSO
             </Typography>
           </Box>
         </Box>
@@ -186,7 +186,7 @@ export default function SsoLoginPage() {
                     color: adminPalette.textPrimary,
                   }}
                 >
-                  Menyambungkan ke IOM SSO
+                  Menyambungkan ke MOKI ITB SSO
                 </Typography>
                 <Typography
                   sx={{

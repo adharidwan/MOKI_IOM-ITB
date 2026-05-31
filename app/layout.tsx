@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "IOM4 Messaging Dashboard",
+  title: "MOKI ITB",
   description: "Kelola kontak dan kirim blast message dengan alur yang sederhana.",
 };
 
