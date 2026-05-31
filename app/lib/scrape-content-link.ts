@@ -1,11 +1,16 @@
 import 'server-only';
 
+import { mkdtemp, rm } from 'fs/promises';
+import os from 'os';
+import path from 'path';
+
 import { chromium } from 'playwright-core';
 
 import { getPlaywrightLaunchOptions } from './chromium-path';
 import type { ContentRecordingInput } from './api';
 import { scrape_x } from './scrape-x';
 import type { ContentRecordingPlatform } from './types';
+import { resolveYtDlpCookies } from './yt-dlp-cookies';
 import { createYtDlpClient } from './yt-dlp';
 
 const USER_AGENT =
@@ -366,34 +371,68 @@ function extractXUsername(link: string): string {
   return cleanText(pathSegments[statusIndex - 1].replace(/^@/, ''));
 }
 
-async function scrapeYoutubeLink(link: string): Promise<ScrapedContentDraft> {
+function shouldRetryYoutubeMetadataWithoutCookies(error: unknown, cookiesPath: string): boolean {
+  if (!cookiesPath) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Requested format is not available');
+}
+
+async function scrapeYoutubeLinkJson(link: string, cookiesPath = ''): Promise<string> {
   const ytDlp = createYtDlpClient();
-  const stdout = await ytDlp.execPromise([
+  return ytDlp.execPromise([
     link,
     '--dump-single-json',
     '--no-playlist',
     '--no-warnings',
     '--quiet',
+    '--ignore-no-formats-error',
+    '--format',
+    'best[vcodec!=none][acodec!=none]/best',
+    ...(cookiesPath ? ['--cookies', cookiesPath] : []),
   ]);
+}
 
-  const data = JSON.parse(stdout);
-  const normalizedLink = pickFirstNonEmpty(data.webpage_url, data.original_url, link);
-  const uploadDate =
-    toIsoDate(data.upload_date) ||
-    toIsoDate(data.timestamp) ||
-    toIsoDate(data.release_timestamp);
+async function scrapeYoutubeLink(link: string): Promise<ScrapedContentDraft> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'youtube-yt-dlp-'));
 
-  return {
-    title: cleanText(data.title) || 'Untitled Video',
-    platform: 'youtube',
-    caption: cleanText(data.description) || null,
-    content_type: String(data.webpage_url || link).includes('/shorts/') ? 'short' : 'video',
-    upload_date: uploadDate,
-    link: normalizedLink,
-    source_post_id: cleanText(data.id) || extractSourcePostId(normalizedLink, 'youtube'),
-    thumbnail_url: cleanText(data.thumbnail) || cleanText(data.thumbnails?.[0]?.url) || null,
-    media_urls: normalizeMediaUrls([data.thumbnail, data.thumbnails?.[0]?.url]),
-  };
+  try {
+    const cookies = await resolveYtDlpCookies('youtube', tempDir);
+    let stdout = '';
+
+    try {
+      stdout = await scrapeYoutubeLinkJson(link, cookies.path);
+    } catch (error) {
+      if (!shouldRetryYoutubeMetadataWithoutCookies(error, cookies.path)) {
+        throw error;
+      }
+
+      stdout = await scrapeYoutubeLinkJson(link);
+    }
+
+    const data = JSON.parse(stdout);
+    const normalizedLink = pickFirstNonEmpty(data.webpage_url, data.original_url, link);
+    const uploadDate =
+      toIsoDate(data.upload_date) ||
+      toIsoDate(data.timestamp) ||
+      toIsoDate(data.release_timestamp);
+
+    return {
+      title: cleanText(data.title) || 'Untitled Video',
+      platform: 'youtube',
+      caption: cleanText(data.description) || null,
+      content_type: String(data.webpage_url || link).includes('/shorts/') ? 'short' : 'video',
+      upload_date: uploadDate,
+      link: normalizedLink,
+      source_post_id: cleanText(data.id) || extractSourcePostId(normalizedLink, 'youtube'),
+      thumbnail_url: cleanText(data.thumbnail) || cleanText(data.thumbnails?.[0]?.url) || null,
+      media_urls: normalizeMediaUrls([data.thumbnail, data.thumbnails?.[0]?.url]),
+    };
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+  }
 }
 
 async function scrapeBrowserMetadata(link: string): Promise<BrowserMetadata> {

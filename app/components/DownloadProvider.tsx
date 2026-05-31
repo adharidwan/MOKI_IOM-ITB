@@ -20,31 +20,44 @@ type DownloadMessage = {
 } | null;
 
 const DownloadManagerContext = createContext<DownloadManagerContextValue | null>(null);
-const DOWNLOAD_FRAME_NAME = 'content-recording-download-frame';
 
-function ensureDownloadFrame(): HTMLIFrameElement {
-  const existingFrame = document.querySelector<HTMLIFrameElement>(`iframe[name="${DOWNLOAD_FRAME_NAME}"]`);
-  if (existingFrame) {
-    return existingFrame;
+function getFileNameFromContentDisposition(value: string | null): string {
+  if (!value) {
+    return 'media-download';
   }
 
-  const frame = document.createElement('iframe');
-  frame.name = DOWNLOAD_FRAME_NAME;
-  frame.hidden = true;
-  document.body.appendChild(frame);
+  const encodedFileName = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encodedFileName) {
+    try {
+      return decodeURIComponent(encodedFileName);
+    } catch {
+      return encodedFileName;
+    }
+  }
 
-  return frame;
+  return value.match(/filename="([^"]+)"/i)?.[1] || 'media-download';
 }
 
-function triggerBrowserDownload(url: string) {
-  const frame = ensureDownloadFrame();
+async function getDownloadErrorMessage(response: Response): Promise<string> {
+  try {
+    const payload = await response.json() as { error?: string };
+    return payload.error || 'Gagal download media.';
+  } catch {
+    return 'Gagal download media.';
+  }
+}
+
+function triggerBlobDownload(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
 
   link.href = url;
-  link.target = frame.name;
+  link.download = fileName;
   document.body.appendChild(link);
   link.click();
   link.remove();
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export default function DownloadProvider({ children }: { children: ReactNode }) {
@@ -66,7 +79,14 @@ export default function DownloadProvider({ children }: { children: ReactNode }) 
     setMessage({ severity: 'info', text: 'Menyiapkan download media...' });
 
     try {
-      triggerBrowserDownload(`/api/admin/content-recordings/${input.id}/download`);
+      const response = await fetch(`/api/admin/content-recordings/${input.id}/download`);
+      if (!response.ok) {
+        throw new Error(await getDownloadErrorMessage(response));
+      }
+
+      const blob = await response.blob();
+      const fileName = getFileNameFromContentDisposition(response.headers.get('Content-Disposition'));
+      triggerBlobDownload(blob, fileName);
       setMessage({ severity: 'success', text: 'Download media dimulai.' });
     } catch (error) {
       setMessage({

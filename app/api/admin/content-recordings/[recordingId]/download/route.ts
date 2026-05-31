@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { once } from 'events';
 import fs from 'fs';
-import { copyFile, mkdir, readdir, readFile, rm, stat } from 'fs/promises';
+import { mkdir, readdir, readFile, rm, stat } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { Readable } from 'stream';
@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import { getContentRecordingById } from '@/app/lib/api';
 import type { ContentRecordingPlatform } from '@/app/lib/types';
+import { resolveYtDlpCookies } from '@/app/lib/yt-dlp-cookies';
 import { createZipFileStream, type ZipFilePathEntry } from '@/app/lib/zip';
 
 export const runtime = 'nodejs';
@@ -41,8 +42,6 @@ const INSTAGRAM_SHORTCODE_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnop
 const X_TWEET_SYNDICATION_API = 'https://cdn.syndication.twimg.com/widgets/tweet';
 const X_GRAPHQL_TWEET_RESULT_API = 'https://x.com/i/api/graphql/2ICDjqPd81tulZcYrtpTuQ/TweetResultByRestId';
 const X_GRAPHQL_BEARER_TOKEN = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
-const X_YT_DLP_COOKIES_PATH = String(process.env.X_YT_DLP_COOKIES_PATH || '').trim();
-const X_YT_DLP_TEMP_COOKIES_FILE_NAME = 'x-yt-dlp-cookies.txt';
 const FALLBACK_MEDIA_DOWNLOAD_CONCURRENCY = 4;
 const X_GRAPHQL_FEATURES = {
   creator_subscriptions_tweet_preview_api_enabled: true,
@@ -557,8 +556,9 @@ function getYtDlpArgs(
       '--no-playlist',
       '--referer',
       'https://www.youtube.com/',
+      ...(cookiesPath ? ['--cookies', cookiesPath] : []),
       '--format',
-      'best[ext=mp4][vcodec!=none][acodec!=none]/best[ext=mp4]',
+      'best[vcodec!=none][acodec!=none]/best',
     ];
   }
 
@@ -606,6 +606,15 @@ function runYtDlpDownload(
       reject(new Error(stderr.trim() || `yt-dlp gagal dengan exit code ${code}.`));
     });
   });
+}
+
+function shouldRetryYoutubeWithoutCookies(error: unknown, cookiesPath: string): boolean {
+  if (!cookiesPath) {
+    return false;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Requested format is not available');
 }
 
 function createFileDownloadStream(filePath: string, cleanupPath: string): ReadableStream<Uint8Array> {
@@ -717,7 +726,7 @@ async function listDownloadedFiles(tempDir: string): Promise<string[]> {
 
   for (const entry of entries) {
     if (
-      entry === X_YT_DLP_TEMP_COOKIES_FILE_NAME ||
+      entry.endsWith('-yt-dlp-cookies.txt') ||
       entry.endsWith('.part') ||
       entry.endsWith('.ytdl')
     ) {
@@ -1094,28 +1103,36 @@ export async function GET(request: Request, { params }: { params: Promise<{ reco
 
     if (recording.platform === 'youtube' || recording.platform === 'x') {
       const ytDlpStartedAt = nowMs();
-      xYtDlpCookiesPath = recording.platform === 'x' && X_YT_DLP_COOKIES_PATH
-        ? path.join(tempDir, X_YT_DLP_TEMP_COOKIES_FILE_NAME)
-        : '';
+      const cookies = await resolveYtDlpCookies(recording.platform, tempDir);
+      xYtDlpCookiesPath = recording.platform === 'x' ? cookies.path : '';
 
-      if (xYtDlpCookiesPath) {
-        await copyFile(X_YT_DLP_COOKIES_PATH, xYtDlpCookiesPath);
-      }
-
-      await runYtDlpDownload(
-        recording.platform,
-        downloadLink,
-        path.join(tempDir, 'media.%(ext)s'),
-        xYtDlpCookiesPath,
-      ).catch((error) => {
-        if (recording.platform === 'youtube') {
+      try {
+        await runYtDlpDownload(
+          recording.platform,
+          downloadLink,
+          path.join(tempDir, 'media.%(ext)s'),
+          cookies.path,
+        );
+      } catch (error) {
+        if (recording.platform === 'youtube' && shouldRetryYoutubeWithoutCookies(error, cookies.path)) {
+          logDownloadTiming('yt-dlp-cookie-retry', ytDlpStartedAt, {
+            recordingId,
+            platform: recording.platform,
+          });
+          await runYtDlpDownload(
+            recording.platform,
+            downloadLink,
+            path.join(tempDir, 'media.%(ext)s'),
+          );
+        } else if (recording.platform === 'youtube') {
           throw error;
         }
-      });
+      }
       logDownloadTiming('yt-dlp-download', ytDlpStartedAt, {
         recordingId,
         platform: recording.platform,
-        usedCookies: Boolean(xYtDlpCookiesPath),
+        usedCookies: Boolean(cookies.path),
+        cookieSource: cookies.source,
       });
     }
 
