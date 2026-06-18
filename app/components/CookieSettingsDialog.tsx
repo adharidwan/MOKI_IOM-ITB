@@ -70,9 +70,9 @@ const PLATFORM_META: Array<{
     id: 'instagram',
     label: 'Instagram',
     icon: <Instagram sx={{ fontSize: 19 }} />,
-    extension: '.json',
+    extension: '.json,.txt',
     helpText:
-      'Format: file JSON (Playwright storage state). Gunakan ekstensi browser "EditThisCookie" untuk mengekspor cookies instagram.com.\n\nContoh isi file:\n{\n  "cookies": [\n    {\n      "name": "sessionid",\n      "value": "12345678...",\n      "domain": ".instagram.com",\n      "path": "/",\n      "expires": -1,\n      "httpOnly": true,\n      "secure": true,\n      "sameSite": "Lax"\n    },\n    {\n      "name": "csrftoken",\n      "value": "AbCdEf...",\n      "domain": ".instagram.com",\n      "path": "/",\n      "expires": -1,\n      "httpOnly": false,\n      "secure": true,\n      "sameSite": "Lax"\n    }\n  ],\n  "origins": []\n}',
+      'Format: file JSON (Playwright storage state). Gunakan ekstensi browser "Get cookies.txt LOCALLY" (Chrome Web Store) karena mendukung ekspor JSON dan Netscape. Login ke instagram.com terlebih dahulu, lalu klik ikon ekstensi > Export > pilih format JSON.\n\nContoh isi file:\n{\n  "cookies": [\n    {\n      "name": "sessionid",\n      "value": "12345678...",\n      "domain": ".instagram.com",\n      "path": "/",\n      "expires": -1,\n      "httpOnly": true,\n      "secure": true,\n      "sameSite": "Lax"\n    },\n    {\n      "name": "csrftoken",\n      "value": "AbCdEf...",\n      "domain": ".instagram.com",\n      "path": "/",\n      "expires": -1,\n      "httpOnly": false,\n      "secure": true,\n      "sameSite": "Lax"\n    }\n  ],\n  "origins": []\n}',
   },
   {
     id: 'youtube',
@@ -80,7 +80,7 @@ const PLATFORM_META: Array<{
     icon: <YouTube sx={{ fontSize: 19 }} />,
     extension: '.txt',
     helpText:
-      'Format: file .txt (Netscape cookies). Gunakan ekstensi browser "cookies.txt" (tersedia di Chrome Web Store & Firefox Add-ons). Login ke youtube.com terlebih dahulu sebelum mengekspor.\n\nContoh isi file:\n# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n.youtube.com\tTRUE\t/\tFALSE\t1234567890\tLOGIN_INFO\tAe...\n.youtube.com\tTRUE\t/\tFALSE\t1234567890\tSID\taBCd...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tHSID\tA1b2C3...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tSSID\tAbC123...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tAPISID\tabc123...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tSAPISID\tabcd12...',
+      'Format: file .txt (Netscape cookies). Gunakan ekstensi browser "Get cookies.txt LOCALLY" (Chrome Web Store). Login ke youtube.com, klik ikon ekstensi > Export > pilih format Netscape.\n\nContoh isi file:\n# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n.youtube.com\tTRUE\t/\tFALSE\t1234567890\tLOGIN_INFO\tAe...\n.youtube.com\tTRUE\t/\tFALSE\t1234567890\tSID\taBCd...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tHSID\tA1b2C3...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tSSID\tAbC123...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tAPISID\tabc123...\n.youtube.com\tTRUE\t/\tTRUE\t1234567890\tSAPISID\tabcd12...',
   },
   {
     id: 'x',
@@ -88,7 +88,7 @@ const PLATFORM_META: Array<{
     icon: <X sx={{ fontSize: 19 }} />,
     extension: '.txt',
     helpText:
-      'Format: file .txt (Netscape cookies). Gunakan ekstensi browser "cookies.txt" (tersedia di Chrome Web Store & Firefox Add-ons). Login ke x.com terlebih dahulu sebelum mengekspor.\n\nContoh isi file:\n# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n.x.com\tTRUE\t/\tFALSE\t1234567890\tauth_token\ta1b2c3...\n.x.com\tTRUE\t/\tFALSE\t1234567890\tct0\tabc123...\n.x.com\tTRUE\t/\tTRUE\t1234567890\tguest_id\tv1%3A123456789',
+      'Format: file .txt (Netscape cookies). Gunakan ekstensi browser "Get cookies.txt LOCALLY" (Chrome Web Store). Login ke x.com, klik ikon ekstensi > Export > pilih format Netscape.\n\nContoh isi file:\n# Netscape HTTP Cookie File\n# http://curl.haxx.se/rfc/cookie_spec.html\n.x.com\tTRUE\t/\tFALSE\t1234567890\tauth_token\ta1b2c3...\n.x.com\tTRUE\t/\tFALSE\t1234567890\tct0\tabc123...\n.x.com\tTRUE\t/\tTRUE\t1234567890\tguest_id\tv1%3A123456789',
   },
 ];
 

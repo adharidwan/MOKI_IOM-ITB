@@ -148,7 +148,8 @@ export default function AdminFeatureShell({
             sx={{
               width: "100%",
               height: 60,
-              px: 1,
+              px: 1.5,
+              py: 0.75,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -156,17 +157,30 @@ export default function AdminFeatureShell({
               borderBottom: "1px solid rgba(255,255,255,0.08)",
             }}
           >
-            <Typography
+            <Box
               sx={{
-                fontSize: "0.8rem",
-                fontWeight: 800,
-                letterSpacing: "0.12em",
-                color: "#ffffff",
-                textAlign: "center",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                px: 1.25,
+                py: 0.5,
+                borderRadius: 1.5,
+                backgroundColor: "#ffffff",
               }}
             >
-              LOGO
-            </Typography>
+              <Typography
+                sx={{
+                  fontSize: "0.78rem",
+                  fontWeight: 800,
+                  letterSpacing: "0.08em",
+                  color: adminPalette.sidebarRail,
+                  textAlign: "center",
+                  lineHeight: 1.2,
+                }}
+              >
+                MOKI
+              </Typography>
+            </Box>
           </Box>
 
           <Stack spacing={0} sx={{ width: "100%", py: 1 }}>
