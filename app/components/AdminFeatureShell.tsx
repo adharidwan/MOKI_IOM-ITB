@@ -168,18 +168,16 @@ export default function AdminFeatureShell({
                 backgroundColor: "#ffffff",
               }}
             >
-              <Typography
+              <Box
+                component="img"
+                src="/logo.png"
+                alt="MOKI"
                 sx={{
-                  fontSize: "0.78rem",
-                  fontWeight: 800,
-                  letterSpacing: "0.08em",
-                  color: adminPalette.sidebarRail,
-                  textAlign: "center",
-                  lineHeight: 1.2,
+                  height: 24,
+                  width: "auto",
+                  display: "block",
                 }}
-              >
-                MOKI
-              </Typography>
+              />
             </Box>
           </Box>
 
