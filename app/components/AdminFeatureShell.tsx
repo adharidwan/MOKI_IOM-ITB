@@ -148,33 +148,34 @@ export default function AdminFeatureShell({
             sx={{
               width: "100%",
               height: 60,
-              px: 1.5,
-              py: 0.75,
+              px: 1,
+              py: 1,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              backgroundColor: adminPalette.sidebarRailDarker,
+              backgroundColor: "#FFFFFF",
               borderBottom: "1px solid rgba(255,255,255,0.08)",
             }}
           >
             <Box
               sx={{
+                width: 120,
+                height: 60,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                px: 1.25,
-                py: 0.5,
-                borderRadius: 1.5,
                 backgroundColor: "#ffffff",
+                overflow: "hidden",
               }}
             >
               <Box
                 component="img"
-                src="/logo.png"
+                src="/logo copy.png"
                 alt="MOKI"
                 sx={{
-                  height: 24,
-                  width: "auto",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
                   display: "block",
                 }}
               />
