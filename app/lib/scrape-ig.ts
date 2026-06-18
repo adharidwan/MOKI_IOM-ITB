@@ -14,9 +14,10 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 const INSTAGRAM_PROFILE_MAX_POSTS = 12;
 const INSTAGRAM_SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-const INSTAGRAM_DETAIL_SCRAPE_LIMIT = Number(
-  process.env.INSTAGRAM_DETAIL_SCRAPE_LIMIT || INSTAGRAM_PROFILE_MAX_POSTS,
-);
+function getDetailScrapeLimit(maxPosts?: number): number {
+  if (maxPosts && maxPosts > 0) return maxPosts;
+  return Number(process.env.INSTAGRAM_DETAIL_SCRAPE_LIMIT || INSTAGRAM_PROFILE_MAX_POSTS);
+}
 const INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS = Number(
   process.env.INSTAGRAM_SCRAPE_CACHE_TTL_SECONDS || 600,
 );
@@ -735,7 +736,7 @@ async function scrapeInstagramPostsFromPlaywright(
       1,
       options?.maxPosts || INSTAGRAM_PROFILE_MAX_POSTS,
     );
-    const detailLimit = Math.max(0, INSTAGRAM_DETAIL_SCRAPE_LIMIT);
+    const detailLimit = Math.max(0, getDetailScrapeLimit(options?.maxPosts));
 
     const detailsStartedAt = Date.now();
     const results = await Promise.allSettled(
@@ -1499,6 +1500,16 @@ async function fetchFeedXml(username: string): Promise<string> {
   throw new Error(lastError || "Semua sumber feed Instagram gagal diakses.");
 }
 
+function deduplicatePosts(posts: InstagramPost[]): InstagramPost[] {
+  const seen = new Map<string, InstagramPost>();
+  for (const post of posts) {
+    if (!seen.has(post.link)) {
+      seen.set(post.link, post);
+    }
+  }
+  return Array.from(seen.values());
+}
+
 export async function scrape_ig(
   username: string,
   options?: InstagramScrapeOptions,
@@ -1534,25 +1545,32 @@ export async function scrape_ig(
     message: `Menyiapkan pengambilan post untuk @${normalizedUsername}...`,
   });
 
+  const maxPosts = options?.maxPosts || 0;
+
   const rssStartedAt = Date.now();
+  let rssPosts: InstagramPost[] = [];
   try {
     console.log("[IG scrape] Trying RSS feed...");
 
     const xml = await fetchFeedXml(normalizedUsername);
-    const posts = parseXmlItems(xml, normalizedUsername);
+    rssPosts = parseXmlItems(xml, normalizedUsername);
 
-    console.log(`[IG scrape] RSS feed success: ${posts.length} posts`);
+    console.log(`[IG scrape] RSS feed success: ${rssPosts.length} posts`);
     console.log(`[IG timing] RSS feed: ${formatDuration(rssStartedAt)}`);
 
-    if (posts.length > 0) {
-      const payload = { channel: `@${normalizedUsername}`, videos: posts };
+    if (rssPosts.length > 0 && (!maxPosts || rssPosts.length >= maxPosts)) {
+      const payload = { channel: `@${normalizedUsername}`, videos: rssPosts };
       await setCachedInstagramScrape(cacheKey, payload);
       clearInstagramScrapeStatus();
       console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
       return payload;
     }
 
-    console.warn("[IG scrape] RSS returned 0 items, trying API...");
+    if (rssPosts.length > 0) {
+      console.log(`[IG scrape] RSS returned ${rssPosts.length} posts but ${maxPosts} requested, falling through`);
+    } else {
+      console.warn("[IG scrape] RSS returned 0 items, trying API...");
+    }
   } catch (rssError) {
     console.warn(
       "[IG scrape] RSS feed failed:",
@@ -1570,22 +1588,30 @@ export async function scrape_ig(
       message: `Melengkapi detail post via scrape-content-link untuk @${normalizedUsername}...`,
     });
 
-    const posts = await fetchProfilePosts(
+    const apiPosts = await fetchProfilePosts(
       normalizedUsername,
       loadCookieHeaderFromEnv() ||
         loadCookieHeaderFromCache() ||
         loadCookieHeaderFromStorageState(),
     );
 
-    console.log(`[IG scrape] Profile API success: ${posts.length} posts`);
+    const allPosts = deduplicatePosts([...rssPosts, ...apiPosts]);
+    const finalPosts = maxPosts > 0 ? allPosts.slice(0, maxPosts) : allPosts;
+
+    console.log(`[IG scrape] Profile API success: ${apiPosts.length} posts, combined: ${finalPosts.length} posts`);
     console.log(`[IG timing] Profile API: ${formatDuration(apiStartedAt)}`);
 
-    const payload = { channel: `@${normalizedUsername}`, videos: posts };
-    await setCachedInstagramScrape(cacheKey, payload);
-    clearInstagramScrapeStatus();
-    console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
+    if (finalPosts.length > 0 && (!maxPosts || finalPosts.length >= maxPosts)) {
+      const payload = { channel: `@${normalizedUsername}`, videos: finalPosts };
+      await setCachedInstagramScrape(cacheKey, payload);
+      clearInstagramScrapeStatus();
+      console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
+      return payload;
+    }
 
-    return payload;
+    if (finalPosts.length > 0) {
+      console.log(`[IG scrape] Profile API combined returned ${finalPosts.length} posts but ${maxPosts} requested, falling through`);
+    }
   } catch (apiError) {
     console.warn(
       "[IG scrape] Profile API failed:",
@@ -1603,20 +1629,26 @@ export async function scrape_ig(
       message: `Melengkapi detail post via scrape-content-link untuk @${normalizedUsername}...`,
     });
 
-    const posts = await scrapeInstagramPostsFromPlaywright(
+    const pwPosts = await scrapeInstagramPostsFromPlaywright(
       normalizedUsername,
       options,
     );
 
-    console.log(`[IG scrape] Playwright success: ${posts.length} posts`);
+    const allPosts = deduplicatePosts([...rssPosts, ...pwPosts]);
+    const finalPosts = maxPosts > 0 ? allPosts.slice(0, maxPosts) : allPosts;
+
+    console.log(`[IG scrape] Playwright success: ${pwPosts.length} posts, combined: ${finalPosts.length} posts`);
     console.log(`[IG timing] Playwright strategy: ${formatDuration(playwrightStartedAt)}`);
 
-    const payload = { channel: `@${normalizedUsername}`, videos: posts };
-    await setCachedInstagramScrape(cacheKey, payload);
-    clearInstagramScrapeStatus();
-    console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
+    if (finalPosts.length > 0) {
+      const payload = { channel: `@${normalizedUsername}`, videos: finalPosts };
+      await setCachedInstagramScrape(cacheKey, payload);
+      clearInstagramScrapeStatus();
+      console.log(`[IG timing] Total scrape: ${formatDuration(scrapeStartedAt)}`);
+      return payload;
+    }
 
-    return payload;
+    console.warn(`[IG scrape] Playwright returned 0 posts, combined total: ${finalPosts.length}`);
   } catch (scrapeError) {
     console.error(
       "[IG scrape] All strategies failed:",
@@ -1632,4 +1664,11 @@ export async function scrape_ig(
 
     return { error: SCRAPE_ERROR_MESSAGE };
   }
+
+  writeInstagramScrapeStatus({
+    stage: "error",
+    message: "Scrape Instagram gagal.",
+  });
+
+  return { error: SCRAPE_ERROR_MESSAGE };
 }
