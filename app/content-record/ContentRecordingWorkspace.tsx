@@ -459,6 +459,39 @@ function InstagramEmbedPreview({
     return <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />;
   }
 
+  if (compact) {
+    return (
+      <Box
+        sx={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          overflow: 'hidden',
+          backgroundColor: '#ffffff',
+        }}
+      >
+        <Box
+          component="iframe"
+          src={embedUrl}
+          title="Instagram post preview"
+          loading="lazy"
+          referrerPolicy="no-referrer-when-downgrade"
+          sx={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            border: 0,
+            display: 'block',
+            width: 328,
+            height: 430,
+            transform: 'scale(0.31)',
+            transformOrigin: 'top left',
+          }}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -478,11 +511,8 @@ function InstagramEmbedPreview({
         sx={{
           border: 0,
           display: 'block',
-          width: compact ? 328 : '100%',
-          height: compact ? 430 : '100%',
-          transform: compact ? 'scale(0.31)' : 'none',
-          transformOrigin: 'top left',
-          pointerEvents: compact ? 'none' : 'auto',
+          width: '100%',
+          height: '100%',
         }}
       />
     </Box>
@@ -502,6 +532,40 @@ function XEmbedPreview({
     return <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />;
   }
 
+  if (compact) {
+    return (
+      <Box
+        sx={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          overflow: 'hidden',
+          backgroundColor: '#ffffff',
+        }}
+      >
+        <Box
+          component="iframe"
+          src={embedUrl}
+          title="X post preview"
+          loading="lazy"
+          sx={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            border: 0,
+            display: 'block',
+            width: 360,
+            height: 520,
+            transform: 'scale(0.29)',
+            transformOrigin: 'top left',
+            pointerEvents: 'none',
+            backgroundColor: '#ffffff',
+          }}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box
       component="iframe"
@@ -511,11 +575,8 @@ function XEmbedPreview({
       sx={{
         border: 0,
         display: 'block',
-        width: compact ? 360 : '100%',
-        height: compact ? 520 : '100%',
-        transform: compact ? 'scale(0.29)' : 'none',
-        transformOrigin: 'top left',
-        pointerEvents: compact ? 'none' : 'auto',
+        width: '100%',
+        height: '100%',
         backgroundColor: '#ffffff',
       }}
     />
@@ -961,13 +1022,13 @@ export default function ContentRecordingWorkspace({
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: previewUrls.length ? 0.5 : instagramEmbedUrl || xEmbedUrl ? 0 : 0.5 }}>
-                        {previewUrls.length ? (
-                          <PreviewCarousel urls={previewUrls} alt={record.title || 'Content preview'} emptyLabel="" />
-                        ) : instagramEmbedUrl ? (
+                      <Box sx={{ ...PREVIEW_FRAME_SX, width: 104, height: 132, p: (instagramEmbedUrl || xEmbedUrl) ? 0 : previewUrls.length ? 0.5 : 0.5 }}>
+                        {instagramEmbedUrl ? (
                           <InstagramEmbedPreview link={record.link} compact />
                         ) : xEmbedUrl ? (
                           <XPostFallbackPreview title={record.title} caption={record.caption} sourcePostId={record.source_post_id} />
+                        ) : previewUrls.length ? (
+                          <PreviewCarousel urls={previewUrls} alt={record.title || 'Content preview'} emptyLabel="" />
                         ) : (
                           <ImageNotSupportedRoundedIcon sx={{ color: adminPalette.textSubtle }} />
                         )}
