@@ -4,6 +4,8 @@ import fs from 'fs';
 import { writeFile } from 'fs/promises';
 import path from 'path';
 
+import { hasUploadedCookies, getUploadPath } from './platform-cookies';
+
 type YtDlpCookiePlatform = 'x' | 'youtube';
 
 interface CookieEnvConfig {
@@ -14,7 +16,7 @@ interface CookieEnvConfig {
 
 interface ResolvedCookies {
   path: string;
-  source: 'path' | 'content' | '';
+  source: 'upload' | 'path' | 'content' | '';
 }
 
 function getCookieEnvConfig(platform: YtDlpCookiePlatform): CookieEnvConfig {
@@ -41,6 +43,11 @@ export async function resolveYtDlpCookies(
   platform: YtDlpCookiePlatform,
   tempDir: string,
 ): Promise<ResolvedCookies> {
+  if (hasUploadedCookies(platform)) {
+    const uploadPath = getUploadPath(platform);
+    return { path: uploadPath, source: 'upload' };
+  }
+
   const config = getCookieEnvConfig(platform);
 
   if (config.path && fs.existsSync(config.path)) {

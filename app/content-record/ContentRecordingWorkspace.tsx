@@ -9,6 +9,7 @@ import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
 import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded';
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import CookieOutlinedIcon from '@mui/icons-material/CookieOutlined';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import DownloadRoundedIcon from '@mui/icons-material/DownloadRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
@@ -64,6 +65,7 @@ import {
   saveContentRecordingAction,
 } from './actions';
 import { useDownloadManager } from '../components/DownloadProvider';
+import CookieSettingsDialog from '../components/CookieSettingsDialog';
 
 interface WorkspaceProps {
   recordings: ContentRecording[];
@@ -607,6 +609,7 @@ export default function ContentRecordingWorkspace({
     tagIds: currentTagIds,
   });
   const [lastScrapedLink, setLastScrapedLink] = useState('');
+  const [cookieDialogOpen, setCookieDialogOpen] = useState(false);
   const [isScraping, startScrapeTransition] = useTransition();
   const [isSaving, startSaveTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
@@ -841,6 +844,9 @@ export default function ContentRecordingWorkspace({
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ width: { xs: '100%', lg: 'auto' } }}>
               <Button component={Link} href="/scrape" variant="outlined" startIcon={<UploadFileRoundedIcon />} sx={{ minHeight: 36, borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>
                 Import from Channel
+              </Button>
+              <Button variant="outlined" startIcon={<CookieOutlinedIcon />} onClick={() => setCookieDialogOpen(true)} sx={{ minHeight: 36, borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700 }}>
+                Set Cookies
               </Button>
               <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openAddDrawer} sx={{ minHeight: 36, borderRadius: 2, backgroundColor: adminPalette.brand, textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>
                 Add Content
@@ -1149,6 +1155,8 @@ export default function ContentRecordingWorkspace({
           <Button color="error" variant="contained" onClick={handleDelete} disabled={isDeleting} sx={{ textTransform: 'none', fontWeight: 700, boxShadow: 'none' }}>{isDeleting ? 'Deleting...' : 'Delete'}</Button>
         </DialogActions>
       </Dialog>
+
+      <CookieSettingsDialog open={cookieDialogOpen} onClose={() => setCookieDialogOpen(false)} />
     </Stack>
   );
 }

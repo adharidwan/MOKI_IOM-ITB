@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Instagram, X, YouTube } from '@mui/icons-material';
+import { Instagram, X, YouTube, CookieOutlined } from '@mui/icons-material';
 import {
   Box,
   Button,
@@ -13,6 +13,7 @@ import {
 import InstagramScraper from '../components/ScrapeIG';
 import XScraper from '../components/ScrapeX';
 import YouTubeScraper from '../components/ScrapeYoutube';
+import CookieSettingsDialog from '../components/CookieSettingsDialog';
 import { adminPalette, adminPanelSx } from '../lib/adminPalette';
 
 type PlatformId = 'youtube' | 'instagram' | 'x';
@@ -65,6 +66,7 @@ function getScraper(platformId: PlatformId): React.ReactNode {
 
 export default function ContentScrapingWorkspace() {
   const [activePlatform, setActivePlatform] = useState<PlatformId>('youtube');
+  const [cookieDialogOpen, setCookieDialogOpen] = useState(false);
 
   const activeOption = useMemo(
     () => PLATFORM_OPTIONS.find((option) => option.id === activePlatform) || PLATFORM_OPTIONS[0],
@@ -75,17 +77,27 @@ export default function ContentScrapingWorkspace() {
     <Stack spacing={1.25}>
       <Paper elevation={0} sx={adminPanelSx}>
         <Stack spacing={1.25} sx={{ px: { xs: 1.5, md: 2 }, py: { xs: 1.4, md: 1.6 } }}>
-          <Box>
-            <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
-              Content Scraping
-            </Typography>
-            <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
-              Channel Content Scraping
-            </Typography>
-            <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
-              Ambil data konten level channel dari YouTube, X, dan Instagram sekaligus.
-            </Typography>
-          </Box>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+            <Box>
+              <Typography sx={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: adminPalette.brand }}>
+                Content Scraping
+              </Typography>
+              <Typography component="h2" sx={{ mt: 0.7, fontSize: { xs: '1.35rem', md: '1.6rem' }, fontWeight: 700, lineHeight: 1.1, color: adminPalette.textPrimary }}>
+                Channel Content Scraping
+              </Typography>
+              <Typography sx={{ mt: 0.55, fontSize: '0.8rem', color: adminPalette.textMuted }}>
+                Ambil data konten level channel dari YouTube, X, dan Instagram sekaligus.
+              </Typography>
+            </Box>
+            <Button
+              variant="outlined"
+              startIcon={<CookieOutlined />}
+              onClick={() => setCookieDialogOpen(true)}
+              sx={{ borderRadius: 2, borderColor: adminPalette.borderStrong, color: adminPalette.textSecondary, textTransform: 'none', fontWeight: 700, flexShrink: 0 }}
+            >
+              Set Cookies
+            </Button>
+          </Stack>
         </Stack>
       </Paper>
 
@@ -168,6 +180,8 @@ export default function ContentScrapingWorkspace() {
 
         <Box sx={{ p: { xs: 1.5, md: 2 } }}>{getScraper(activePlatform)}</Box>
       </Paper>
+
+      <CookieSettingsDialog open={cookieDialogOpen} onClose={() => setCookieDialogOpen(false)} />
     </Stack>
   );
 }

@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { getPlaywrightLaunchOptions } from "./chromium-path";
+import { getInstagramCookieHeader, hasUploadedCookies, getUploadPath } from "./platform-cookies";
 import { getRedisClient } from "./redis-server";
 import { scrapeContentFromLink } from "./scrape-content-link";
 
@@ -283,7 +284,17 @@ function loadCookieHeaderFromCache(): string {
 }
 
 function loadCookieHeaderFromEnv(): string {
-  return String(process.env.INSTAGRAM_COOKIE || "").trim();
+  syncUploadedStorageState();
+  return getInstagramCookieHeader();
+}
+
+function syncUploadedStorageState(): void {
+  if (!hasUploadedCookies('instagram')) return;
+  const uploadPath = getUploadPath('instagram');
+  if (!fs.existsSync(uploadPath) || uploadPath === STORAGE_STATE_PATH) return;
+
+  ensureStorageStateDir();
+  fs.copyFileSync(uploadPath, STORAGE_STATE_PATH);
 }
 
 function loadCookieHeaderFromStorageState(): string {

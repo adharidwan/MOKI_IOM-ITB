@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 
 import { requireAnyFeatureFromRequest } from '@/app/lib/access-control';
 import { getContentRecordingById } from '@/app/lib/api';
+import { getInstagramCookieHeader, getInstagramCsfrToken } from '@/app/lib/platform-cookies';
 import type { ContentRecordingPlatform } from '@/app/lib/types';
 import { resolveYtDlpCookies } from '@/app/lib/yt-dlp-cookies';
 import { createZipFileStream, type ZipFilePathEntry } from '@/app/lib/zip';
@@ -132,8 +133,8 @@ function buildCookieHeader(cookies: Record<string, string>): string {
 }
 
 function getInstagramHeaders(referer: string, accept = 'application/json'): HeadersInit {
-  const cookie = String(process.env.INSTAGRAM_COOKIE || '').trim();
-  const csrfToken = getCookieValue(cookie, 'csrftoken');
+  const cookie = getInstagramCookieHeader();
+  const csrfToken = getInstagramCsfrToken();
 
   return {
     Accept: accept,
